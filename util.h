@@ -8,6 +8,7 @@
 #define ALEN(v) (sizeof(v) / sizeof((v)[0]))
 #define min(x, y) ((x) < (y) ? (x) : (y))
 #define max(x, y) ((x) > (y) ? (x) : (y))
+#define clamp(x, lower, upper) (min(upper, max(x, lower)))
 
 static inline bool
 streq(const char *a, const char *b)
