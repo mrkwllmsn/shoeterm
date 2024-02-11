@@ -269,12 +269,12 @@ color_dim(const struct terminal *term, uint32_t color)
             continue;
 
         if (term->colors.table[0 + i] == color) {
-            /* “Regular” color, return the corresponding “dim” */
+            /* "Regular" color, return the corresponding "dim" */
             return conf->colors.dim[i];
         }
 
         else if (term->colors.table[8 + i] == color) {
-            /* “Bright” color, return the corresponding “regular” */
+            /* "Bright" color, return the corresponding "regular" */
             return term->colors.table[i];
         }
     }
@@ -1074,7 +1074,7 @@ grid_render_scroll(struct terminal *term, struct buffer *buf,
 
     /*
      * TODO: remove this if re-enabling scroll damage when re-applying
-     * last frame’s damage (see reapply_old_damage()
+     * last frame's damage (see reapply_old_damage()
      */
     pixman_region32_union_rect(
         &buf->dirty[0], &buf->dirty[0], 0, dst_y, buf->width, height);
@@ -1151,7 +1151,7 @@ grid_render_scroll_reverse(struct terminal *term, struct buffer *buf,
 
     /*
      * TODO: remove this if re-enabling scroll damage when re-applying
-     * last frame’s damage (see reapply_old_damage()
+     * last frame's damage (see reapply_old_damage()
      */
     pixman_region32_union_rect(
         &buf->dirty[0], &buf->dirty[0], 0, dst_y, buf->width, height);
@@ -1289,7 +1289,7 @@ render_sixel(struct terminal *term, pixman_image_t *pix,
          * If the last sixel row only partially covers the cell row,
          * 'erase' the cell by rendering them.
          *
-         * In all cases, do *not* clear the ‘dirty’ bit on the row, to
+         * In all cases, do *not* clear the 'dirty' bit on the row, to
          * ensure the regular renderer includes them in the damage
          * rect.
          */
@@ -1404,8 +1404,8 @@ render_ime_preedit_for_seat(struct terminal *term, struct seat *seat,
     {
         /* Cursor will be drawn *after* the pre-edit string, i.e. in
          * the cell *after*. This means we need to copy, and dirty,
-         * one extra cell from the original grid, or we’ll leave
-         * trailing “cursors” after us if the user deletes text while
+         * one extra cell from the original grid, or we'll leave
+         * trailing "cursors" after us if the user deletes text while
          * pre-editing */
         cells_needed++;
     }
@@ -1461,7 +1461,7 @@ render_ime_preedit_for_seat(struct terminal *term, struct seat *seat,
      * from grid), and mark all cells as dirty. This ensures they are
      * re-rendered when the pre-edit text is modified or removed.
      */
-    struct cell *real_cells = malloc(cells_used * sizeof(real_cells[0]));
+    struct cell *real_cells = xmalloc(cells_used * sizeof(real_cells[0]));
     for (int i = 0; i < cells_used; i++) {
         xassert(col_idx + i < term->cols);
         real_cells[i] = row->cells[col_idx + i];
@@ -1623,23 +1623,23 @@ render_overlay(struct terminal *term)
          * When possible, we only update the areas that have *changed*
          * since the last frame. That means:
          *
-         *  - clearing/erasing cells that are now selected, but weren’t
+         *  - clearing/erasing cells that are now selected, but weren't
          *    in the last frame
-         *  - dimming cells that were selected, but aren’t anymore
+         *  - dimming cells that were selected, but aren't anymore
          *
-         * To do this, we save the last frame’s selected cells as a
+         * To do this, we save the last frame's selected cells as a
          * pixman region.
          *
          * Then, we calculate the corresponding region for this
-         * frame’s selected cells.
+         * frame's selected cells.
          *
-         * Last frame’s region minus this frame’s region gives us the
+         * Last frame's region minus this frame's region gives us the
          * region that needs to be *dimmed* in this frame
          *
-         * This frame’s region minus last frame’s region gives us the
+         * This frame's region minus last frame's region gives us the
          * region that needs to be *cleared* in this frame.
          *
-         * Finally, the union of the two “diff” regions above, gives
+         * Finally, the union of the two "diff" regions above, gives
          * us the total region affected by a change, in either way. We
          * use this as the bounding box for the
          * wl_surface_damage_buffer() call.
@@ -1652,12 +1652,12 @@ render_overlay(struct terminal *term)
             buf->age == 0;
 
         if (!buffer_reuse) {
-            /* Can’t reuse last frame’s damage - set to full window,
+            /* Can't reuse last frame's damage - set to full window,
              * to ensure *everything* is updated */
             pixman_region32_init_rect(
                 &old_see_through, 0, 0, buf->width, buf->height);
         } else {
-            /* Use last frame’s saved region */
+            /* Use last frame's saved region */
             pixman_region32_init(&old_see_through);
             pixman_region32_copy(&old_see_through, see_through);
         }
@@ -2148,7 +2148,7 @@ render_csd_border(struct terminal *term, enum csd_surface surf_idx,
     }
 
     /*
-     * The “visible” border.
+     * The "visible" border.
      */
 
     float scale = term->scale;
@@ -2768,21 +2768,21 @@ reapply_old_damage(struct terminal *term, struct buffer *new, struct buffer *old
     pixman_region32_init(&dirty);
 
     /*
-     * Figure out current frame’s damage region
+     * Figure out current frame's damage region
      *
-     * If current frame doesn’t have any scroll damage, we can simply
-     * subtract this frame’s damage from the last frame’s damage. That
-     * way, we don’t have to copy areas from the old frame that’ll
+     * If current frame doesn't have any scroll damage, we can simply
+     * subtract this frame's damage from the last frame's damage. That
+     * way, we don't have to copy areas from the old frame that'll
      * just get overwritten by current frame.
      *
-     * Note that this is row based. A “half damaged” row is not
+     * Note that this is row based. A "half damaged" row is not
      * excluded. I.e. the entire row will be copied from the old frame
      * to the new, and then when actually rendering the new frame, the
      * updated cells will overwrite parts of the copied row.
      *
-     * Since we’re scanning the entire viewport anyway, we also track
+     * Since we're scanning the entire viewport anyway, we also track
      * whether *all* cells are to be updated. In this case, just force
-     * a full re-rendering, and don’t copy anything from the old
+     * a full re-rendering, and don't copy anything from the old
      * frame.
      */
     bool full_repaint_needed = true;
@@ -2815,28 +2815,28 @@ reapply_old_damage(struct terminal *term, struct buffer *new, struct buffer *old
     }
 
     /*
-     * TODO: re-apply last frame’s scroll damage
+     * TODO: re-apply last frame's scroll damage
      *
      * We used to do this, but it turned out to be buggy. If we decide
-     * to re-add it, this is where to do it. Note that we’d also have
+     * to re-add it, this is where to do it. Note that we'd also have
      * to remove the updates to buf->dirty from grid_render_scroll()
      * and grid_render_scroll_reverse().
      */
 
     if (tll_length(term->grid->scroll_damage) == 0) {
         /*
-         * We can only subtract current frame’s damage from the old
-         * frame’s if we don’t have any scroll damage.
+         * We can only subtract current frame's damage from the old
+         * frame's if we don't have any scroll damage.
          *
          * If we do have scroll damage, the damage region we
          * calculated above is not (yet) valid - we need to apply the
-         * current frame’s scroll damage *first*. This is done later,
+         * current frame's scroll damage *first*. This is done later,
          * when rendering the frame.
          */
         pixman_region32_subtract(&dirty, &old->dirty[0], &dirty);
         pixman_image_set_clip_region32(new->pix[0], &dirty);
     } else {
-        /* Copy *all* of last frame’s damaged areas */
+        /* Copy *all* of last frame's damaged areas */
         pixman_image_set_clip_region32(new->pix[0], &old->dirty[0]);
     }
 
@@ -2895,7 +2895,7 @@ grid_render(struct terminal *term)
     struct buffer_chain *chain = term->render.chains.grid;
     struct buffer *buf = shm_get_buffer(chain, term->width, term->height);
 
-    /* Dirty old and current cursor cell, to ensure they’re repainted */
+    /* Dirty old and current cursor cell, to ensure they're repainted */
     dirty_old_cursor(term);
     dirty_cursor(term);
 
@@ -3014,11 +3014,11 @@ grid_render(struct terminal *term)
                  * they are overflowing.
                  *
                  * As soon as we see a non-overflowing cell we can
-                 * stop, since it isn’t affecting the string of
+                 * stop, since it isn't affecting the string of
                  * overflowing glyphs that follows it.
                  *
                  * As soon as we see a dirty cell, we can stop, since
-                 * that means we’ve already handled it (remember the
+                 * that means we've already handled it (remember the
                  * outer loop goes from left to right).
                  */
                 for (struct cell *c = cell - 1; c >= &row->cells[0]; c--) {
@@ -3036,9 +3036,9 @@ grid_render(struct terminal *term)
                  * Note that the first non-overflowing cell must be
                  * re-rendered as well, but any cell *after* that is
                  * unaffected by the string of overflowing glyphs
-                 * we’re dealing with right now.
+                 * we're dealing with right now.
                  *
-                 * For performance, this iterates the *outer* loop’s
+                 * For performance, this iterates the *outer* loop's
                  * cell pointer - no point in re-checking all these
                  * glyphs again, in the outer loop.
                  */
@@ -3213,9 +3213,9 @@ render_search_box(struct terminal *term)
 
     /*
      * We treat the search box pretty much like a row of cells. That
-     * is, a glyph is either 1 or 2 (or more) “cells” wide.
+     * is, a glyph is either 1 or 2 (or more) "cells" wide.
      *
-     * The search ‘length’, and ‘cursor’ (position) is in
+     * The search 'length', and 'cursor' (position) is in
      * *characters*, not cells. This means we need to translate from
      * character count to cell count when calculating the length of
      * the search box, where in the search string we should start
@@ -3383,7 +3383,7 @@ render_search_box(struct terminal *term)
     }
 
     /*
-     * Render the search string, starting at ‘glyph_offset’. Note that
+     * Render the search string, starting at 'glyph_offset'. Note that
      * glyph_offset is in cells, not characters
      */
     for (size_t i = 0,
@@ -3656,7 +3656,7 @@ render_urls(struct terminal *term)
         int x = col * term->cell_width - 15 * term->cell_width / 10;
         int y = row * term->cell_height - 5 * term->cell_height / 10;
 
-        /* Don’t position it outside our window */
+        /* Don't position it outside our window */
         if (x < -term->margins.left)
             x = -term->margins.left;
         if (y < -term->margins.top)
@@ -3697,12 +3697,12 @@ render_urls(struct terminal *term)
             label[i] = U' ';
 
         /*
-         * Don’t extend outside our window
+         * Don't extend outside our window
          *
-         * Truncate label so that it doesn’t extend outside our
+         * Truncate label so that it doesn't extend outside our
          * window.
          *
-         * Do it in a way such that we don’t cut the label in the
+         * Do it in a way such that we don't cut the label in the
          * middle of a double-width character.
          */
 
@@ -3881,7 +3881,7 @@ delayed_reflow_of_normal_grid(struct terminal *term)
         term->selection.coords.end.row >= 0 ? ALEN(tracking_points) : 0,
         tracking_points);
 
-    /* Replace the current, truncated, “normal” grid with the
+    /* Replace the current, truncated, "normal" grid with the
      * correctly reflowed one */
     grid_free(&term->normal);
     term->normal = *term->interactive_resizing.grid;
@@ -3944,7 +3944,7 @@ send_dimensions_to_client(struct terminal *term)
             win->resize_timeout_fd = -1;
         }
     } else {
-        /* Send new dimensions to client “in a while” */
+        /* Send new dimensions to client "in a while" */
         assert(win->is_resizing && term->conf->resize_delay_ms > 0);
 
         int fd = win->resize_timeout_fd;
@@ -3988,9 +3988,25 @@ send_dimensions_to_client(struct terminal *term)
     }
 }
 
+static void
+set_size_from_grid(struct terminal *term, int *width, int *height, int cols, int rows)
+{
+    /* Nominal grid dimensions */
+    *width = cols * term->cell_width;
+    *height = rows * term->cell_height;
+
+    /* Include any configured padding */
+    *width += 2 * term->conf->pad_x * term->scale;
+    *height += 2 * term->conf->pad_y * term->scale;
+
+    /* Round to multiples of scale */
+    *width = round(term->scale * round(*width / term->scale));
+    *height = round(term->scale * round(*height / term->scale));
+}
+
 /* Move to terminal.c? */
-static bool
-maybe_resize(struct terminal *term, int width, int height, bool force)
+bool
+render_resize(struct terminal *term, int width, int height, uint8_t opts)
 {
     if (term->shutdown.in_progress)
         return false;
@@ -4001,21 +4017,29 @@ maybe_resize(struct terminal *term, int width, int height, bool force)
     if (term->cell_width == 0 && term->cell_height == 0)
         return false;
 
+    const bool is_floating =
+        !term->window->is_maximized &&
+        !term->window->is_fullscreen &&
+        !term->window->is_tiled;
+
+    /* Convert logical size to physical size */
     const float scale = term->scale;
     width = round(width * scale);
     height = round(height * scale);
 
+    /* If the grid should be kept, the size should be overridden */
+    if (is_floating && (opts & RESIZE_KEEP_GRID)) {
+        set_size_from_grid(term, &width, &height, term->cols, term->rows);
+    }
+
     if (width == 0 && height == 0) {
-        /*
-         * The compositor is letting us choose the size
-         *
-         * If we have a "last" used size - use that. Otherwise, use
-         * the size from the user configuration.
-         */
+        /* The compositor is letting us choose the size */
         if (term->stashed_width != 0 && term->stashed_height != 0) {
+            /* If a default size is requested, prefer the "last used" size */
             width = term->stashed_width;
             height = term->stashed_height;
         } else {
+            /* Otherwise, use a user-configured size */
             switch (term->conf->size.type) {
             case CONF_SIZE_PX:
                 width = term->conf->size.width;
@@ -4035,15 +4059,8 @@ maybe_resize(struct terminal *term, int width, int height, bool force)
                 break;
 
             case CONF_SIZE_CELLS:
-                width = term->conf->size.width * term->cell_width;
-                height = term->conf->size.height * term->cell_height;
-
-                width += 2 * term->conf->pad_x * scale;
-                height += 2 * term->conf->pad_y * scale;
-
-                /* Ensure width/height is a valid multiple of scale */
-                width = roundf(scale * roundf(width / scale));
-                height = roundf(scale * roundf(height / scale));
+                set_size_from_grid(term, &width, &height,
+                                   term->conf->size.width, term->conf->size.height);
                 break;
             }
         }
@@ -4066,8 +4083,25 @@ maybe_resize(struct terminal *term, int width, int height, bool force)
     const int pad_x = min(max_pad_x, scale * term->conf->pad_x);
     const int pad_y = min(max_pad_y, scale * term->conf->pad_y);
 
-    if (!force && width == term->width && height == term->height && scale == term->scale)
+    if (is_floating &&
+        (opts & RESIZE_BY_CELLS) &&
+        term->conf->resize_by_cells)
+    {
+        /* If resizing in cell increments, restrict the width and height */
+        width = ((width - 2 * pad_x) / term->cell_width) * term->cell_width + 2 * pad_x;
+        width = max(min_width, roundf(scale * roundf(width / scale)));
+
+        height = ((height - 2 * pad_y) / term->cell_height) * term->cell_height + 2 * pad_y;
+        height = max(min_height, roundf(scale * roundf(height / scale)));
+    }
+
+    if (!(opts & RESIZE_FORCE) &&
+        width == term->width &&
+        height == term->height &&
+        scale == term->scale)
+    {
         return false;
+    }
 
     /* Cancel an application initiated "Synchronized Update" */
     term_disable_app_sync_updates(term);
@@ -4125,8 +4159,8 @@ maybe_resize(struct terminal *term, int width, int height, bool force)
 
 
     /*
-     * Since text reflow is slow, don’t do it *while* resizing. Only
-     * do it when done, or after “pausing” the resize for sufficiently
+     * Since text reflow is slow, don't do it *while* resizing. Only
+     * do it when done, or after "pausing" the resize for sufficiently
      * long. We reuse the TIOCSWINSZ timer to handle this. See
      * send_dimensions_to_client() and fdm_tiocswinsz().
      *
@@ -4137,7 +4171,7 @@ maybe_resize(struct terminal *term, int width, int height, bool force)
         if (term->interactive_resizing.grid == NULL) {
             term_ptmx_pause(term);
 
-            /* Stash the current ‘normal’ grid, as-is, to be used when
+            /* Stash the current 'normal' grid, as-is, to be used when
              * doing the final reflow */
             term->interactive_resizing.old_screen_rows = term->rows;
             term->interactive_resizing.old_cols = term->cols;
@@ -4148,7 +4182,7 @@ maybe_resize(struct terminal *term, int width, int height, bool force)
             if (term->grid == &term->normal)
                 term->interactive_resizing.selection_coords = term->selection.coords;
         } else {
-            /* We’ll replace the current temporary grid, with a new
+            /* We'll replace the current temporary grid, with a new
              * one (again based on the original grid) */
             grid_free(&term->normal);
         }
@@ -4158,12 +4192,12 @@ maybe_resize(struct terminal *term, int width, int height, bool force)
         /*
          * Copy the current viewport (of the original grid) to a new
          * grid that will be used during the resize. For now, throw
-         * away sixels and OSC-8 URLs. They’ll be "restored" when we
+         * away sixels and OSC-8 URLs. They'll be "restored" when we
          * do the final reflow.
          *
          * Note that OSC-8 URLs are perfectly ok to throw away; they
          * cannot be interacted with during the resize. And, even if
-         * url.osc8-underline=always, the “underline” attribute is
+         * url.osc8-underline=always, the "underline" attribute is
          * part of the cell, not the URI struct (and thus our faked
          * grid will still render OSC-8 links underlined).
          *
@@ -4205,7 +4239,7 @@ maybe_resize(struct terminal *term, int width, int height, bool force)
         selection_cancel(term);
     else {
         /*
-         * Don’t cancel, but make sure there aren’t any ongoing
+         * Don't cancel, but make sure there aren't any ongoing
          * selections after the resize.
          */
         tll_foreach(term->wl->seats, it) {
@@ -4217,7 +4251,7 @@ maybe_resize(struct terminal *term, int width, int height, bool force)
     /*
      * TODO: if we remove the selection_finalize() call above (i.e. if
      * we start allowing selections to be ongoing across resizes), the
-     * selection’s pivot point coordinates *must* be added to the
+     * selection's pivot point coordinates *must* be added to the
      * tracking points list.
      */
     /* Resize grids */
@@ -4237,7 +4271,7 @@ maybe_resize(struct terminal *term, int width, int height, bool force)
         int old_normal_rows = old_rows;
 
         if (term->interactive_resizing.grid != NULL) {
-            /* Throw away the current, truncated, “normal” grid, and
+            /* Throw away the current, truncated, "normal" grid, and
              * use the original grid instead (from before the resize
              * started) */
             grid_free(&term->normal);
@@ -4301,10 +4335,7 @@ damage_view:
     /* Signal TIOCSWINSZ */
     send_dimensions_to_client(term);
 
-    if (!term->window->is_maximized &&
-        !term->window->is_fullscreen &&
-        !term->window->is_tiled)
-    {
+    if (is_floating) {
         /* Stash current size, to enable us to restore it when we're
          * being un-maximized/fullscreened/tiled */
         term->stashed_width = term->width;
@@ -4365,18 +4396,6 @@ damage_view:
     render_refresh(term);
 
     return true;
-}
-
-bool
-render_resize(struct terminal *term, int width, int height)
-{
-    return maybe_resize(term, width, height, false);
-}
-
-bool
-render_resize_force(struct terminal *term, int width, int height)
-{
-    return maybe_resize(term, width, height, true);
 }
 
 static void xcursor_callback(
@@ -4565,9 +4584,6 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
 void
 render_refresh_title(struct terminal *term)
 {
-    if (term->render.title.is_armed)
-        return;
-
     struct timespec now;
     if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
         return;
@@ -4587,6 +4603,28 @@ render_refresh_title(struct terminal *term)
     }
 
     render_refresh_csd(term);
+}
+
+void
+render_refresh_app_id(struct terminal *term)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
+        return;
+
+    struct timespec diff;
+    timespec_sub(&now, &term->render.app_id.last_update, &diff);
+
+    if (diff.tv_sec == 0 && diff.tv_nsec < 8333 * 1000) {
+        const struct itimerspec timeout = {
+            .it_value = {.tv_nsec = 8333 * 1000 - diff.tv_nsec},
+        };
+
+        timerfd_settime(term->render.app_id.timer_fd, 0, &timeout, NULL);
+    } else {
+        term->render.app_id.last_update = now;
+        xdg_toplevel_set_app_id(term->window->xdg_toplevel, term->app_id ? term->app_id : term->conf->app_id);
+    }
 }
 
 void
@@ -4635,8 +4673,8 @@ render_xcursor_set(struct seat *seat, struct terminal *term,
 
     if (seat->pointer.shape == shape &&
         !(shape == CURSOR_SHAPE_CUSTOM &&
-          strcmp(seat->pointer.last_custom_xcursor,
-                 term->mouse_user_cursor) != 0))
+          !streq(seat->pointer.last_custom_xcursor,
+                 term->mouse_user_cursor)))
     {
         return true;
     }

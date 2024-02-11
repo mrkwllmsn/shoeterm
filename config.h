@@ -44,12 +44,14 @@ struct config_font {
 };
 DEFINE_LIST(struct config_font);
 
+#if 0
 struct config_key_modifiers {
     bool shift;
     bool alt;
     bool ctrl;
     bool super;
 };
+#endif
 
 struct argv {
     char **args;
@@ -80,9 +82,12 @@ enum key_binding_type {
     MOUSE_BINDING,
 };
 
+typedef tll(char *) config_modifier_list_t;
+
 struct config_key_binding {
     int action;  /* One of the varios bind_action_* enums from wayland.h */
-    struct config_key_modifiers modifiers;
+    //struct config_key_modifiers modifiers;
+    config_modifier_list_t modifiers;
     union {
         /* Key bindings */
         struct {
@@ -134,6 +139,9 @@ struct config {
     unsigned pad_x;
     unsigned pad_y;
     bool center;
+
+    bool resize_by_cells;
+
     uint16_t resize_delay_ms;
 
     struct {
@@ -268,7 +276,8 @@ struct config {
     struct {
         bool hide_when_typing;
         bool alternate_scroll_mode;
-        struct config_key_modifiers selection_override_modifiers;
+        //struct config_key_modifiers selection_override_modifiers;
+        config_modifier_list_t selection_override_modifiers;
     } mouse;
 
     struct {
@@ -310,7 +319,7 @@ struct config {
             uint32_t buttons;
             uint32_t minimize;
             uint32_t maximize;
-            uint32_t quit;  /* ‘close’ collides with #define in epoll-shim */
+            uint32_t quit;  /* 'close' collides with #define in epoll-shim */
             uint32_t border;
         } color;
 
@@ -380,10 +389,11 @@ struct config *config_clone(const struct config *old);
 bool config_font_parse(const char *pattern, struct config_font *font);
 void config_font_list_destroy(struct config_font_list *font_list);
 
+#if 0
 struct seat;
 xkb_mod_mask_t
 conf_modifiers_to_mask(
     const struct seat *seat, const struct config_key_modifiers *modifiers);
-
+#endif
 bool check_if_font_is_monospaced(
     const char *pattern, user_notifications_t *notifications);

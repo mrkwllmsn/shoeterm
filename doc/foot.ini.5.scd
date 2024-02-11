@@ -252,6 +252,21 @@ empty string to be set, but it must be quoted: *KEY=""*)
 	
 	Default: _100_.
 
+*resize-by-cells*
+	Boolean.
+
+	When set to *yes*, the window size will be constrained to multiples
+	of the cell size (plus any configured padding). When set to *no*,
+	the window size will be unconstrained, and padding may be adjusted
+	as necessary to accommodate window sizes that are not multiples of
+	the cell size.
+
+	This option only applies to floating windows. Sizes of maxmized, tiled
+	or fullscreen windows will not be constrained to multiples of the cell
+	size.
+
+	Default: _yes_
+
 *initial-window-size-pixels*
 	Initial window width and height in _pixels_ (subject to output
 	scaling), in the form _WIDTHxHEIGHT_. The height _includes_ the
@@ -836,11 +851,12 @@ e.g. *search-start=none*.
 *fullscreen*
 	Toggles the fullscreen state. Default: _none_.
 
-*pipe-visible*, *pipe-scrollback*, *pipe-selected*
-	Pipes the currently visible text, the entire scrollback, or the
-	currently selected text to an external tool. The syntax for this
-	option is a bit special; the first part of the value is the
-	command to execute enclosed in "[]", followed by the binding(s).
+*pipe-visible*, *pipe-scrollback*, *pipe-selected*, *pipe-command-output*
+	Pipes the currently visible text, the entire scrollback, the
+	currently selected text, or the last command's output to an
+	external tool. The syntax for this option is a bit special; the
+	first part of the value is the command to execute enclosed in
+	"[]", followed by the binding(s).
 	
 	You can configure multiple pipes as long as the command strings
 	are different and the key bindings are unique.
@@ -848,9 +864,14 @@ e.g. *search-start=none*.
 	Note that the command is *not* automatically run inside a shell;
 	use *sh -c "command line"* if you need that.
 	
-	Example:
-		*pipe-visible=[sh -c "xurls | uniq | tac | fuzzel | xargs -r
-		firefox"] Control+Print*
+	Example #1:
+		# Extract currently visible URLs, let user choose one (via
+		fuzzel), then launch firefox with the selected URL++
+*pipe-visible=[sh -c "xurls | uniq | tac | fuzzel | xargs -r firefox"] Control+Print*
+	
+	Example #2:
+		# Open scrollback contents in Emacs running in a new foot instance++
+*pipe-scrollback=[sh -c "f=$(mktemp) && cat - > $f && foot emacsclient -t $f; rm $f"] Control+Shift+Print*
 	
 	Default: _none_
 

@@ -260,8 +260,8 @@ fdm_ptmx(struct fdm *fdm, int fd, int events, void *data)
 
     if (unlikely(term->interactive_resizing.grid != NULL)) {
         /*
-         * Don’t consume PTMX while we’re doing an interactive resize,
-         * since the ‘normal’ grid we’re currently using is a
+         * Don't consume PTMX while we're doing an interactive resize,
+         * since the 'normal' grid we're currently using is a
          * temporary one - all changes done to it will be lost when
          * the interactive resize ends.
          */
@@ -622,9 +622,32 @@ fdm_title_update_timeout(struct fdm *fdm, int fd, int events, void *data)
 
     struct itimerspec reset = {{0}};
     timerfd_settime(term->render.title.timer_fd, 0, &reset, NULL);
-    term->render.title.is_armed = false;
 
     render_refresh_title(term);
+    return true;
+}
+
+static bool
+fdm_app_id_update_timeout(struct fdm *fdm, int fd, int events, void *data)
+{
+    if (events & EPOLLHUP)
+        return false;
+
+    struct terminal *term = data;
+    uint64_t unused;
+    ssize_t ret = read(term->render.app_id.timer_fd, &unused, sizeof(unused));
+
+    if (ret < 0) {
+        if (errno == EAGAIN)
+            return true;
+        LOG_ERRNO("failed to read app ID update throttle timer");
+        return false;
+    }
+
+    struct itimerspec reset = {{0}};
+    timerfd_settime(term->render.app_id.timer_fd, 0, &reset, NULL);
+
+    render_refresh_app_id(term);
     return true;
 }
 
@@ -784,10 +807,11 @@ term_set_fonts(struct terminal *term, struct fcft_font *fonts[static 4],
      * render_resize() after this function */
     if (resize_grid) {
         /* Use force, since cell-width/height may have changed */
-        render_resize_force(
+        render_resize(
             term,
             (int)roundf(term->width / term->scale),
-            (int)roundf(term->height / term->scale));
+            (int)roundf(term->height / term->scale),
+            RESIZE_FORCE | RESIZE_KEEP_GRID);
     }
     return true;
 }
@@ -816,7 +840,7 @@ get_font_dpi(const struct terminal *term)
      * downscaled by the compositor.
      *
      * With the newer fractional-scale-v1 protocol, we use the
-     * monitor’s real DPI, since we scale everything to the correct
+     * monitor's real DPI, since we scale everything to the correct
      * scaling factor (no downscaling done by the compositor).
      */
 
@@ -939,11 +963,7 @@ reload_fonts(struct terminal *term, bool resize_grid)
                 snprintf(size, sizeof(size), ":size=%.2f",
                          term->font_sizes[i][j].pt_size * scale);
 
-            size_t len = strlen(font->pattern) + strlen(size) + 1;
-            names[i][j] = xmalloc(len);
-
-            strcpy(names[i][j], font->pattern);
-            strcat(names[i][j], size);
+            names[i][j] = xstrjoin(font->pattern, size);
         }
     }
 
@@ -966,30 +986,14 @@ reload_fonts(struct terminal *term, bool resize_grid)
     const char **names_bold_italic = (const char **)(custom_bold_italic ? names[3] : names[0]);
 
     const bool use_dpi = term->font_is_sized_by_dpi;
+    char *dpi = xasprintf("dpi=%.2f", use_dpi ? term->font_dpi : 96.);
 
-    char *attrs[4] = {NULL};
-    int attr_len[4] = {-1, -1, -1, -1};  /* -1, so that +1 (below) results in 0 */
-
-    for (size_t i = 0; i < 2; i++) {
-        attr_len[0] = snprintf(
-            attrs[0], attr_len[0] + 1, "dpi=%.2f",
-            use_dpi ? term->font_dpi : 96);
-        attr_len[1] = snprintf(
-            attrs[1], attr_len[1] + 1, "dpi=%.2f:%s",
-            use_dpi ? term->font_dpi : 96, !custom_bold ? "weight=bold" : "");
-        attr_len[2] = snprintf(
-            attrs[2], attr_len[2] + 1, "dpi=%.2f:%s",
-            use_dpi ? term->font_dpi : 96, !custom_italic ? "slant=italic" : "");
-        attr_len[3] = snprintf(
-            attrs[3], attr_len[3] + 1, "dpi=%.2f:%s",
-            use_dpi ? term->font_dpi : 96, !custom_bold_italic ? "weight=bold:slant=italic" : "");
-
-        if (i > 0)
-            continue;
-
-        for (size_t i = 0; i < 4; i++)
-            attrs[i] = xmalloc(attr_len[i] + 1);
-    }
+    char *attrs[4] = {
+        [0] = dpi, /* Takes ownership */
+        [1] = xstrjoin(dpi, !custom_bold ? ":weight=bold" : ""),
+        [2] = xstrjoin(dpi, !custom_italic ? ":slant=italic" : ""),
+        [3] = xstrjoin(dpi, !custom_bold_italic ? ":weight=bold:slant=italic" : ""),
+    };
 
     struct fcft_font *fonts[4];
     struct font_load_data data[4] = {
@@ -1061,7 +1065,7 @@ static void fdm_client_terminated(
 struct terminal *
 term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
           struct wayland *wayl, const char *foot_exe, const char *cwd,
-          const char *token, int argc, char *const *argv, char *const *envp,
+          const char *token, int argc, char *const *argv, const char *const *envp,
           void (*shutdown_cb)(void *data, int exit_code), void *shutdown_data)
 {
     int ptmx = -1;
@@ -1070,6 +1074,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
     int delay_upper_fd = -1;
     int app_sync_updates_fd = -1;
     int title_update_fd = -1;
+    int app_id_update_fd = -1;
 
     struct terminal *term = malloc(sizeof(*term));
     if (unlikely(term == NULL)) {
@@ -1104,6 +1109,12 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
         goto close_fds;
     }
 
+    if ((app_id_update_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0)
+    {
+        LOG_ERRNO("failed to create app ID update throttle timer FD");
+        goto close_fds;
+    }
+
     if (ioctl(ptmx, (unsigned int)TIOCSWINSZ,
               &(struct winsize){.ws_row = 24, .ws_col = 80}) < 0)
     {
@@ -1111,8 +1122,8 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
         goto close_fds;
     }
 
-    /* Need to register *very* early (before the first “goto err”), to
-     * ensure term_destroy() doesn’t unref a key-binding we haven’t
+    /* Need to register *very* early (before the first "goto err"), to
+     * ensure term_destroy() doesn't unref a key-binding we haven't
      * yet ref:d */
     key_binding_new_for_conf(wayl->key_binding_manager, wayl, conf);
 
@@ -1134,7 +1145,8 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
         !fdm_add(fdm, delay_lower_fd, EPOLLIN, &fdm_delayed_render, term) ||
         !fdm_add(fdm, delay_upper_fd, EPOLLIN, &fdm_delayed_render, term) ||
         !fdm_add(fdm, app_sync_updates_fd, EPOLLIN, &fdm_app_sync_updates_timeout, term) ||
-        !fdm_add(fdm, title_update_fd, EPOLLIN, &fdm_title_update_timeout, term))
+        !fdm_add(fdm, title_update_fd, EPOLLIN, &fdm_title_update_timeout, term) ||
+        !fdm_add(fdm, app_id_update_fd, EPOLLIN, &fdm_app_id_update_timeout, term))
     {
         goto err;
     }
@@ -1234,8 +1246,10 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
             .scrollback_lines = conf->scrollback.lines,
             .app_sync_updates.timer_fd = app_sync_updates_fd,
             .title = {
-                .is_armed = false,
                 .timer_fd = title_update_fd,
+            },
+            .app_id = {
+                .timer_fd = app_id_update_fd,
             },
             .workers = {
                 .count = conf->render_worker_count,
@@ -1345,6 +1359,7 @@ close_fds:
     fdm_del(fdm, delay_upper_fd);
     fdm_del(fdm, app_sync_updates_fd);
     fdm_del(fdm, title_update_fd);
+    fdm_del(fdm, app_id_update_fd);
 
     free(term);
     return NULL;
@@ -1365,11 +1380,11 @@ term_window_configured(struct terminal *term)
  *
  * A foot instance can be terminated in two ways:
  *
- *  - the client application terminates (user types ‘exit’, or pressed C-d in the
+ *  - the client application terminates (user types 'exit', or pressed C-d in the
  *    shell, etc)
  *  - the foot window is closed
  *
- * Both variants need to trigger to “other” action. I.e. if the client
+ * Both variants need to trigger to "other" action. I.e. if the client
  * application is terminated, then we need to close the window. If the window is
  * closed, we need to terminate the client application.
  *
@@ -1386,7 +1401,7 @@ term_window_configured(struct terminal *term)
  * - fdm_client_terminated(): reaper callback, called when the client
  *   application has terminated.
  *
- *     + Kills the “terminate” timeout timer
+ *     + Kills the "terminate" timeout timer
  *     + Calls shutdown_maybe_done() if the shutdown procedure has already
  *       started (i.e. the window being closed initiated the shutdown)
  *    -OR-
@@ -1394,18 +1409,18 @@ term_window_configured(struct terminal *term)
  *       application termination initiated the shutdown).
  *
  * - term_shutdown(): unregisters all FDM callbacks, sends SIGTERM to the client
- *   application and installs a “terminate” timeout timer (if it hasn’t already
+ *   application and installs a "terminate" timeout timer (if it hasn't already
  *   terminated). Finally registers an event FD with the FDM, which is
  *   immediately triggered. This is done to ensure any pending FDM events are
  *   handled before shutting down.
  *
  * - fdm_shutdown(): FDM callback, triggered by the event FD in
  *   term_shutdown(). Unmaps and destroys the window resources, and ensures the
- *   seats’ focused pointers don’t reference us. Finally calls
+ *   seats' focused pointers don't reference us. Finally calls
  *   shutdown_maybe_done().
  *
- * - fdm_terminate_timeout(): FDM callback for the “terminate” timeout
- *   timer. This function is called when the client application hasn’t
+ * - fdm_terminate_timeout(): FDM callback for the "terminate" timeout
+ *   timer. This function is called when the client application hasn't
  *   terminated after 60 seconds (after the SIGTERM). Sends SIGKILL to the
  *   client application.
  *
@@ -1416,7 +1431,7 @@ term_window_configured(struct terminal *term)
  *   It may however also be called without term_shutdown() having been called
  *   (typically in error code paths - for example, when the Wayland connection
  *   is closed by the compositor). In this case, the client application is
- *   typically still running, and we can’t assume the FDM is running. To handle
+ *   typically still running, and we can't assume the FDM is running. To handle
  *   this, we install configure a 60 second SIGALRM, send SIGTERM to the client
  *   application, and then enter a blocking waitpid().
  *
@@ -1537,6 +1552,7 @@ term_shutdown(struct terminal *term)
 
     fdm_del(term->fdm, term->selection.auto_scroll.fd);
     fdm_del(term->fdm, term->render.app_sync_updates.timer_fd);
+    fdm_del(term->fdm, term->render.app_id.timer_fd);
     fdm_del(term->fdm, term->render.title.timer_fd);
     fdm_del(term->fdm, term->delayed_render_timer.lower_fd);
     fdm_del(term->fdm, term->delayed_render_timer.upper_fd);
@@ -1575,6 +1591,7 @@ term_shutdown(struct terminal *term)
 
     term->selection.auto_scroll.fd = -1;
     term->render.app_sync_updates.timer_fd = -1;
+    term->render.app_id.timer_fd = -1;
     term->render.title.timer_fd = -1;
     term->delayed_render_timer.lower_fd = -1;
     term->delayed_render_timer.upper_fd = -1;
@@ -1628,6 +1645,7 @@ term_destroy(struct terminal *term)
 
     fdm_del(term->fdm, term->selection.auto_scroll.fd);
     fdm_del(term->fdm, term->render.app_sync_updates.timer_fd);
+    fdm_del(term->fdm, term->render.app_id.timer_fd);
     fdm_del(term->fdm, term->render.title.timer_fd);
     fdm_del(term->fdm, term->delayed_render_timer.lower_fd);
     fdm_del(term->fdm, term->delayed_render_timer.upper_fd);
@@ -1671,6 +1689,7 @@ term_destroy(struct terminal *term)
 
     composed_free(term->composed);
 
+    free(term->app_id);
     free(term->window_title);
     tll_free_and_free(term->window_title_stack, free);
 
@@ -1740,7 +1759,7 @@ term_destroy(struct terminal *term)
     int ret = EXIT_SUCCESS;
 
     if (term->slave > 0) {
-        /* We’ll deal with this explicitly */
+        /* We'll deal with this explicitly */
         reaper_del(term->reaper, term->slave);
 
         int exit_status;
@@ -1754,7 +1773,7 @@ term_destroy(struct terminal *term)
             kill(-term->slave, SIGTERM);
 
             /*
-             * we’ve closed the ptxm, and sent SIGTERM to the client
+             * we've closed the ptxm, and sent SIGTERM to the client
              * application. It *should* exit...
              *
              * But, since it is possible to write clients that ignore
@@ -1850,7 +1869,9 @@ erase_line(struct terminal *term, struct row *row)
 {
     erase_cell_range(term, row, 0, term->cols - 1);
     row->linebreak = false;
-    row->prompt_marker = false;
+    row->shell_integration.prompt_marker = false;
+    row->shell_integration.cmd_start = -1;
+    row->shell_integration.cmd_end = -1;
 }
 
 void
@@ -2106,31 +2127,42 @@ term_fractional_scaling(const struct terminal *term)
 }
 
 bool
+term_preferred_buffer_scale(const struct terminal *term)
+{
+    return term->wl->has_wl_compositor_v6;
+}
+
+bool
 term_update_scale(struct terminal *term)
 {
     const struct wl_window *win = term->window;
 
     /*
-     * We have a number of “sources” we can use as scale. We choose
+     * We have a number of "sources" we can use as scale. We choose
      * the scale in the following order:
      *
-     *  - “preferred” scale, from the fractional-scale-v1 protocol
+     *  - "preferred" scale, from the fractional-scale-v1 protocol
+     *  - "preferred" scale, from wl_compositor version 6.
+          NOTE: if the compositor advertises version 6 we must use 1.0
+          until wl_surface.preferred_buffer_scale is sent
      *  - scaling factor of output we most recently were mapped on
      *  - if we're not mapped, use the last known scaling factor
      *  - if we're not mapped, and we don't have a last known scaling
      *    factor, use the scaling factor from the first available
      *    output.
-     *  - if there aren’t any outputs available, use 1.0
+     *  - if there aren't any outputs available, use 1.0
      */
     const float new_scale = (term_fractional_scaling(term)
         ? win->scale
-        : tll_length(win->on_outputs) > 0
-            ? tll_back(win->on_outputs)->scale
-            : term->scale_before_unmap > 0.
-                ? term->scale_before_unmap
-                : tll_length(term->wl->monitors) > 0
-                    ? tll_front(term->wl->monitors).scale
-                    : 1.);
+        : term_preferred_buffer_scale(term)
+            ? win->preferred_buffer_scale
+            : tll_length(win->on_outputs) > 0
+                ? tll_back(win->on_outputs)->scale
+                : term->scale_before_unmap > 0.
+                    ? term->scale_before_unmap
+                    : tll_length(term->wl->monitors) > 0
+                        ? tll_front(term->wl->monitors).scale
+                        : 1.);
 
     if (new_scale == term->scale)
         return false;
@@ -2280,7 +2312,7 @@ term_damage_scroll(struct terminal *term, enum damage_type damage_type,
                 dmg->region.start == region.start &&
                 dmg->region.end == region.end))
         {
-            /* Make sure we don’t overflow... */
+            /* Make sure we don't overflow... */
             int new_line_count = (int)dmg->lines + lines;
             if (likely(new_line_count <= UINT16_MAX)) {
                 dmg->lines = new_line_count;
@@ -2344,14 +2376,14 @@ term_erase_scrollback(struct terminal *term)
     if (sel_end >= 0) {
         /*
          * Cancel selection if it touches any of the rows in the
-         * scrollback, since we can’t have the selection reference
+         * scrollback, since we can't have the selection reference
          * soon-to-be deleted rows.
          *
          * This is done by range checking the selection range against
          * the scrollback range.
          *
          * To make this comparison simpler, the start/end absolute row
-         * numbers are “rebased” against the scrollback start, where
+         * numbers are "rebased" against the scrollback start, where
          * row 0 is the *first* row in the scrollback. A high number
          * thus means the row is further *down* in the scrollback,
          * closer to the screen bottom.
@@ -3061,7 +3093,7 @@ term_mouse_grabbed(const struct terminal *term, const struct seat *seat)
      */
 
     xkb_mod_mask_t mods;
-    get_current_modifiers(seat, &mods, NULL, 0);
+    get_current_modifiers(seat, &mods, NULL, 0, true);
 
     const struct key_binding_set *bindings =
         key_binding_for(term->wl->key_binding_manager, term->conf, seat);
@@ -3266,13 +3298,39 @@ term_set_window_title(struct terminal *term, const char *title)
     if (term->conf->locked_title && term->window_title_has_been_set)
         return;
 
-    if (term->window_title != NULL && strcmp(term->window_title, title) == 0)
+    if (term->window_title != NULL && streq(term->window_title, title))
         return;
+
+    if (mbsntoc32(NULL, title, strlen(title), 0) == (char32_t)-1) {
+        /* It's an xdg_toplevel::set_title() protocol violation to set
+           a title with an invalid UTF-8 sequence */
+        LOG_WARN("%s: title is not valid UTF-8, ignoring", title);
+        return;
+    }
 
     free(term->window_title);
     term->window_title = xstrdup(title);
     render_refresh_title(term);
     term->window_title_has_been_set = true;
+}
+
+void
+term_set_app_id(struct terminal *term, const char *app_id)
+{
+    if (app_id != NULL && *app_id == '\0')
+        app_id = NULL;
+    if (term->app_id == NULL && app_id == NULL)
+        return;
+    if (term->app_id != NULL && app_id != NULL && strcmp(term->app_id, app_id) == 0)
+        return;
+
+    free(term->app_id);
+    if (app_id != NULL) {
+        term->app_id = xstrdup(app_id);
+    } else {
+        term->app_id = NULL;
+    }
+    render_refresh_app_id(term);
 }
 
 void
@@ -3302,7 +3360,7 @@ term_bell(struct terminal *term)
         if (!wayl_win_set_urgent(term->window)) {
             /*
              * Urgency (xdg-activation) is relatively new in
-             * Wayland. Fallback to our old, “faked”, urgency -
+             * Wayland. Fallback to our old, "faked", urgency -
              * rendering our window margins in red
              */
             term->render.urgency = true;
@@ -3633,7 +3691,7 @@ term_surface_kind(const struct terminal *term, const struct wl_surface *surface)
 
 static bool
 rows_to_text(const struct terminal *term, int start, int end,
-             char **text, size_t *len)
+             int col_start, int col_end, char **text, size_t *len)
 {
     struct extraction_context *ctx = extract_begin(SELECTION_NONE, true);
     if (ctx == NULL)
@@ -3646,15 +3704,20 @@ rows_to_text(const struct terminal *term, int start, int end,
         const struct row *row = term->grid->rows[r];
         xassert(row != NULL);
 
-        for (int c = 0; c < term->cols; c++)
+        const int c_end = r == end ? col_end : term->cols;
+
+        for (int c = col_start; c < c_end; c++) {
             if (!extract_one(term, row, &row->cells[c], c, ctx))
                 goto out;
+        }
 
         if (r == end)
             break;
 
         r++;
         r &= grid_rows - 1;
+
+        col_start = 0;
     }
 
 out:
@@ -3686,7 +3749,7 @@ term_scrollback_to_text(const struct terminal *term, char **text, size_t *len)
             end += term->grid->num_rows;
     }
 
-    return rows_to_text(term, start, end, text, len);
+    return rows_to_text(term, start, end, 0, term->cols, text, len);
 }
 
 bool
@@ -3694,7 +3757,91 @@ term_view_to_text(const struct terminal *term, char **text, size_t *len)
 {
     int start = grid_row_absolute_in_view(term->grid, 0);
     int end = grid_row_absolute_in_view(term->grid, term->rows - 1);
-    return rows_to_text(term, start, end, text, len);
+    return rows_to_text(term, start, end, 0, term->cols, text, len);
+}
+
+bool
+term_command_output_to_text(const struct terminal *term, char **text, size_t *len)
+{
+    int start_row = -1;
+    int end_row = -1;
+    int start_col = -1;
+    int end_col = -1;
+
+    const struct grid *grid = term->grid;
+    const int sb_end = grid_row_absolute(grid, term->rows - 1);
+    const int sb_start = (sb_end + 1) & (grid->num_rows - 1);
+    int r = sb_end;
+
+    while (start_row < 0) {
+        const struct row *row = grid->rows[r];
+        if (row == NULL)
+            break;
+
+        if (row->shell_integration.cmd_end >= 0) {
+            end_row = r;
+            end_col = row->shell_integration.cmd_end;
+        }
+
+        if (end_row >= 0 && row->shell_integration.cmd_start >= 0) {
+            start_row = r;
+            start_col = row->shell_integration.cmd_start;
+        }
+
+        if (r == sb_start)
+            break;
+
+        r = (r - 1 + grid->num_rows) & (grid->num_rows - 1);
+    }
+
+    if (start_row < 0)
+        return false;
+
+    bool ret = rows_to_text(term, start_row, end_row, start_col, end_col, text, len);
+    if (!ret)
+        return false;
+
+    /*
+     * If the FTCS_COMMAND_FINISHED marker was emitted at the *first*
+     * column, then the *entire* previous line is part of the command
+     * output. *Including* the newline, if any.
+     *
+     * Since rows_to_text() doesn't extract the column
+     * FTCS_COMMAND_FINISHED was emitted at (that would be wrong -
+     * FTCS_COMMAND_FINISHED is emitted *after* the command output,
+     * not at its last character), the extraction logic will not see
+     * the last newline (this is true for all non-line-wise selection
+     * types), and the extracted text will *not* end with a newline.
+     *
+     * Here we try to compensate for that. Note that if 'end_col' is
+     * not 0, then the command output only covers a partial row, and
+     * thus we do *not* want to append a newline.
+     */
+
+    if (end_col > 0) {
+        /* Command output covers partial row - don't append newline */
+        return true;
+    }
+
+    int next_to_last_row = (end_row - 1 + grid->num_rows) & (grid->num_rows - 1);
+    const struct row *row = grid->rows[next_to_last_row];
+
+    /* Add newline if last row has a hard linebreak */
+    if (row->linebreak) {
+        char *new_text = xrealloc(*text, *len + 1 + 1);
+
+        if (new_text == NULL) {
+            /* Ignore failure - use text as is (without inserting newline) */
+            return true;
+        }
+
+        *text = new_text;
+        (*len)++;
+        (*text)[*len - 1] = '\n';
+        (*text)[*len] = '\0';
+    }
+
+    return true;
 }
 
 bool

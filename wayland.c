@@ -392,8 +392,8 @@ static void
 update_term_for_output_change(struct terminal *term)
 {
     const float old_scale = term->scale;
-    const float logical_width = term->width / term->scale;
-    const float logical_height = term->height / term->scale;
+    const float logical_width = term->width / old_scale;
+    const float logical_height = term->height / old_scale;
 
     /* Note: order matters! term_update_scale() must come first */
     bool scale_updated = term_update_scale(term);
@@ -402,24 +402,37 @@ update_term_for_output_change(struct terminal *term)
 
     csd_reload_font(term->window, old_scale);
 
+    enum resize_options resize_opts = RESIZE_KEEP_GRID;
+
     if (fonts_updated) {
         /*
          * If the fonts have been updated, the cell dimensions have
-         * changed. This requires a “forced” resize, since the surface
+         * changed. This requires a "forced" resize, since the surface
          * buffer dimensions may not have been updated (in which case
-         * render_size() normally shortcuts and returns early).
+         * render_resize() normally shortcuts and returns early).
          */
-        render_resize_force(term, (int)roundf(logical_width), (int)roundf(logical_height));
+        resize_opts |= RESIZE_FORCE;
+    } else if (!scale_updated) {
+        /* No need to resize if neither scale nor fonts have changed */
+        return;
+    } else if (term->conf->dpi_aware) {
+        /*
+	 * If fonts are sized according to DPI, it is possible for the cell
+	 * size to remain the same when display scale changes. This will not
+	 * change the surface buffer dimensions, but will change the logical
+	 * size of the window. To ensure that the compositor is made aware of
+	 * the proper logical size, force a resize rather than allowing
+	 * render_resize() to shortcut the notification if the buffer
+	 * dimensions remain the same.
+	 */
+        resize_opts |= RESIZE_FORCE;
     }
 
-    else if (scale_updated) {
-        /*
-         * A scale update means the surface buffer dimensions have
-         * been updated, even though the window logical dimensions
-         * haven’t changed.
-         */
-        render_resize(term, (int)roundf(logical_width), (int)roundf(logical_height));
-    }
+    render_resize(
+        term,
+        (int)roundf(logical_width),
+        (int)roundf(logical_height),
+        resize_opts);
 }
 
 static void
@@ -705,9 +718,37 @@ surface_leave(void *data, struct wl_surface *wl_surface,
     LOG_WARN("unmapped from unknown output");
 }
 
+#if defined(WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION)
+static void
+surface_preferred_buffer_scale(void *data, struct wl_surface *surface,
+                               int32_t scale)
+{
+    struct wl_window *win = data;
+
+    if (win->preferred_buffer_scale == scale)
+        return;
+
+    LOG_DBG("wl_surface preferred scale: %d -> %d", win->preferred_buffer_scale, scale);
+
+    win->preferred_buffer_scale = scale;
+    update_term_for_output_change(win->term);
+}
+
+static void
+surface_preferred_buffer_transform(void *data, struct wl_surface *surface,
+                                   uint32_t transform)
+{
+
+}
+#endif
+
 static const struct wl_surface_listener surface_listener = {
     .enter = &surface_enter,
     .leave = &surface_leave,
+#if defined(WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION)
+    .preferred_buffer_scale = &surface_preferred_buffer_scale,
+    .preferred_buffer_transform = &surface_preferred_buffer_transform,
+#endif
 };
 
 static void
@@ -882,7 +923,7 @@ xdg_toplevel_wm_capabilities(void *data,
 
 static const struct xdg_toplevel_listener xdg_toplevel_listener = {
     .configure = &xdg_toplevel_configure,
-    /*.close = */&xdg_toplevel_close,  /* epoll-shim defines a macro ‘close’... */
+    /*.close = */&xdg_toplevel_close,  /* epoll-shim defines a macro 'close'... */
 #if defined(XDG_TOPLEVEL_CONFIGURE_BOUNDS_SINCE_VERSION)
     .configure_bounds = &xdg_toplevel_configure_bounds,
 #endif
@@ -948,9 +989,11 @@ xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
 
     xdg_surface_ack_configure(xdg_surface, serial);
 
+    enum resize_options opts = RESIZE_BY_CELLS;
+
 #if 1
     /*
-     * TODO: decide if we should do the last “forced” call when ending
+     * TODO: decide if we should do the last "forced" call when ending
      * an interactive resize.
      *
      * Without it, the last TIOCSWINSZ sent to the client will be a
@@ -961,12 +1004,11 @@ xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
      * Note: if we also disable content centering while resizing, then
      * the last, forced, resize *is* necessary.
      */
-    bool resized = was_resizing && !win->is_resizing
-        ? render_resize_force(term, new_width, new_height)
-        : render_resize(term, new_width, new_height);
-#else
-    bool resized = render_resize(term, new_width, new_height);
+    if (was_resizing && !win->is_resizing)
+        opts |= RESIZE_FORCE;
 #endif
+
+    bool resized = render_resize(term, new_width, new_height, opts);
 
     if (win->configure.is_activated)
         term_visual_focus_in(term);
@@ -1052,16 +1094,22 @@ handle_global(void *data, struct wl_registry *registry,
     LOG_DBG("global: 0x%08x, interface=%s, version=%u", name, interface, version);
     struct wayland *wayl = data;
 
-    if (strcmp(interface, wl_compositor_interface.name) == 0) {
+    if (streq(interface, wl_compositor_interface.name)) {
         const uint32_t required = 4;
         if (!verify_iface_version(interface, version, required))
             return;
 
+#if defined (WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION)
+        const uint32_t preferred = WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION;
+        wayl->has_wl_compositor_v6 = version >= WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION;
+#else
+        const uint32_t preferred = required;
+#endif
         wayl->compositor = wl_registry_bind(
-            wayl->registry, name, &wl_compositor_interface, required);
+            wayl->registry, name, &wl_compositor_interface, min(version, preferred));
     }
 
-    else if (strcmp(interface, wl_subcompositor_interface.name) == 0) {
+    else if (streq(interface, wl_subcompositor_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1070,7 +1118,7 @@ handle_global(void *data, struct wl_registry *registry,
             wayl->registry, name, &wl_subcompositor_interface, required);
     }
 
-    else if (strcmp(interface, wl_shm_interface.name) == 0) {
+    else if (streq(interface, wl_shm_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1080,7 +1128,7 @@ handle_global(void *data, struct wl_registry *registry,
         wl_shm_add_listener(wayl->shm, &shm_listener, wayl);
     }
 
-    else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
+    else if (streq(interface, xdg_wm_base_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1105,7 +1153,7 @@ handle_global(void *data, struct wl_registry *registry,
         xdg_wm_base_add_listener(wayl->shell, &xdg_wm_base_listener, wayl);
     }
 
-    else if (strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0) {
+    else if (streq(interface, zxdg_decoration_manager_v1_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1114,7 +1162,7 @@ handle_global(void *data, struct wl_registry *registry,
             wayl->registry, name, &zxdg_decoration_manager_v1_interface, required);
     }
 
-    else if (strcmp(interface, wl_seat_interface.name) == 0) {
+    else if (streq(interface, wl_seat_interface.name)) {
         const uint32_t required = 5;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1154,7 +1202,7 @@ handle_global(void *data, struct wl_registry *registry,
         wl_seat_add_listener(wl_seat, &seat_listener, seat);
     }
 
-    else if (strcmp(interface, zxdg_output_manager_v1_interface.name) == 0) {
+    else if (streq(interface, zxdg_output_manager_v1_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1171,7 +1219,7 @@ handle_global(void *data, struct wl_registry *registry,
         }
     }
 
-    else if (strcmp(interface, wl_output_interface.name) == 0) {
+    else if (streq(interface, wl_output_interface.name)) {
         const uint32_t required = 2;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1203,7 +1251,7 @@ handle_global(void *data, struct wl_registry *registry,
         }
     }
 
-    else if (strcmp(interface, wl_data_device_manager_interface.name) == 0) {
+    else if (streq(interface, wl_data_device_manager_interface.name)) {
         const uint32_t required = 3;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1215,7 +1263,7 @@ handle_global(void *data, struct wl_registry *registry,
             seat_add_data_device(&it->item);
     }
 
-    else if (strcmp(interface, zwp_primary_selection_device_manager_v1_interface.name) == 0) {
+    else if (streq(interface, zwp_primary_selection_device_manager_v1_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1228,7 +1276,7 @@ handle_global(void *data, struct wl_registry *registry,
             seat_add_primary_selection(&it->item);
     }
 
-    else if (strcmp(interface, wp_presentation_interface.name) == 0) {
+    else if (streq(interface, wp_presentation_interface.name)) {
         if (wayl->presentation_timings) {
             const uint32_t required = 1;
             if (!verify_iface_version(interface, version, required))
@@ -1241,7 +1289,7 @@ handle_global(void *data, struct wl_registry *registry,
         }
     }
 
-    else if (strcmp(interface, xdg_activation_v1_interface.name) == 0) {
+    else if (streq(interface, xdg_activation_v1_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1250,7 +1298,7 @@ handle_global(void *data, struct wl_registry *registry,
             wayl->registry, name, &xdg_activation_v1_interface, required);
     }
 
-    else if (strcmp(interface, wp_viewporter_interface.name) == 0) {
+    else if (streq(interface, wp_viewporter_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1259,7 +1307,7 @@ handle_global(void *data, struct wl_registry *registry,
             wayl->registry, name, &wp_viewporter_interface, required);
     }
 
-    else if (strcmp(interface, wp_fractional_scale_manager_v1_interface.name) == 0) {
+    else if (streq(interface, wp_fractional_scale_manager_v1_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1269,7 +1317,7 @@ handle_global(void *data, struct wl_registry *registry,
             &wp_fractional_scale_manager_v1_interface, required);
     }
 
-    else if (strcmp(interface, wp_cursor_shape_manager_v1_interface.name) == 0) {
+    else if (streq(interface, wp_cursor_shape_manager_v1_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1279,7 +1327,7 @@ handle_global(void *data, struct wl_registry *registry,
     }
 
 #if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
-    else if (strcmp(interface, zwp_text_input_manager_v3_interface.name) == 0) {
+    else if (streq(interface, zwp_text_input_manager_v3_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
@@ -1700,6 +1748,10 @@ wayl_win_init(struct terminal *term, const char *token)
             win->fractional_scale, &fractional_scale_listener, win);
     }
 
+    if (wayl->has_wl_compositor_v6) {
+        win->preferred_buffer_scale = 1;
+    }
+
     win->xdg_surface = xdg_wm_base_get_xdg_surface(wayl->shell, win->surface.surf);
     xdg_surface_add_listener(win->xdg_surface, &xdg_surface_listener, win);
 
@@ -2020,14 +2072,26 @@ surface_scale_explicit_width_height(
         wp_viewport_set_destination(
             surf->viewport, roundf(width / scale), roundf(height / scale));
     } else {
-        LOG_DBG("scaling by a factor of %.2f using legacy mode "
-                "(width=%d, height=%d)", scale, width, height);
+        const char *mode UNUSED = term_preferred_buffer_scale(win->term)
+            ? "wl_surface.preferred_buffer_scale"
+            : "legacy mode";
+        LOG_DBG("scaling by a factor of %.2f using %s "
+                "(width=%d, height=%d)" , scale, mode, width, height);
 
         xassert(scale == floorf(scale));
-
         const int iscale = (int)floorf(scale);
-        xassert(width % iscale == 0);
-        xassert(height % iscale == 0);
+
+        if (verify) {
+            if (width % iscale != 0) {
+                BUG("width=%d is not valid with scaling factor %.2f (%d %% %d != 0)",
+                    width, scale, width, iscale);
+            }
+
+            if (height % iscale != 0) {
+                BUG("height=%d is not valid with scaling factor %.2f (%d %% %d != 0)",
+                    height, scale, height, iscale);
+            }
+        }
 
         wl_surface_set_buffer_scale(surf->surf, iscale);
     }
@@ -2090,7 +2154,7 @@ bool
 wayl_win_set_urgent(struct wl_window *win)
 {
     if (win->urgency_token_is_pending) {
-        /* We already have a pending token. Don’t request another one,
+        /* We already have a pending token. Don't request another one,
          * to avoid flooding the Wayland socket */
         return true;
     }

@@ -60,7 +60,8 @@ fdm_event_del(struct fdm *fdm, int fd, int events)
 }
 
 bool
-render_resize_force(struct terminal *term, int width, int height)
+render_resize(
+    struct terminal *term, int width, int height, uint8_t resize_options)
 {
     return true;
 }
@@ -68,6 +69,7 @@ render_resize_force(struct terminal *term, int width, int height)
 void render_refresh(struct terminal *term) {}
 void render_refresh_csd(struct terminal *term) {}
 void render_refresh_title(struct terminal *term) {}
+void render_refresh_app_id(struct terminal *term) {}
 
 bool
 render_xcursor_is_valid(const struct seat *seat, const char *cursor)
@@ -173,7 +175,8 @@ void search_selection_cancelled(struct terminal *term) {}
 
 void get_current_modifiers(const struct seat *seat,
                            xkb_mod_mask_t *effective,
-                           xkb_mod_mask_t *consumed, uint32_t key) {}
+                           xkb_mod_mask_t *consumed, uint32_t key,
+                           bool filter_locked) {}
 
 static struct key_binding_set kbd;
 static bool kbd_initialized = false;

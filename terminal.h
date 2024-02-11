@@ -121,8 +121,11 @@ struct row {
     bool dirty;
     bool linebreak;
 
-    /* Shell integration */
-    bool prompt_marker;
+    struct {
+        bool prompt_marker;
+        int cmd_start;  /* Column, -1 if unset */
+        int cmd_end;    /* Column, -1 if unset */
+    } shell_integration;
 };
 
 struct sixel {
@@ -149,8 +152,8 @@ struct sixel {
      * We store the cell dimensions of the time the sixel was emitted.
      *
      * If the font size is changed, we rescale the image accordingly,
-     * to ensure it stays within its cell boundaries. ‘scaled’ is a
-     * cached, rescaled version of ‘data’ + ‘pix’.
+     * to ensure it stays within its cell boundaries. 'scaled' is a
+     * cached, rescaled version of 'data' + 'pix'.
      */
     int cell_width;
     int cell_height;
@@ -344,7 +347,7 @@ struct url {
     char32_t *key;
     struct range range;
     enum url_action action;
-    bool url_mode_dont_change_url_attr; /* Entering/exiting URL mode doesn’t touch the cells’ attr.url */
+    bool url_mode_dont_change_url_attr; /* Entering/exiting URL mode doesn't touch the cells' attr.url */
     bool osc8;
     bool duplicate;
 };
@@ -380,7 +383,7 @@ struct terminal {
     bool bracketed_paste;
     bool focus_events;
     bool alt_scrolling;
-    bool modify_other_keys_2;  /* True when modifyOtherKeys=2 (i.e. “CSI >4;2m”) */
+    bool modify_other_keys_2;  /* True when modifyOtherKeys=2 (i.e. "CSI >4;2m") */
     enum cursor_origin origin;
     enum cursor_keys cursor_keys_mode;
     enum keypad_keys keypad_keys_mode;
@@ -481,6 +484,7 @@ struct terminal {
     bool window_title_has_been_set;
     char *window_title;
     tll(char *) window_title_stack;
+    char *app_id;
 
     struct {
         bool active;
@@ -610,9 +614,13 @@ struct terminal {
 
         struct {
             struct timespec last_update;
-            bool is_armed;
             int timer_fd;
         } title;
+
+        struct {
+            struct timespec last_update;
+            int timer_fd;
+        } app_id;
 
         uint32_t scrollback_lines; /* Number of scrollback lines, from conf (TODO: move out from render struct?) */
 
@@ -658,7 +666,7 @@ struct terminal {
     } render;
 
     struct {
-        struct grid *grid;    /* Original ‘normal’ grid, before resize started */
+        struct grid *grid;    /* Original 'normal' grid, before resize started */
         int old_screen_rows;  /* term->rows before resize started */
         int old_cols;         /* term->cols before resize started */
         int old_hide_cursor;  /* term->hide_cursor before resize started */
@@ -692,7 +700,7 @@ struct terminal {
          * Pan is the vertical shape of a pixel
          * Pad is the horizontal shape of a pixel
          *
-         * pan/pad is the sixel’s aspect ratio
+         * pan/pad is the sixel's aspect ratio
          */
         int pan;
         int pad;
@@ -745,7 +753,7 @@ struct config;
 struct terminal *term_init(
     const struct config *conf, struct fdm *fdm, struct reaper *reaper,
     struct wayland *wayl, const char *foot_exe, const char *cwd,
-    const char *token, int argc, char *const *argv, char *const *envp,
+    const char *token, int argc, char *const *argv, const char *const *envp,
     void (*shutdown_cb)(void *data, int exit_code), void *shutdown_data);
 
 bool term_shutdown(struct terminal *term);
@@ -760,6 +768,7 @@ bool term_paste_data_to_slave(
     struct terminal *term, const void *data, size_t len);
 
 bool term_fractional_scaling(const struct terminal *term);
+bool term_preferred_buffer_scale(const struct terminal *term);
 bool term_update_scale(struct terminal *term);
 bool term_font_size_increase(struct terminal *term);
 bool term_font_size_decrease(struct terminal *term);
@@ -846,6 +855,7 @@ void term_xcursor_update_for_seat(struct terminal *term, struct seat *seat);
 void term_set_user_mouse_cursor(struct terminal *term, const char *cursor);
 
 void term_set_window_title(struct terminal *term, const char *title);
+void term_set_app_id(struct terminal *term, const char *app_id);
 void term_flash(struct terminal *term, unsigned duration_ms);
 void term_bell(struct terminal *term);
 bool term_spawn_new(const struct terminal *term);
@@ -859,6 +869,8 @@ enum term_surface term_surface_kind(
 bool term_scrollback_to_text(
     const struct terminal *term, char **text, size_t *len);
 bool term_view_to_text(
+    const struct terminal *term, char **text, size_t *len);
+bool term_command_output_to_text(
     const struct terminal *term, char **text, size_t *len);
 
 bool term_ime_is_enabled(const struct terminal *term);

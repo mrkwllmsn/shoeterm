@@ -145,28 +145,22 @@ void
 urls_input(struct seat *seat, struct terminal *term,
            const struct key_binding_set *bindings, uint32_t key,
            xkb_keysym_t sym, xkb_mod_mask_t mods, xkb_mod_mask_t consumed,
-           xkb_mod_mask_t locked,
            const xkb_keysym_t *raw_syms, size_t raw_count,
            uint32_t serial)
 {
-    const xkb_mod_mask_t bind_mods =
-        mods & seat->kbd.bind_significant & ~locked;
-    const xkb_mod_mask_t bind_consumed =
-        consumed & seat->kbd.bind_significant & ~locked;
-
     /* Key bindings */
     tll_foreach(bindings->url, it) {
         const struct key_binding *bind = &it->item;
 
         /* Match translated symbol */
         if (bind->k.sym == sym &&
-            bind->mods == (bind_mods & ~bind_consumed))
+            bind->mods == (mods & ~consumed))
         {
             execute_binding(seat, term, bind, serial);
             return;
         }
 
-        if (bind->mods != bind_mods || bind_mods != (mods & ~locked))
+        if (bind->mods != mods)
             continue;
 
         for (size_t i = 0; i < raw_count; i++) {
@@ -196,13 +190,13 @@ urls_input(struct seat *seat, struct terminal *term,
         return;
     }
 
-    if (mods & ~consumed & ~locked)
+    if (mods & ~consumed)
         return;
 
     char32_t wc = xkb_state_key_get_utf32(seat->kbd.xkb_state, key);
 
     /*
-     * Determine if this is a “valid” key. I.e. if there is a URL
+     * Determine if this is a "valid" key. I.e. if there is a URL
      * label with a key combo where this key is the next in
      * sequence.
      */
@@ -364,7 +358,7 @@ auto_detected(const struct terminal *term, enum url_action action,
                   if (match == NULL) {
                     /*
                      * Character is not a valid URI character. Emit
-                     * the URL we’ve collected so far, *without*
+                     * the URL we've collected so far, *without*
                      * including _this_ character.
                      */
                     emit_url = true;
@@ -416,7 +410,7 @@ auto_detected(const struct terminal *term, enum url_action action,
 
                   if (c >= term->cols - 1 && row->linebreak) {
                     /*
-                     * Endpoint is inclusive, and we’ll be subtracting
+                     * Endpoint is inclusive, and we'll be subtracting
                      * 1 from the column when emitting the URL.
                      */
                     c++;
@@ -563,7 +557,7 @@ remove_overlapping(url_list_t *urls, int cols)
                 (in_start >= out_start && in_end <= out_end))
             {
                 /*
-                 * OSC-8 URLs can’t overlap with each
+                 * OSC-8 URLs can't overlap with each
                  * other.
                  *
                  * Similarly, auto-detected URLs cannot overlap with
@@ -639,7 +633,7 @@ generate_key_combos(const struct config *conf,
 
     xassert(hints_count - offset >= count);
 
-    /* Copy slice of ‘hints’ array to the caller provided array */
+    /* Copy slice of 'hints' array to the caller provided array */
     for (size_t i = 0; i < hints_count; i++) {
         if (i >= offset && i < offset + count)
             combos[i - offset] = hints[i];
@@ -648,7 +642,7 @@ generate_key_combos(const struct config *conf,
     }
     free(hints);
 
-    /* Sorting is a kind of shuffle, since we’re sorting on the
+    /* Sorting is a kind of shuffle, since we're sorting on the
      * *reversed* strings */
     qsort(combos, count, sizeof(char32_t *), &c32cmp_qsort_wrapper);
 
@@ -685,7 +679,7 @@ urls_assign_key_combos(const struct config *conf, url_list_t *urls)
                 break;
 
             if (it->item.id == it2->item.id &&
-                strcmp(it->item.url, it2->item.url) == 0)
+                streq(it->item.url, it2->item.url))
             {
                 id_already_seen = true;
                 break;
@@ -704,7 +698,7 @@ urls_assign_key_combos(const struct config *conf, url_list_t *urls)
             if (&it->item == &it2->item)
                 break;
 
-            if (strcmp(it->item.url, it2->item.url) == 0) {
+            if (streq(it->item.url, it2->item.url)) {
                 it->item.key = xc32dup(it2->item.key);
                 url_already_seen = true;
                 break;
@@ -715,7 +709,7 @@ urls_assign_key_combos(const struct config *conf, url_list_t *urls)
             it->item.key = combos[combo_idx++];
     }
 
-    /* Free combos we didn’t use up */
+    /* Free combos we didn't use up */
     for (size_t i = combo_idx; i < count; i++)
         free(combos[i]);
 
@@ -795,7 +789,7 @@ urls_render(struct terminal *term)
     }
     term->render.last_cursor.row = NULL;
 
-    /* Clear scroll damage, to ensure we don’t apply it twice (once on
+    /* Clear scroll damage, to ensure we don't apply it twice (once on
      * the snapshot:ed grid, and then later again on the real grid) */
     tll_free(term->grid->scroll_damage);
 
@@ -839,10 +833,10 @@ urls_reset(struct terminal *term)
     term->url_grid_snapshot = NULL;
 
     /*
-     * Make sure “last cursor” doesn’t point to a row in the just
+     * Make sure "last cursor" doesn't point to a row in the just
      * free:d snapshot grid.
      *
-     * Note that it will still be erased properly (if hasn’t already),
+     * Note that it will still be erased properly (if hasn't already),
      * since we marked the cell as dirty *before* taking the grid
      * snapshot.
      */

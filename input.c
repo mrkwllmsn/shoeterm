@@ -263,7 +263,8 @@ execute_binding(struct seat *seat, struct terminal *term,
             break;
         /* FALLTHROUGH */
     case BIND_ACTION_PIPE_VIEW:
-    case BIND_ACTION_PIPE_SELECTED: {
+    case BIND_ACTION_PIPE_SELECTED:
+    case BIND_ACTION_PIPE_COMMAND_OUTPUT: {
         if (binding->aux->type != BINDING_AUX_PIPE)
             return true;
 
@@ -303,6 +304,10 @@ execute_binding(struct seat *seat, struct terminal *term,
             text = selection_to_text(term);
             success = text != NULL;
             len = text != NULL ? strlen(text) : 0;
+            break;
+
+        case BIND_ACTION_PIPE_COMMAND_OUTPUT:
+            success = term_command_output_to_text(term, &text, &len);
             break;
 
         default:
@@ -413,7 +418,7 @@ execute_binding(struct seat *seat, struct terminal *term,
             const struct row *row = grid->rows[r_abs];
             xassert(row != NULL);
 
-            if (!row->prompt_marker)
+            if (!row->shell_integration.prompt_marker)
                 continue;
 
             grid->view = r_abs;
@@ -445,9 +450,9 @@ execute_binding(struct seat *seat, struct terminal *term,
             const struct row *row = grid->rows[r_abs];
             xassert(row != NULL);
 
-            if (!row->prompt_marker) {
+            if (!row->shell_integration.prompt_marker) {
                 if (r_abs == grid->offset + term->rows - 1) {
-                    /* We’ve reached the bottom of the scrollback */
+                    /* We've reached the bottom of the scrollback */
                     break;
                 }
                 continue;
@@ -615,17 +620,19 @@ keyboard_keymap(void *data, struct wl_keyboard *wl_keyboard,
         seat->kbd.mod_caps = xkb_keymap_mod_get_index(seat->kbd.xkb_keymap, XKB_MOD_NAME_CAPS);
         seat->kbd.mod_num = xkb_keymap_mod_get_index(seat->kbd.xkb_keymap, XKB_MOD_NAME_NUM);
 
-        seat->kbd.bind_significant = 0;
+        /* Significant modifiers in the legacy keyboard protocol */
+        seat->kbd.legacy_significant = 0;
         if (seat->kbd.mod_shift != XKB_MOD_INVALID)
-            seat->kbd.bind_significant |= 1 << seat->kbd.mod_shift;
+            seat->kbd.legacy_significant |= 1 << seat->kbd.mod_shift;
         if (seat->kbd.mod_alt != XKB_MOD_INVALID)
-            seat->kbd.bind_significant |= 1 << seat->kbd.mod_alt;
+            seat->kbd.legacy_significant |= 1 << seat->kbd.mod_alt;
         if (seat->kbd.mod_ctrl != XKB_MOD_INVALID)
-            seat->kbd.bind_significant |= 1 << seat->kbd.mod_ctrl;
+            seat->kbd.legacy_significant |= 1 << seat->kbd.mod_ctrl;
         if (seat->kbd.mod_super != XKB_MOD_INVALID)
-            seat->kbd.bind_significant |= 1 << seat->kbd.mod_super;
+            seat->kbd.legacy_significant |= 1 << seat->kbd.mod_super;
 
-        seat->kbd.kitty_significant = seat->kbd.bind_significant;
+        /* Significant modifiers in the kitty keyboard protocol */
+        seat->kbd.kitty_significant = seat->kbd.legacy_significant;
         if (seat->kbd.mod_caps != XKB_MOD_INVALID)
             seat->kbd.kitty_significant |= 1 << seat->kbd.mod_caps;
         if (seat->kbd.mod_num != XKB_MOD_INVALID)
@@ -890,7 +897,7 @@ UNITTEST
 
     const struct key_data *info = keymap_lookup(&term, XKB_KEY_ISO_Left_Tab, MOD_SHIFT | MOD_CTRL);
     xassert(info != NULL);
-    xassert(strcmp(info->seq, "\033[27;6;9~") == 0);
+    xassert(streq(info->seq, "\033[27;6;9~"));
 }
 
 UNITTEST
@@ -901,18 +908,19 @@ UNITTEST
 
     const struct key_data *info = keymap_lookup(&term, XKB_KEY_Return, MOD_ALT);
     xassert(info != NULL);
-    xassert(strcmp(info->seq, "\033\r") == 0);
+    xassert(streq(info->seq, "\033\r"));
 
     term.modify_other_keys_2 = true;
     info = keymap_lookup(&term, XKB_KEY_Return, MOD_ALT);
     xassert(info != NULL);
-    xassert(strcmp(info->seq, "\033[27;3;13~") == 0);
+    xassert(streq(info->seq, "\033[27;3;13~"));
 }
 
 void
 get_current_modifiers(const struct seat *seat,
                       xkb_mod_mask_t *effective,
-                      xkb_mod_mask_t *consumed, uint32_t key)
+                      xkb_mod_mask_t *consumed, uint32_t key,
+                      bool filter_locked)
 {
     if (unlikely(seat->kbd.xkb_state == NULL)) {
         if (effective != NULL)
@@ -922,22 +930,25 @@ get_current_modifiers(const struct seat *seat,
     }
 
     else {
+        const xkb_mod_mask_t locked =
+            xkb_state_serialize_mods(seat->kbd.xkb_state, XKB_STATE_MODS_LOCKED);
+
         if (effective != NULL) {
             *effective = xkb_state_serialize_mods(
                 seat->kbd.xkb_state, XKB_STATE_MODS_EFFECTIVE);
+
+            if (filter_locked)
+                *effective &= ~locked;
         }
 
         if (consumed != NULL) {
             *consumed = xkb_state_key_get_consumed_mods2(
                 seat->kbd.xkb_state, key, XKB_CONSUMED_MODE_XKB);
+
+            if (filter_locked)
+                *consumed &= ~locked;
         }
     }
-}
-
-static xkb_mod_mask_t
-get_locked_modifiers(const struct seat *seat)
-{
-    return xkb_state_serialize_mods(seat->kbd.xkb_state, XKB_STATE_MODS_LOCKED);
 }
 
 struct kbd_ctx {
@@ -1004,24 +1015,24 @@ legacy_kbd_protocol(struct seat *seat, struct terminal *term,
 
     if (term->modify_other_keys_2) {
         /*
-         * Try to mimic XTerm’s behavior, when holding shift:
+         * Try to mimic XTerm's behavior, when holding shift:
          *
          *   - if other modifiers are pressed (e.g. Alt), emit a CSI escape
          *   - upper-case symbols A-Z are encoded as an CSI escape
-         *   - other upper-case symbols (e.g ‘Ö’) or emitted as is
+         *   - other upper-case symbols (e.g 'Ö') or emitted as is
          *   - non-upper cased symbols are _mostly_ emitted as is (foot
          *     always emits as is)
          *
          * Examples (assuming Swedish layout):
-         *   - Shift-a (‘A’) emits a CSI
-         *   - Shift-, (‘;’) emits ‘;’
+         *   - Shift-a ('A') emits a CSI
+         *   - Shift-, (';') emits ';'
          *   - Shift-Alt-, (Alt-;) emits a CSI
-         *   - Shift-ö (‘Ö’) emits ‘Ö’
+         *   - Shift-ö ('Ö') emits 'Ö'
          */
 
         /* Any modifiers, besides shift active? */
         const xkb_mod_mask_t shift_mask = 1 << seat->kbd.mod_shift;
-        if ((ctx->mods & ~shift_mask & seat->kbd.bind_significant) != 0)
+        if ((ctx->mods & ~shift_mask & seat->kbd.legacy_significant) != 0)
             modify_other_keys2_in_effect = true;
 
         else {
@@ -1029,9 +1040,9 @@ legacy_kbd_protocol(struct seat *seat, struct terminal *term,
                 seat->kbd.xkb_state, ctx->key);
 
             /*
-             * Get pressed key’s base symbol.
-             *   - for ‘A’ (shift-a), that’s ‘a’
-             *   - for ‘;’ (shift-,), that’s ‘,’
+             * Get pressed key's base symbol.
+             *   - for 'A' (shift-a), that's 'a'
+             *   - for ';' (shift-,), that's ','
              */
             const xkb_keysym_t *base_syms = NULL;
             size_t base_count = xkb_keymap_key_get_syms_by_level(
@@ -1167,22 +1178,82 @@ kitty_kbd_protocol(struct seat *seat, struct terminal *term,
     if (composed && released)
         return false;
 
-    /* TODO: should we even bother with this, or just say it’s not supported? */
+    /* TODO: should we even bother with this, or just say it's not supported? */
     if (!disambiguate && !report_all_as_escapes && pressed)
         return legacy_kbd_protocol(seat, term, ctx);
-
-    const xkb_mod_mask_t mods = ctx->mods & seat->kbd.kitty_significant;
-    const xkb_mod_mask_t consumed = xkb_state_key_get_consumed_mods2(
-        seat->kbd.xkb_state, ctx->key, XKB_CONSUMED_MODE_GTK) & seat->kbd.kitty_significant;
-    const xkb_mod_mask_t effective = mods & ~consumed;
-    const xkb_mod_mask_t caps_num =
-        (seat->kbd.mod_caps != XKB_MOD_INVALID ? 1 << seat->kbd.mod_caps : 0) |
-        (seat->kbd.mod_num != XKB_MOD_INVALID ? 1 << seat->kbd.mod_num : 0);
 
     const xkb_keysym_t sym = ctx->sym;
     const uint32_t *utf32 = ctx->utf32;
     const uint8_t *const utf8 = ctx->utf8.buf;
     const size_t count = ctx->utf8.count;
+
+    /* Lookup sym in the pre-defined keysym table */
+    const struct kitty_key_data *info = bsearch(
+        &sym, kitty_keymap, ALEN(kitty_keymap), sizeof(kitty_keymap[0]),
+        &kitty_search);
+    xassert(info == NULL || info->sym == sym);
+
+    xkb_mod_mask_t mods = 0;
+    xkb_mod_mask_t consumed = 0;
+
+    if (info != NULL && info->is_modifier) {
+        /*
+         * Special-case modifier keys.
+         *
+         * Normally, the "current" XKB state reflects the state
+         * *before* the current key event. In other words, the
+         * modifiers for key events that affect the modifier state
+         * (e.g. one of the control keys, or shift keys etc) does
+         * *not* include the key itself.
+         *
+         * Put another way, if you press "control", the modifier set
+         * is empty in the key press event, but contains "ctrl" in the
+         * release event.
+         *
+         * The kitty protocol mandates the modifier list contain the
+         * key itself, in *both* the press and release event.
+         *
+         * We handle this by updating the XKB state to *include* the
+         * current key, retrieve the set of modifiers (including the
+         * set of consumed modifiers), and then revert the XKB update.
+         */
+        xkb_state_update_key(
+            seat->kbd.xkb_state, ctx->key, pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+
+        get_current_modifiers(seat, &mods, NULL, ctx->key, false);
+        consumed = xkb_state_key_get_consumed_mods2(
+            seat->kbd.xkb_state, ctx->key, XKB_CONSUMED_MODE_GTK);
+
+#if 0
+        /*
+         * TODO: according to the XKB docs, state updates should
+         * always be in pairs: each press should be followed by a
+         * release. However, doing this just breaks the xkb state.
+         *
+         * *Not* pairing the above press/release with a corresponding
+         * release/press appears to do exactly what we want.
+         */
+        xkb_state_update_key(
+            seat->kbd.xkb_state, ctx->key, pressed ? XKB_KEY_UP : XKB_KEY_DOWN);
+#endif
+    } else {
+        /* Same as ctx->mods, but without locked modifiers being
+           filtered out */
+        get_current_modifiers(seat, &mods, NULL, ctx->key, false);
+
+        /* Re-retrieve the consumed modifiers using the GTK mode, to
+           better match kitty. */
+        consumed = xkb_state_key_get_consumed_mods2(
+            seat->kbd.xkb_state, ctx->key, XKB_CONSUMED_MODE_GTK);
+    }
+
+    mods &= seat->kbd.kitty_significant;
+    consumed &= seat->kbd.kitty_significant;
+
+    const xkb_mod_mask_t effective = mods & ~consumed;
+    const xkb_mod_mask_t caps_num =
+        (seat->kbd.mod_caps != XKB_MOD_INVALID ? 1 << seat->kbd.mod_caps : 0) |
+        (seat->kbd.mod_num != XKB_MOD_INVALID ? 1 << seat->kbd.mod_num : 0);
 
     bool is_text = count > 0 && utf32 != NULL && (effective & ~caps_num) == 0;
     for (size_t i = 0; utf32[i] != U'\0'; i++) {
@@ -1194,12 +1265,6 @@ kitty_kbd_protocol(struct seat *seat, struct terminal *term,
 
     const bool report_associated_text =
         (flags & KITTY_KBD_REPORT_ASSOCIATED) && is_text && !released;
-
-    /* Lookup sym in the pre-defined keysym table */
-    const struct kitty_key_data *info = bsearch(
-        &sym, kitty_keymap, ALEN(kitty_keymap), sizeof(kitty_keymap[0]),
-        &kitty_search);
-    xassert(info == NULL || info->sym == sym);
 
     if (composing) {
         /* We never emit anything while composing, *except* modifiers
@@ -1258,32 +1323,32 @@ emit_escapes:
          *
          * If the keysym is shifted, use its unshifted codepoint
          * instead. In other words, ctrl+a and ctrl+shift+a should
-         * both use the same value for ‘key’ (97 - i.a. ‘a’).
+         * both use the same value for 'key' (97 - i.a. 'a').
          *
-         * However, don’t do this if a non-significant modifier was
+         * However, don't do this if a non-significant modifier was
          * used to generate the symbol. This is needed since we cannot
-         * encode non-significant modifiers, and thus the “extra”
+         * encode non-significant modifiers, and thus the "extra"
          * modifier(s) would get lost.
          *
          * Example:
          *
-         * the Swedish layout has ‘2’, QUOTATION MARK (“double
-         * quote”), ‘@’, and ‘²’ on the same key. ‘2’ is the base
+         * the Swedish layout has '2', QUOTATION MARK ("double
+         * quote"), '@', and '²' on the same key. '2' is the base
          * symbol.
          *
          * Shift+2 results in QUOTATION MARK
-         * AltGr+2 results in ‘@’
-         * AltGr+Shift+2 results in ‘²’
+         * AltGr+2 results in '@'
+         * AltGr+Shift+2 results in '²'
          *
-         * The kitty kbd protocol can’t encode AltGr. So, if we
-         * always used the base symbol (‘2’), Alt+Shift+2 would
+         * The kitty kbd protocol can't encode AltGr. So, if we
+         * always used the base symbol ('2'), Alt+Shift+2 would
          * result in the same escape sequence as
          * AltGr+Alt+Shift+2.
          *
          * (yes, this matches what kitty does, as of 0.23.1)
          */
 
-        /* Get the key’s shift level */
+        /* Get the key's shift level */
         xkb_level_index_t lvl = xkb_state_key_get_level(
             seat->kbd.xkb_state, ctx->key, ctx->layout);
 
@@ -1295,7 +1360,7 @@ emit_escapes:
             masks, ALEN(masks));
 
         /* Check modifier combinations - if a combination has
-         * modifiers not in our set of ‘significant’ modifiers,
+         * modifiers not in our set of 'significant' modifiers,
          * use key sym as-is */
         bool use_level0_sym = true;
         for (size_t i = 0; i < mask_count; i++) {
@@ -1342,7 +1407,7 @@ emit_escapes:
     char event[4];
     if (report_events /*&& !pressed*/) {
         /* Note: this deviates slightly from Kitty, which omits the
-         * “:1” subparameter for key press events */
+         * ":1" subparameter for key press events */
         event[0] = ':';
         event[1] = '0' + (pressed ? 1 : repeating ? 2 : 3);
         event[2] = '\0';
@@ -1463,13 +1528,7 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
     const bool composed = compose_status == XKB_COMPOSE_COMPOSED;
 
     xkb_mod_mask_t mods, consumed;
-    get_current_modifiers(seat, &mods, &consumed, key);
-
-    const xkb_mod_mask_t locked = get_locked_modifiers(seat);
-    const xkb_mod_mask_t bind_mods
-        = mods & seat->kbd.bind_significant & ~locked;
-    const xkb_mod_mask_t bind_consumed =
-        consumed & seat->kbd.bind_significant & ~locked;
+    get_current_modifiers(seat, &mods, &consumed, key, true);
 
     xkb_layout_index_t layout_idx =
         xkb_state_key_get_layout(seat->kbd.xkb_state, key);
@@ -1493,7 +1552,7 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
                 start_repeater(seat, key);
 
             search_input(
-                seat, term, bindings, key, sym, mods, consumed, locked,
+                seat, term, bindings, key, sym, mods, consumed,
                 raw_syms, raw_count, serial);
             return;
         }
@@ -1503,7 +1562,7 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
                 start_repeater(seat, key);
 
             urls_input(
-                seat, term, bindings, key, sym, mods, consumed, locked,
+                seat, term, bindings, key, sym, mods, consumed,
                 raw_syms, raw_count, serial);
             return;
         }
@@ -1511,7 +1570,7 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
 
 #if 0
     for (size_t i = 0; i < 32; i++) {
-        if (mods & (1 << i)) {
+        if (mods & (1u << i)) {
             LOG_INFO("%s", xkb_keymap_mod_get_name(seat->kbd.xkb_keymap, i));
         }
     }
@@ -1536,13 +1595,13 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
 
             /* Match translated symbol */
             if (bind->k.sym == sym &&
-                bind->mods == (bind_mods & ~bind_consumed) &&
+                bind->mods == (mods & ~consumed) &&
                 execute_binding(seat, term, bind, serial, 1))
             {
                 goto maybe_repeat;
             }
 
-            if (bind->mods != bind_mods || bind_mods != (mods & ~locked))
+            if (bind->mods != mods)
                 continue;
 
             /* Match untranslated symbols */
@@ -2006,7 +2065,7 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
          * event with a NULL surface - see wl_pointer_enter().
          *
          * In this case, we never set seat->mouse_focus (since we
-         * can’t map the enter event to a specific window). */
+         * can't map the enter event to a specific window). */
         return;
     }
 
@@ -2115,7 +2174,7 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
 
         if (cursor_is_on_new_cell) {
             /* Prevent multiple/different mouse bindings from
-             * triggering if the mouse has moved “too much” (to
+             * triggering if the mouse has moved "too much" (to
              * another cell) */
             seat->mouse.count = 0;
         }
@@ -2135,14 +2194,14 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
         if (!term->is_searching) {
             if (auto_scroll_direction != SELECTION_SCROLL_NOT) {
                 /*
-                 * Start ‘selection auto-scrolling’
+                 * Start 'selection auto-scrolling'
                  *
                  * The speed of the scrolling is proportional to the
                  * distance between the mouse and the grid; the
                  * further away the mouse is, the faster we scroll.
                  *
-                 * Note that the speed is measured in ‘intervals (in
-                 * ns) between each timed scroll of a single line’.
+                 * Note that the speed is measured in 'intervals (in
+                 * ns) between each timed scroll of a single line'.
                  *
                  * Thus, the further away the mouse is, the smaller
                  * interval value we use.
@@ -2223,8 +2282,7 @@ static const struct key_binding *
         xassert(bindings != NULL);
 
         xkb_mod_mask_t mods;
-        get_current_modifiers(seat, &mods, NULL, 0);
-        mods &= seat->kbd.bind_significant;
+        get_current_modifiers(seat, &mods, NULL, 0, true);
 
         /* Ignore selection override modifiers when
          * matching modifiers */
@@ -2277,8 +2335,7 @@ static const struct key_binding *
                 continue;
             }
 
-            const struct config_key_modifiers no_mods = {0};
-            if (memcmp(&binding->modifiers, &no_mods, sizeof(no_mods)) != 0) {
+            if (tll_length(binding->modifiers) > 0) {
                 /* Binding has modifiers */
                 continue;
             }
@@ -2351,7 +2408,7 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
          * clicking twice, waiting for the CSD timer, and finally
          * clicking once more, results in the following sequence
          * (keyboard and other irrelevant events filtered out, unless
-         * they’re needed to prove a point):
+         * they're needed to prove a point):
          *
          * dbg: input.c:1551: cancelling drag timer, moving window
          * dbg: input.c:759: keyboard_leave: keyboard=0x607000003580, serial=873, surface=0x6070000036d0
@@ -2383,12 +2440,12 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
          * - GNOME does *not* send a pointer *enter* event after the drag
          *   has stopped
          * - The second drag does *not* generate a pointer *leave* event
-         * - The missing leave event means we’re still tracking LMB as
+         * - The missing leave event means we're still tracking LMB as
          *   being held down in our seat struct.
          * - This leads to an assert (debug builds) when LMB is clicked
-         *   again (seat’s button list already contains LMB).
+         *   again (seat's button list already contains LMB).
          *
-         * Note: I’ve also observed variants of the above
+         * Note: I've also observed variants of the above
          */
         tll_foreach(seat->mouse.buttons, it) {
             if (it->item.button == button) {

@@ -128,8 +128,8 @@ struct seat {
         xkb_mod_index_t mod_caps;
         xkb_mod_index_t mod_num;
 
-        xkb_mod_mask_t bind_significant;
-        xkb_mod_mask_t kitty_significant;
+        xkb_mod_mask_t legacy_significant;  /* Significant modifiers for the legacy keyboard protocol */
+        xkb_mod_mask_t kitty_significant;   /* Significant modifiers for the kitty keyboard protocol */
 
         xkb_keycode_t key_arrow_up;
         xkb_keycode_t key_arrow_down;
@@ -363,6 +363,7 @@ struct wl_window {
 
     bool unmapped;
     float scale;
+    int preferred_buffer_scale;
 
     struct zxdg_toplevel_decoration_v1 *xdg_toplevel_decoration;
 
@@ -428,6 +429,8 @@ struct wayland {
     struct wl_compositor *compositor;
     struct wl_subcompositor *sub_compositor;
     struct wl_shm *shm;
+
+    bool has_wl_compositor_v6;
 
     struct zxdg_output_manager_v1 *xdg_output_manager;
 
