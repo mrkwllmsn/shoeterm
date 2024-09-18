@@ -4693,3 +4693,28 @@ term_send_size_notification(struct terminal *term)
         term->rows, term->cols, height, width);
     term_to_slave(term, buf, n);
 }
+
+/* Reload configured colors from disk. */
+void
+term_hard_reload_config_colors(struct terminal *term) {
+    config_reload_colors((struct config *)term->conf);
+    term_soft_reload_config_colors(term);
+}
+
+/* Reset colors to the in-memory config values. Does not reload the config from
+   disk. */
+void
+term_soft_reload_config_colors(struct terminal *term) {
+    term->colors.fg = term->conf->colors.fg;
+    term->colors.bg = term->conf->colors.bg;
+    term->colors.alpha = term->conf->colors.alpha;
+    term->colors.cursor_fg = term->conf->cursor.color.text;
+    term->colors.cursor_bg = term->conf->cursor.color.cursor;
+    term->colors.selection_fg = term->conf->colors.selection_fg;
+    term->colors.selection_bg = term->conf->colors.selection_bg;
+
+    memcpy(term->colors.table, term->conf->colors.table, sizeof(term->colors.table));
+
+    term_damage_all(term);
+    render_refresh(term);
+}

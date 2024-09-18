@@ -45,6 +45,20 @@ fdm_sigint(struct fdm *fdm, int signo, void *data)
     return true;
 }
 
+static bool
+fdm_sigusr1_server(struct fdm *fdm, int signo, void *data)
+{
+    server_hard_reload_config_colors(data);
+    return true;
+}
+
+static bool
+fdm_sigusr1_term(struct fdm *fdm, int signo, void *data)
+{
+    term_hard_reload_config_colors(data);
+    return true;
+}
+
 static void
 print_usage(const char *prog_name)
 {
@@ -608,6 +622,15 @@ main(int argc, char *const *argv)
         goto out;
     }
 
+    bool ok = as_server ?
+        fdm_signal_add(fdm, SIGUSR1, fdm_sigusr1_server, server)
+      : fdm_signal_add(fdm, SIGUSR1, fdm_sigusr1_term, term);
+    if (!ok) {
+        LOG_WARN("failed to set SIGUSR1 handler");
+        goto out;
+    }
+    LOG_INFO("added USR1 handler");
+
     struct sigaction sig_ign = {.sa_handler = SIG_IGN};
     sigemptyset(&sig_ign.sa_mask);
     if (sigaction(SIGHUP, &sig_ign, NULL) < 0 ||
@@ -645,6 +668,7 @@ out:
     reaper_destroy(reaper);
     fdm_signal_del(fdm, SIGTERM);
     fdm_signal_del(fdm, SIGINT);
+    fdm_signal_del(fdm, SIGUSR1);
     fdm_destroy(fdm);
 
     config_free(&conf);

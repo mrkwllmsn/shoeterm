@@ -591,6 +591,20 @@ err:
     return NULL;
 }
 
+/* Reload configured colors from disk. */
+void
+server_hard_reload_config_colors(struct server *server) {
+    config_reload_colors((struct config *)server->conf);
+
+    tll_foreach(server->wayl->terms, it) {
+        struct terminal *term = it->item;
+
+        ((struct config *)term->conf)->colors = server->conf->colors;
+
+        term_soft_reload_config_colors(term);
+    }
+}
+
 void
 server_destroy(struct server *server)
 {

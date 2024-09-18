@@ -982,6 +982,9 @@ void term_enable_size_notifications(struct terminal *term);
 void term_disable_size_notifications(struct terminal *term);
 void term_send_size_notification(struct terminal *term);
 
+void term_hard_reload_config_colors(struct terminal *term);
+void term_soft_reload_config_colors(struct terminal *term);
+
 static inline void term_reset_grapheme_state(struct terminal *term)
 {
 #if defined(FOOT_GRAPHEME_CLUSTERING)

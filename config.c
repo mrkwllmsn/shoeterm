@@ -3276,6 +3276,7 @@ config_load(struct config *conf, const char *conf_path,
     enum fcft_capabilities fcft_caps = fcft_capabilities();
 
     *conf = (struct config) {
+        .path = NULL,
         .term = xstrdup(FOOT_DEFAULT_TERM),
         .shell = get_shell(),
         .title = xstrdup("foot"),
@@ -3516,6 +3517,8 @@ config_load(struct config *conf, const char *conf_path,
 
     if (conf_file.path && conf_file.fd >= 0) {
         LOG_INFO("loading configuration from %s", conf_file.path);
+
+        conf->path = xstrdup(conf_file.path);
 
         FILE *f = fdopen(conf_file.fd, "r");
         if (f == NULL) {
@@ -3788,6 +3791,20 @@ config_clone(const struct config *old)
     return conf;
 }
 
+void
+config_reload_colors(struct config *conf)
+{
+    user_notifications_t notifications = tll_init();
+    config_override_t overrides = tll_init();
+    struct config new_conf = {NULL};
+    config_load(&new_conf, conf->path, &notifications, &overrides, false, false);
+
+    // TODO: should we do something with any notifications that come from
+    // loading the config?
+
+    conf->colors = new_conf.colors;
+}
+
 UNITTEST
 {
     struct config original;
@@ -3816,6 +3833,7 @@ UNITTEST
 void
 config_free(struct config *conf)
 {
+    free(conf->path);
     free(conf->term);
     free(conf->shell);
     free(conf->title);

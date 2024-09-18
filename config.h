@@ -132,6 +132,7 @@ struct custom_regex {
 };
 
 struct config {
+    char *path;
     char *term;
     char *shell;
     char *title;
@@ -423,6 +424,7 @@ bool config_load(
     bool as_server);
 void config_free(struct config *conf);
 struct config *config_clone(const struct config *old);
+void config_reload_colors(struct config *conf);
 
 bool config_font_parse(const char *pattern, struct config_font *font);
 void config_font_list_destroy(struct config_font_list *font_list);
