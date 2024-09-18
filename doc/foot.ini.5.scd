@@ -1969,6 +1969,14 @@ any of these options.
 	
 	Default: _8-bit_
 
+# LIVE RELOAD
+
+Foot is able to reload config colors at runtime when triggered by a
+signal. Upon receiving SIGUSR1, foot will re-parse the config file it
+is using and update the definitions from the [colors] section,
+applying this change instantly. This does *not* affect any other
+config values.
+
 # SEE ALSO
 
 *foot*(1), *footclient*(1)
