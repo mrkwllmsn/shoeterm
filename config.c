@@ -3803,6 +3803,8 @@ config_reload_colors(struct config *conf)
     // loading the config?
 
     conf->colors = new_conf.colors;
+
+    config_free(&new_conf);
 }
 
 UNITTEST
