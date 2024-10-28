@@ -473,7 +473,8 @@ notify_notify(struct terminal *term, struct notification *notif)
             "urgency", "muted", "sound-name", "expire-time", "replace-id",
             "action-argument"},
         (const char *[]){
-            app_id, term->window_title, icon_name_or_path, title, body,
+            app_id, term->window_title, icon_name_or_path, title,
+            body != NULL ? body : "",
             notif->category != NULL ? notif->category : "", urgency_str,
             notif->muted ? "true" : "false",
             notif->sound_name != NULL ? notif->sound_name : "",

@@ -557,9 +557,13 @@ osc_notify(struct terminal *term, char *string)
         return;
     }
 
+    char *msgdup = NULL;
+    if (msg != NULL)
+        msgdup = xstrdup(msg);
+
     notify_notify(term, &(struct notification){
         .title = xstrdup(title),
-        .body = xstrdup(msg),
+        .body = msgdup,
         .expire_time = -1,
         .focus = true,
     });
