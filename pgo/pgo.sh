@@ -103,6 +103,7 @@ if [ ${do_pgo} = yes ]; then
     ninja -C "${blddir}" test
 
     # Run mode-dependent script to generate profiling data
+    export LLVM_PROFILE_FILE="${blddir}/default_%m.profraw"
     "${srcdir}"/pgo/${mode}.sh "${srcdir}" "${blddir}"
 
     if [ ${compiler} = clang ]; then
