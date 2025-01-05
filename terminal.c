@@ -419,7 +419,12 @@ fdm_flash(struct fdm *fdm, int fd, int events, void *data)
             (unsigned long long)expiration_count);
 
     term->flash.active = false;
-    render_refresh(term);
+    render_overlay(term);
+
+    // since the overlay surface is synced with the main window surface, we have
+    // to commit the main surface for the compositor to acknowledge the new
+    // overlay state.
+    wl_surface_commit(term->window->surface.surf);
     return true;
 }
 
