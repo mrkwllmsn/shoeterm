@@ -1445,8 +1445,8 @@ parse_section_colors(struct context *ctx)
         if (!value_to_float(ctx, &alpha))
             return false;
 
-        if (alpha < 0. || alpha >= 1.) {
-            LOG_CONTEXTUAL_ERR("not in range 0.0-0.999");
+        if (alpha < 0. || alpha > 1.) {
+            LOG_CONTEXTUAL_ERR("not in range 0.0-1.0");
             return false;
         }
 

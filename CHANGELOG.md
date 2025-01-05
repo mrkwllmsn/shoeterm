@@ -73,9 +73,6 @@
 
 * Runtime changes to the app-id (OSC-176) now limits the app-id string
   to 2048 characters ([#1897][1897]).
-* `colors.flash-alpha` can no longer be set to 1.0 (i.e. fully
-  opaque). This fixes an issue where the window would be stuck in the
-  flash state.
 
 [1897]: https://codeberg.org/dnkl/foot/issues/1897
 
