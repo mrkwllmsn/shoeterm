@@ -1862,7 +1862,7 @@ render_overlay_single_pixel(struct terminal *term, enum overlay_style style,
     }
 }
 
-static void
+void
 render_overlay(struct terminal *term)
 {
     struct wayl_sub_surface *overlay = &term->window->overlay;

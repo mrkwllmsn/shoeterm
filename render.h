@@ -31,6 +31,8 @@ bool render_xcursor_set(
     struct seat *seat, struct terminal *term, enum cursor_shape shape);
 bool render_xcursor_is_valid(const struct seat *seat, const char *cursor);
 
+void render_overlay(struct terminal *term);
+
 struct render_worker_context {
     int my_id;
     struct terminal *term;

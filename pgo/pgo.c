@@ -72,6 +72,8 @@ void render_refresh_title(struct terminal *term) {}
 void render_refresh_app_id(struct terminal *term) {}
 void render_refresh_icon(struct terminal *term) {}
 
+void render_overlay(struct terminal *term) {}
+
 bool
 render_xcursor_is_valid(const struct seat *seat, const char *cursor)
 {
