@@ -85,6 +85,7 @@ print_usage(const char *prog_name)
         "  -L,--login-shell                         start shell as a login shell\n"
         "  -D,--working-directory=DIR               directory to start in (CWD)\n"
         "  -s,--server-socket=PATH                  path to the server UNIX domain socket (default=$XDG_RUNTIME_DIR/foot-$WAYLAND_DISPLAY.sock)\n"
+        "  -S,--auto-server                         run a server if none detected\n"
         "  -H,--hold                                remain open after child process exits\n"
         "  -N,--no-wait                             detach the client process from the running terminal, exiting immediately\n"
         "  -o,--override=[section.]key=value        override configuration option\n"
@@ -139,6 +140,55 @@ send_string_list(int fd, const string_list_t *string_list)
     return true;
 }
 
+static int
+start_server(void)
+{
+    pid_t pid = fork();
+
+    if (pid > 0) {
+        LOG_DBG("forked a server with PID %d", pid);
+        /* @todo How to wait for the server having initialized itself? */
+        /* @todo Use --server-socket=<fd of the .sock opened here in the client>? */
+        sleep(1);
+        /* @todo Test if the process exited.
+        int status;
+        pid_t pid = waitpid(-1, &status, WNOHANG);
+        if (pid < 0) {
+            LOG_ERRNO("could not tell the server's status");
+            return -1;
+        }
+        else if (pid > 0) {
+            LOG_ERRNO("the server unexpectedly exited with status %d", status);
+            return -1;
+        }
+        */
+        return 0;
+    }
+
+    if (pid < 0) {
+        LOG_ERRNO("failed to fork");
+        return pid;
+    }
+
+    /* Child */
+
+    /* @todo Does the server do all signaling cleanup, so that we don't have to? */
+
+    char **foot = xmalloc(3 * sizeof(char *));
+    foot[0] = "foot";
+    foot[1] = "--server";
+    foot[2] = NULL;
+    if (execvp(foot[0], foot) < 0)
+        LOG_ERRNO("failed to execvp %s", foot[0]);
+
+    xassert(false);
+    _exit(errno);
+
+    /* @todo Has the server correctly detached itself, so that our client exiting does not abort the server? */
+
+    return -1;
+}
+
 enum {
     TOPLEVEL_TAG_OPTION = CHAR_MAX + 1,
 };
@@ -165,6 +215,7 @@ main(int argc, char *const *argv)
         {"login-shell",        no_argument,       NULL, 'L'},
         {"working-directory",  required_argument, NULL, 'D'},
         {"server-socket",      required_argument, NULL, 's'},
+        {"auto-server",        no_argument,       NULL, 'S'},
         {"hold",               no_argument,       NULL, 'H'},
         {"no-wait",            no_argument,       NULL, 'N'},
         {"override",           required_argument, NULL, 'o'},
@@ -178,6 +229,7 @@ main(int argc, char *const *argv)
 
     const char *custom_cwd = NULL;
     const char *server_socket_path = NULL;
+    bool auto_server = false;
     enum log_class log_level = LOG_CLASS_WARNING;
     enum log_colorize log_colorize = LOG_COLORIZE_AUTO;
     bool hold = false;
@@ -204,7 +256,7 @@ main(int argc, char *const *argv)
     string_list_t envp = tll_init();
 
     while (true) {
-        int c = getopt_long(argc, argv, "+t:T:a:w:W:mFLD:s:HNo:Ed:l::veh", longopts, NULL);
+        int c = getopt_long(argc, argv, "+t:T:a:w:W:mFLD:s:SHNo:Ed:l::veh", longopts, NULL);
         if (c == -1)
             break;
 
@@ -288,6 +340,10 @@ main(int argc, char *const *argv)
             server_socket_path = optarg;
             break;
 
+        case 'S':
+            auto_server = true;
+            break;
+
         case 'H':
             hold = true;
             break;
@@ -364,16 +420,13 @@ main(int argc, char *const *argv)
     }
 
     struct sockaddr_un addr = {.sun_family = AF_UNIX};
+    bool connected = false;
+    int retries = 0;
 
+retry:
     if (server_socket_path != NULL) {
         strncpy(addr.sun_path, server_socket_path, sizeof(addr.sun_path) - 1);
-        if (connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) < 0) {
-            LOG_ERR("%s: failed to connect (is 'foot --server' running?)", server_socket_path);
-            goto err;
-        }
     } else {
-        bool connected = false;
-
         const char *xdg_runtime = getenv("XDG_RUNTIME_DIR");
         if (xdg_runtime != NULL) {
             const char *wayland_display = getenv("WAYLAND_DISPLAY");
@@ -392,13 +445,20 @@ main(int argc, char *const *argv)
             if (!connected)
                 LOG_WARN("%s: failed to connect, will now try /tmp/foot.sock", addr.sun_path);
         }
-
-        if (!connected) {
+        if (!connected)
             strncpy(addr.sun_path, "/tmp/foot.sock", sizeof(addr.sun_path) - 1);
-            if (connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) < 0) {
-                LOG_ERRNO("failed to connect (is 'foot --server' running?)");
-                goto err;
+    }
+
+    if (!connected) {
+        if (connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) < 0) {
+            if (++retries < 2 && auto_server) {
+                if (start_server() >= 0) /* @todo Pass server_socket_path */
+                    goto retry;
             }
+            LOG_ERRNO("%s%sfailed to connect (is 'foot --server' running?)",
+                    server_socket_path ? server_socket_path : "",
+                    server_socket_path ? ": " : "");
+            goto err;
         }
     }
 
