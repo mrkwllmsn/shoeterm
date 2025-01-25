@@ -4716,5 +4716,6 @@ term_soft_reload_config_colors(struct terminal *term) {
     memcpy(term->colors.table, term->conf->colors.table, sizeof(term->colors.table));
 
     term_damage_all(term);
+    term_damage_margins(term);
     render_refresh(term);
 }
