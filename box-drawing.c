@@ -1462,14 +1462,12 @@ draw_box_drawings_light_arc(struct buf *buf, char32_t wc)
      */
     for (double i = y_min*16; i <= y_max*16; i++) {
         errno = 0;
-        feclearexcept(FE_ALL_EXCEPT);
 
         double y = i / 16.;
         double x = circle_hemisphere * sqrt(c_r2 - (y - c_y) * (y - c_y)) + c_x;
 
         /* See math_error(7) */
-        if (errno != 0 ||
-            fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW))
+        if (errno != 0)
         {
             continue;
         }
