@@ -79,6 +79,7 @@
   ([#1925][1925]).
 * Auto-detection of URLs (i.e. not OSC-8 based URLs) are now regex
   based.
+* Rename Tokyo Night Day theme to Tokyo Night Light and update colors.
 
 [1925]: https://codeberg.org/dnkl/foot/issues/1925
 
