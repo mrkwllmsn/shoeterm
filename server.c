@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <limits.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -22,6 +23,8 @@
 #include "util.h"
 #include "wayland.h"
 #include "xmalloc.h"
+
+#define NON_ZERO_OPT (INT_MIN / 7)
 
 struct client;
 struct terminal_instance;
@@ -474,7 +477,7 @@ prepare_socket(int fd)
     }
 
     int const socket_options[] = { SO_DOMAIN, SO_ACCEPTCONN, SO_TYPE };
-    int const socket_options_values[] = { AF_UNIX, 1, SOCK_STREAM};
+    int const socket_options_values[] = { AF_UNIX, NON_ZERO_OPT, SOCK_STREAM};
     char const * const socket_options_names[] = { "SO_DOMAIN", "SO_ACCEPTCONN", "SO_TYPE" };
 
     xassert(ALEN(socket_options) == ALEN(socket_options_values));
@@ -489,6 +492,8 @@ prepare_socket(int fd)
             LOG_ERRNO("failed to read socket option from passed file descriptor");
             return false;
         }
+        if (socket_options_values[i] == NON_ZERO_OPT && socket_option)
+            socket_option = NON_ZERO_OPT;
         if (socket_option != socket_options_values[i]) {
             LOG_ERR("wrong socket value for socket option '%s' on passed file descriptor",
                     socket_options_names[i]);
