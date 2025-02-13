@@ -141,15 +141,50 @@ send_string_list(int fd, const string_list_t *string_list)
 }
 
 static int
-start_server(void)
+init_server_socket(const char *sock_path)
 {
+    int fd;
+
+    LOG_DBG("pre-creating the socket for the server to launch");
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    if (fd == -1) {
+        LOG_ERRNO("failed to create UNIX socket");
+        return -1;
+    }
+
+    unlink(sock_path);
+
+    struct sockaddr_un addr = {.sun_family = AF_UNIX};
+    strncpy(addr.sun_path, sock_path, sizeof(addr.sun_path) - 1);
+
+    if (bind(fd, (const struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        LOG_ERRNO("%s: failed to bind", addr.sun_path);
+        goto err;
+    }
+
+    if (listen(fd, 0) < 0) {
+        LOG_ERRNO("%s: failed to listen", addr.sun_path);
+        goto err;
+    }
+
+    return fd;
+
+err:
+    close(fd);
+    return -1;
+}
+
+static int
+start_server(const char *server_socket_path)
+{
+    int socket_fd = init_server_socket(server_socket_path);
+    if (socket_fd < 0)
+        goto err;
+
     pid_t pid = fork();
 
     if (pid > 0) {
         LOG_DBG("forked a server with PID %d", pid);
-        /* @todo How to wait for the server having initialized itself? */
-        /* @todo Use --server-socket=<fd of the .sock opened here in the client>? */
-        sleep(1);
         /* @todo Test if the process exited.
         int status;
         pid_t pid = waitpid(-1, &status, WNOHANG);
@@ -176,10 +211,15 @@ start_server(void)
 
     char **foot = xmalloc(3 * sizeof(char *));
     foot[0] = "foot";
-    foot[1] = "--server";
+    foot[1] = xmalloc(13);
+    snprintf(foot[1], 12, "--server=%d", socket_fd);
     foot[2] = NULL;
     if (execvp(foot[0], foot) < 0)
         LOG_ERRNO("failed to execvp %s", foot[0]);
+
+err:
+    if (socket_fd >= 0)
+        close(socket_fd);
 
     xassert(false);
     _exit(errno);
@@ -452,7 +492,7 @@ retry:
     if (!connected) {
         if (connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) < 0) {
             if (++retries < 2 && auto_server) {
-                if (start_server() >= 0) /* @todo Pass server_socket_path */
+                if (start_server(server_socket_path) >= 0)
                     goto retry;
             }
             LOG_ERRNO("%s%sfailed to connect (is 'foot --server' running?)",
