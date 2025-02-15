@@ -141,7 +141,7 @@ send_string_list(int fd, const string_list_t *string_list)
 }
 
 static int
-init_server_socket(const char *sock_path)
+init_server_socket(const struct sockaddr_un *addr)
 {
     int fd;
 
@@ -152,18 +152,15 @@ init_server_socket(const char *sock_path)
         return -1;
     }
 
-    unlink(sock_path);
+    unlink(addr->sun_path);
 
-    struct sockaddr_un addr = {.sun_family = AF_UNIX};
-    strncpy(addr.sun_path, sock_path, sizeof(addr.sun_path) - 1);
-
-    if (bind(fd, (const struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        LOG_ERRNO("%s: failed to bind", addr.sun_path);
+    if (bind(fd, (const struct sockaddr *)addr, sizeof(*addr)) < 0) {
+        LOG_ERRNO("%s: failed to bind", addr->sun_path);
         goto err;
     }
 
     if (listen(fd, 0) < 0) {
-        LOG_ERRNO("%s: failed to listen", addr.sun_path);
+        LOG_ERRNO("%s: failed to listen", addr->sun_path);
         goto err;
     }
 
@@ -175,9 +172,83 @@ err:
 }
 
 static int
+try_sockets(const char *server_socket_path, bool as_server)
+{
+    int fd;
+
+    if (!as_server) {
+        fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
+            LOG_ERRNO("failed to create socket");
+            return -1;
+        }
+    }
+
+    enum s_source {S_END, S_PARAM, S_XDG_DISPLAY, S_XDG_GENERIC, S_TMP};
+    enum s_source attempts[] = {S_PARAM, S_XDG_DISPLAY, S_XDG_GENERIC, S_TMP, S_END};
+
+    const char *xdg_runtime = getenv("XDG_RUNTIME_DIR");
+    struct sockaddr_un addr = {.sun_family = AF_UNIX};
+
+    for (int i = -1; attempts[++i] != S_END;) {
+        switch (attempts[i]) {
+            case S_PARAM:
+                if (server_socket_path == NULL)
+                    continue;
+                /* If a path was provided, do not attempt further paths: */
+                attempts[i + 1] = S_END;
+                strncpy(addr.sun_path, server_socket_path, sizeof(addr.sun_path) - 1);
+                break;
+
+            case S_XDG_DISPLAY:
+                if (xdg_runtime == NULL)
+                    continue;
+
+                const char *wayland_display = getenv("WAYLAND_DISPLAY");
+                if (wayland_display == NULL)
+                    continue;
+                snprintf(addr.sun_path, sizeof(addr.sun_path),
+                         "%s/foot-%s.sock", xdg_runtime, wayland_display);
+                break;
+
+            case S_XDG_GENERIC:
+                if (xdg_runtime == NULL)
+                    continue;
+
+                snprintf(addr.sun_path, sizeof(addr.sun_path),
+                         "%s/foot.sock", xdg_runtime);
+                break;
+
+            case S_TMP:
+                strncpy(addr.sun_path, "/tmp/foot.sock", sizeof(addr.sun_path) - 1);
+                break;
+
+            case S_END:
+                return -1;
+        }
+
+        if (i > 0)
+            LOG_INFO("will now try %s", addr.sun_path);
+
+        if (as_server) {
+            return init_server_socket(&addr);
+        } else {
+            if (connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) == 0)
+                return fd;
+            /* else attempt next socket path */
+        }
+
+        LOG_WARN("%s: failed to connect", addr.sun_path);
+    }
+
+    LOG_ERRNO("failed to connect (is 'foot --server' running?)");
+    return -1;
+}
+
+static int
 start_server(const char *server_socket_path)
 {
-    int socket_fd = init_server_socket(server_socket_path);
+    int socket_fd = try_sockets(server_socket_path, true);
     if (socket_fd < 0)
         goto err;
 
@@ -453,53 +524,14 @@ main(int argc, char *const *argv)
 
     log_init(log_colorize, false, LOG_FACILITY_USER, log_level);
 
-    fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd == -1) {
-        LOG_ERRNO("failed to create socket");
-        goto err;
-    }
-
-    struct sockaddr_un addr = {.sun_family = AF_UNIX};
-    bool connected = false;
-    int retries = 0;
-
-retry:
-    if (server_socket_path != NULL) {
-        strncpy(addr.sun_path, server_socket_path, sizeof(addr.sun_path) - 1);
-    } else {
-        const char *xdg_runtime = getenv("XDG_RUNTIME_DIR");
-        if (xdg_runtime != NULL) {
-            const char *wayland_display = getenv("WAYLAND_DISPLAY");
-            if (wayland_display != NULL) {
-                snprintf(addr.sun_path, sizeof(addr.sun_path),
-                         "%s/foot-%s.sock", xdg_runtime, wayland_display);
-                connected = (connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) == 0);
-            }
-            if (!connected) {
-                LOG_WARN("%s: failed to connect, will now try %s/foot.sock",
-                         addr.sun_path, xdg_runtime);
-                snprintf(addr.sun_path, sizeof(addr.sun_path),
-                         "%s/foot.sock", xdg_runtime);
-                connected = (connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) == 0);
-            }
-            if (!connected)
-                LOG_WARN("%s: failed to connect, will now try /tmp/foot.sock", addr.sun_path);
+    if ((fd = try_sockets(server_socket_path, false)) < 0) {
+        if (auto_server) {
+            LOG_INFO("will try to launch a server");
+            if (start_server(server_socket_path) >= 0)
+                fd = try_sockets(server_socket_path, false);
         }
-        if (!connected)
-            strncpy(addr.sun_path, "/tmp/foot.sock", sizeof(addr.sun_path) - 1);
-    }
-
-    if (!connected) {
-        if (connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) < 0) {
-            if (++retries < 2 && auto_server) {
-                if (start_server(server_socket_path) >= 0)
-                    goto retry;
-            }
-            LOG_ERRNO("%s%sfailed to connect (is 'foot --server' running?)",
-                    server_socket_path ? server_socket_path : "",
-                    server_socket_path ? ": " : "");
+        if (fd < 0)
             goto err;
-        }
     }
 
     const char *cwd = custom_cwd;
