@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>org.codeberg.dnkl.foot</id>
+  <id>page.codeberg.dnkl.foot</id>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
   <developer_name>dnkl</developer_name>
@@ -34,6 +34,10 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.20.2" date="2025-01-18"/>
+    <release version="1.20.1" date="2025-01-03"/>
+    <release version="1.20.0" date="2025-01-01"/>
+    <release version="1.19.0" date="2024-10-23"/>
     <release version="1.18.1" date="2024-08-14"/>
     <release version="1.18.0" date="2024-08-02"/>
     <release version="1.17.2" date="2024-04-17"/>
@@ -50,7 +54,7 @@
     <release version="1.13.1" date="2022-08-31"/>
     <release version="1.13.0" date="2022-08-07"/>
   </releases>
-  <launchable type="desktop-id">org.codeberg.dnkl.foot.desktop</launchable>
+  <launchable type="desktop-id">page.codeberg.dnkl.foot.desktop</launchable>
   <url type="homepage">https://codeberg.org/dnkl/foot</url>
   <url type="bugtracker">https://codeberg.org/dnkl/foot/issues</url>
   <content_rating type="oars-1.1"/>
