@@ -1265,6 +1265,33 @@ execute_binding(struct seat *seat, struct terminal *term,
         return true;
     }
 
+    case BIND_ACTION_SEARCH_DELETE_TO_START: {
+        if (term->search.cursor > 0) {
+            memmove(&term->search.buf[0],
+                    &term->search.buf[term->search.cursor],
+                    (term->search.len - term->search.cursor)
+                        * sizeof(char32_t));
+
+            term->search.len -= term->search.cursor;
+            term->search.cursor = 0;
+            *update_search_result = *redraw = true;
+        }
+        return true;
+    }
+
+    case BIND_ACTION_SEARCH_DELETE_TO_END: {
+        if (term->search.cursor < term->search.len) {
+            memmove(&term->search.buf[term->search.cursor],
+                    &term->search.buf[term->search.len],
+                    (term->search.len + term->search.cursor - term->search.len)
+                        * sizeof(char32_t));
+
+            term->search.len = term->search.cursor;
+            *update_search_result = *redraw = true;
+        }
+        return true;
+    }
+
     case BIND_ACTION_SEARCH_EXTEND_CHAR: {
         struct coord target;
         if (search_extend_find_char_right(term, &target)) {
