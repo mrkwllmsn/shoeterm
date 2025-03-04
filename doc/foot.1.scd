@@ -302,10 +302,10 @@ These shortcuts affect the search box in scrollback-search mode:
 	Deletes the **word after** the cursor.
 
 *ctrl*+*u*
-	Deletes from the cursor to start the of the input
+	Deletes from the cursor to the start of the input
 
 *ctrl*+*k*
-	Deletes from the cursor to end the of the input
+	Deletes from the cursor to the end of the input
 
 These shortcuts affect scrolling in scrollback-search mode:
 
