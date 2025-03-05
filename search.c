@@ -1281,11 +1281,7 @@ execute_binding(struct seat *seat, struct terminal *term,
 
     case BIND_ACTION_SEARCH_DELETE_TO_END: {
         if (term->search.cursor < term->search.len) {
-            memmove(&term->search.buf[term->search.cursor],
-                    &term->search.buf[term->search.len],
-                    (term->search.len + term->search.cursor - term->search.len)
-                        * sizeof(char32_t));
-
+            term->search.buf[term->search.cursor] = '\0';
             term->search.len = term->search.cursor;
             *update_search_result = *redraw = true;
         }

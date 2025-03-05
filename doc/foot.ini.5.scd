@@ -1401,6 +1401,12 @@ scrollback search mode. The syntax is exactly the same as the regular
 	Deletes the **word after** the cursor. Default: _Mod1+d
 	Control+Delete_.
 
+*delete-to-start*
+	Deletes search input before the cursor. Default: _Ctrl+u_.
+
+*delete-to-end*
+	Deletes search input after the cursor. Default: _Ctrl+k_.
+
 *extend-char*
 	Extend current selection to the right, by one character. Default:
 	_Shift+Right_.
