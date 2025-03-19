@@ -85,8 +85,6 @@ spawn_url_launcher_with_token(struct terminal *term,
         free(argv);
     }
 
-    term->url_launch = NULL;
-
     close(dev_null);
     return ret;
 }
