@@ -31,7 +31,7 @@
 #include "macros.h"
 #include "quirks.h"
 #include "render.h"
-#include "search.h"
+#include "vimode.h"
 #include "selection.h"
 #include "spawn.h"
 #include "terminal.h"
@@ -183,8 +183,12 @@ execute_binding(struct seat *seat, struct terminal *term,
         term_reset_view(term);
         return true;
 
-    case BIND_ACTION_SEARCH_START:
-        search_begin(term);
+    case BIND_ACTION_START_VIMODE:
+        vimode_begin(term);
+        return true;
+
+    case BIND_ACTION_START_VIMODE_SEARCH:
+        vimode_search_begin(term);
         return true;
 
     case BIND_ACTION_FONT_SIZE_UP:
@@ -1579,7 +1583,6 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
                   uint32_t key, uint32_t state)
 {
     xassert(serial != 0);
-
     seat->kbd.serial = serial;
     if (seat->kbd.xkb == NULL ||
         seat->kbd.xkb_keymap == NULL ||
@@ -1632,15 +1635,17 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
 
     if (pressed) {
         if (term->unicode_mode.active) {
+            printf("UNICODE INPUT\n");
             unicode_mode_input(seat, term, sym);
             return;
         }
 
-        else if (term->is_searching) {
+        else if (term->is_vimming) {
+            printf("VIMODE INPUT\n");
             if (should_repeat)
                 start_repeater(seat, key);
 
-            search_input(
+            vimode_input(
                 seat, term, bindings, key, sym, mods, consumed,
                 raw_syms, raw_count, serial);
             return;
@@ -2744,7 +2749,7 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
             selection_stop_scroll_timer(term);
 
         /* Update selection */
-        if (!term->is_searching) {
+        if (!term->is_vimming) {
             if (auto_scroll_direction != SELECTION_SCROLL_NOT) {
                 /*
                  * Start 'selection auto-scrolling'
@@ -3207,7 +3212,7 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
         break;
 
     case TERM_SURF_GRID: {
-        search_cancel(term);
+        vimode_cancel(term);
         urls_reset(term);
 
         bool cursor_is_on_grid = seat->mouse.col >= 0 && seat->mouse.row >= 0;
