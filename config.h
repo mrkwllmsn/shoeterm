@@ -156,6 +156,10 @@ struct config {
     uint16_t resize_delay_ms;
 
     struct {
+        float amount;
+    } dim;
+
+    struct {
         bool enabled;
         bool palette_based;
         float amount;

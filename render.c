@@ -34,7 +34,6 @@
 #include "config.h"
 #include "cursor-shape.h"
 #include "grid.h"
-#include "hsl.h"
 #include "ime.h"
 #include "quirks.h"
 #include "search.h"
@@ -271,13 +270,23 @@ color_hex_to_pixman(uint32_t color, bool srgb)
     return color_hex_to_pixman_with_alpha(color, 0xffff, srgb);
 }
 
+static inline int i_lerp(int from, int to, float t) {
+    return from + (to - from) * t;
+}
+
 static inline uint32_t
-color_decrease_luminance(uint32_t color)
+color_blend_towards(uint32_t from, uint32_t to, float amount)
 {
-    uint32_t alpha = color & 0xff000000;
-    int hue, sat, lum;
-    rgb_to_hsl(color, &hue, &sat, &lum);
-    return alpha | hsl_to_rgb(hue, sat, lum / 1.5);
+    if (unlikely(amount == 0))
+        return from;
+    float t = 1 - 1/amount;
+
+    uint32_t alpha = from & 0xff000000;
+    uint8_t r = i_lerp((from>>16)&0xff, (to>>16)&0xff, t);
+    uint8_t g = i_lerp((from>>8)&0xff, (to>>8)&0xff, t);
+    uint8_t b = i_lerp((from>>0)&0xff, (to>>0)&0xff, t);
+
+    return alpha | (r<<16) | (g<<8) | (b<<0);
 }
 
 static inline uint32_t
@@ -286,25 +295,24 @@ color_dim(const struct terminal *term, uint32_t color)
     const struct config *conf = term->conf;
     const uint8_t custom_dim = conf->colors.use_custom.dim;
 
-    if (likely(custom_dim == 0))
-        return color_decrease_luminance(color);
+    if (unlikely(custom_dim != 0)) {
+        for (size_t i = 0; i < 8; i++) {
+            if (((custom_dim >> i) & 1) == 0)
+                continue;
 
-    for (size_t i = 0; i < 8; i++) {
-        if (((custom_dim >> i) & 1) == 0)
-            continue;
+            if (term->colors.table[0 + i] == color) {
+                /* "Regular" color, return the corresponding "dim" */
+                return conf->colors.dim[i];
+            }
 
-        if (term->colors.table[0 + i] == color) {
-            /* "Regular" color, return the corresponding "dim" */
-            return conf->colors.dim[i];
-        }
-
-        else if (term->colors.table[8 + i] == color) {
-            /* "Bright" color, return the corresponding "regular" */
-            return term->colors.table[i];
+            else if (term->colors.table[8 + i] == color) {
+                /* "Bright" color, return the corresponding "regular" */
+                return term->colors.table[i];
+            }
         }
     }
 
-    return color_decrease_luminance(color);
+    return color_blend_towards(color, 0x00000000, conf->dim.amount);
 }
 
 static inline uint32_t
@@ -322,11 +330,7 @@ color_brighten(const struct terminal *term, uint32_t color)
         return color;
     }
 
-    int hue, sat, lum;
-    rgb_to_hsl(color, &hue, &sat, &lum);
-
-    lum = (int)roundf(lum * term->conf->bold_in_bright.amount);
-    return hsl_to_rgb(hue, sat, min(lum, 100));
+    return color_blend_towards(color, 0x00ffffff, term->conf->bold_in_bright.amount);
 }
 
 static void
@@ -798,7 +802,7 @@ render_cell(struct terminal *term, pixman_image_t *pix,
         _fg = color_brighten(term, _fg);
 
     if (cell->attrs.blink && term->blink.state == BLINK_OFF)
-        _fg = color_decrease_luminance(_fg);
+        _fg = color_blend_towards(_fg, 0x00000000, term->conf->dim.amount);
 
     const bool gamma_correct = render_do_linear_blending(term);
     pixman_color_t fg = color_hex_to_pixman(_fg, gamma_correct);

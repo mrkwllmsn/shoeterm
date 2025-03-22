@@ -2759,6 +2759,9 @@ parse_section_tweak(struct context *ctx)
     else if (streq(key, "sixel"))
         return value_to_bool(ctx, &conf->tweak.sixel);
 
+    else if (streq(key, "dim-amount"))
+        return value_to_float(ctx, &conf->dim.amount);
+
     else if (streq(key, "bold-text-in-bright-amount"))
         return value_to_float(ctx, &conf->bold_in_bright.amount);
 
@@ -3288,6 +3291,7 @@ config_load(struct config *conf, const char *conf_path,
         .resize_by_cells = true,
         .resize_keep_grid = true,
         .resize_delay_ms = 100,
+        .dim = { .amount = 1.5 },
         .bold_in_bright = {
             .enabled = false,
             .palette_based = false,

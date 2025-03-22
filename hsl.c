@@ -2,41 +2,6 @@
 
 #include <math.h>
 
-#include "util.h"
-
-void
-rgb_to_hsl(uint32_t rgb, int *hue, int *sat, int *lum)
-{
-    double r = (double)((rgb >> 16) & 0xff) / 255.;
-    double g = (double)((rgb >> 8) & 0xff) / 255.;
-    double b = (double)((rgb >> 0) & 0xff) / 255.;
-
-    double x_max = max(max(r, g), b);
-    double x_min = min(min(r, g), b);
-    double V = x_max;
-
-    double C = x_max - x_min;
-    double L = (x_max + x_min) / 2.;
-
-    *lum = 100 * L;
-
-    if (C == 0.0)
-        *hue = 0;
-    else if (V == r)
-        *hue = 60. * (0. + (g - b) / C);
-    else if (V == g)
-        *hue = 60. * (2. + (b - r) / C);
-    else if (V == b)
-        *hue = 60. * (4. + (r - g) / C);
-    if (*hue < 0)
-        *hue += 360;
-
-    double S = C == 0.0
-        ? 0
-        : C / (1. - fabs(2. * L - 1.));
-    *sat = 100 * S;
-}
-
 uint32_t
 hsl_to_rgb(int hue, int sat, int lum)
 {

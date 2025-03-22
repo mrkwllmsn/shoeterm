@@ -396,7 +396,7 @@ empty string to be set, but it must be quoted: *KEY=""*)
 *bold-text-in-bright*
 	Semi-boolean. When enabled, bold text is rendered in a brighter
 	color (in addition to using a bold font). The color is brightened
-	by increasing its luminance.
+	by blending it with white.
 	
 	If set to *palette-based*, rather than a simple *yes|true*, colors
 	matching one of the 8 regular palette colors will be brightened
@@ -986,8 +986,8 @@ can configure the background transparency with the _alpha_ option.
 	an entry in the color palette. Applications emit them by combining
 	a color value, and a "dim" attribute.
 	
-	By default, foot implements this by reducing the luminance of the
-	current color. This is a generic approach that applies to both
+	By default, foot implements this by blending the current color
+	with black. This is a generic approach that applies to both
 	colors from the 256-color palette, as well as 24-bit RGB colors.
 	
 	You can change this behavior by setting the *dimN* options. When
@@ -999,7 +999,7 @@ can configure the background transparency with the _alpha_ option.
 	the corresponding *regularN* color will be used.
 	
 	If the current color does not match any known color, it is dimmed
-	by reducing the luminance (i.e. the same behavior as if the *dimN*
+	by blending with black (i.e. the same behavior as if the *dimN*
 	options are unconfigured). 24-bit RGB colors will typically fall
 	into this category.
 	
@@ -1939,6 +1939,9 @@ any of these options.
 *sixel*
 	Boolean. When enabled, foot will process sixel images. Default:
 	_yes_
+
+*dim-amount*
+	Amount by which dimmed text is darkened. Default: _1.5_.
 
 *bold-text-in-bright-amount*
 	Amount by which bold fonts are brightened when
