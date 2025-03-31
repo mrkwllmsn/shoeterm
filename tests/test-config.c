@@ -744,6 +744,9 @@ test_section_colors(void)
     test_two_colors(&ctx, &parse_section_colors, "search-box-match", false,
                     &conf.colors.search_box.match.fg,
                     &conf.colors.search_box.match.bg);
+    test_two_colors(&ctx, &parse_section_colors, "highlights", false,
+                    &conf.colors.highlights.fg,
+                    &conf.colors.highlights.bg);
 
     test_two_colors(&ctx, &parse_section_colors, "cursor", false,
                     &conf.colors.cursor.text,
