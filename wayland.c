@@ -888,6 +888,12 @@ xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 #if defined(XDG_TOPLEVEL_STATE_SUSPENDED_SINCE_VERSION)
         case XDG_TOPLEVEL_STATE_SUSPENDED:    is_suspended = true; break;
 #endif
+#if defined(XDG_TOPLEVEL_STATE_CONSTRAINED_LEFT_SINCE_VERSION)
+        case XDG_TOPLEVEL_STATE_CONSTRAINED_LEFT: is_tiled_left = true; break;
+        case XDG_TOPLEVEL_STATE_CONSTRAINED_RIGHT: is_tiled_right = true; break;
+        case XDG_TOPLEVEL_STATE_CONSTRAINED_TOP: is_tiled_top = true; break;
+        case XDG_TOPLEVEL_STATE_CONSTRAINED_BOTTOM: is_tiled_bottom = true; break;
+#endif
         }
 
 #if defined(LOG_ENABLE_DBG) && LOG_ENABLE_DBG
