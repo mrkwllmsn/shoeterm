@@ -745,24 +745,11 @@ render_cell(struct terminal *term, pixman_image_t *pix,
         }
 
         if (!term->window->is_fullscreen && term->colors.alpha != 0xffff) {
-            switch (term->conf->colors.alpha_mode) {
-            case ALPHA_MODE_DEFAULT: {
-                if (cell->attrs.bg_src == COLOR_DEFAULT) {
-                    alpha = term->colors.alpha;
-                }
-                break;
-            }
-
-            case ALPHA_MODE_MATCHING: {
-                if (cell->attrs.bg == term->colors.bg)
-                    alpha = term->colors.alpha;
-                break;
-            }
-
-            case ALPHA_MODE_ALL: {
+            if (term->conf->colors.alpha_mode == ALPHA_MODE_ALL) {
                 alpha = term->colors.alpha;
-                break;
-            }
+            } else if (cell->attrs.bg_src == COLOR_DEFAULT ||
+                      (term->conf->colors.alpha_mode == ALPHA_MODE_MATCHING && cell->attrs.bg == term->colors.bg)) {
+                alpha = term->colors.alpha;
             }
         } else {
             /*
