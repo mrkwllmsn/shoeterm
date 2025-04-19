@@ -215,18 +215,19 @@ empty string to be set, but it must be quoted: *KEY=""*)
 	*FREETYPE_PROPERTIES="cff:no-stem-darkening=0"* before starting
 	foot.
 	
-	Also be aware that many fonts have been developed on systems that
-	do not do gamma-correct blending, and may therefore look thicker
-	than intended when rendered with gamma-correct blending, since the
-	font designer set the font weight based on incorrect rendering.
+	Be aware that many fonts have been developed on systems that do
+	not do gamma-correct blending, and may therefore look thicker than
+	intended when rendered with gamma-correct blending, since the font
+	designer set the font weight based on incorrect rendering.
 	
 	Note that some colors (especially dark ones) will look a bit
 	off. The reason for this is loss of color precision, due to foot
 	using 8-bit surfaces (i.e. each color channel is 8 bits). The
-	amount of errors can be reduced by using 10-bit surfaces; see
-	*tweak.surface-bit-depth*.
+	amount of error can be reduced by using 10-bit surfaces; see
+	*tweak.surface-bit-depth* (do read the documentation before
+	enabling it).
 	
-	Default: enabled when compositor support is available
+	Default: _no_
 
 *box-drawings-uses-font-glyphs*
 	Boolean. When disabled, foot generates box/line drawing characters

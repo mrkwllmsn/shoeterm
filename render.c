@@ -5251,6 +5251,6 @@ render_xcursor_set(struct seat *seat, struct terminal *term,
 bool
 render_do_linear_blending(const struct terminal *term)
 {
-    return term->conf->gamma_correct != GAMMA_CORRECT_DISABLED &&
+    return term->conf->gamma_correct &&
            term->wl->color_management.img_description != NULL;
 }

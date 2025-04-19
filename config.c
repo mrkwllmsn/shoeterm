@@ -1086,17 +1086,8 @@ parse_section_main(struct context *ctx)
         return true;
     }
 
-    else if (streq(key, "gamma-correct-blending")) {
-        bool gamma_correct;
-        if (!value_to_bool(ctx, &gamma_correct))
-            return false;
-
-        conf->gamma_correct =
-            gamma_correct
-                ? GAMMA_CORRECT_ENABLED
-                : GAMMA_CORRECT_DISABLED;
-        return true;
-    }
+    else if (streq(key, "gamma-correct-blending"))
+        return value_to_bool(ctx, &conf->gamma_correct);
 
     else if (streq(key, "initial-color-theme")) {
         _Static_assert(
@@ -3362,7 +3353,7 @@ config_load(struct config *conf, const char *conf_path,
         .underline_thickness = {.pt = 0., .px = -1},
         .strikeout_thickness = {.pt = 0., .px = -1},
         .dpi_aware = false,
-        .gamma_correct = GAMMA_CORRECT_AUTO,
+        .gamma_correct = false,
         .security = {
             .osc52 = OSC52_ENABLED,
         },

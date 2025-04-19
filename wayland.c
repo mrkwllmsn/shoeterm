@@ -1980,7 +1980,7 @@ wayl_win_init(struct terminal *term, const char *token)
         xdg_toplevel_icon_v1_destroy(icon);
     }
 
-    if (term->conf->gamma_correct != GAMMA_CORRECT_DISABLED) {
+    if (term->conf->gamma_correct) {
         if (wayl->color_management.img_description != NULL) {
             xassert(wayl->color_management.manager != NULL);
 
@@ -1990,14 +1990,14 @@ wayl_win_init(struct terminal *term, const char *token)
             wp_color_management_surface_v1_set_image_description(
                 win->surface.color_management, wayl->color_management.img_description,
                 WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL);
-        } else if (term->conf->gamma_correct == GAMMA_CORRECT_ENABLED) {
+        } else {
             if (wayl->color_management.manager == NULL) {
                 LOG_WARN(
-                    "gamma-corrected-blending: disabling; "
+                    "gamma-correct-blending: disabling; "
                     "compositor does not implement the color-management protocol");
             } else {
                 LOG_WARN(
-                    "gamma-corrected-blending: disabling; "
+                    "gamma-correct-blending: disabling; "
                     "compositor does not implement all required color-management features");
                 LOG_WARN("use e.g. 'wayland-info' and verify the compositor implements:");
                 LOG_WARN("  - feature: parametric");
@@ -2005,8 +2005,6 @@ wayl_win_init(struct terminal *term, const char *token)
                 LOG_WARN("  - TF: ext_linear");
                 LOG_WARN("  - primaries: sRGB");
             }
-        } else {
-            /* "auto" - don't warn */
         }
     }
 

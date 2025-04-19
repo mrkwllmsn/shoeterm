@@ -90,6 +90,10 @@
 ### Changed
 
 * `cursor.color` moved to `colors.cursor`.
+* Default value of `gamma-correct-blending` changed to `no`
+  (disabled) ([#2035][2035]).
+
+[2035]: https://codeberg.org/dnkl/foot/issues/2035
 
 
 ### Deprecated

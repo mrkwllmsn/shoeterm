@@ -232,9 +232,7 @@ struct config {
     enum { STARTUP_WINDOWED, STARTUP_MAXIMIZED, STARTUP_FULLSCREEN } startup_mode;
 
     bool dpi_aware;
-    enum {GAMMA_CORRECT_DISABLED,
-          GAMMA_CORRECT_ENABLED,
-          GAMMA_CORRECT_AUTO} gamma_correct;
+    bool gamma_correct;
     struct config_font_list fonts[4];
     struct font_size_adjustment font_size_adjustment;
 
