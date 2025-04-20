@@ -1339,9 +1339,8 @@ parse_section_regex(struct context *ctx)
 }
 
 static bool
-parse_section_colors(struct context *ctx)
+parse_color_theme(struct context *ctx, struct color_theme *theme)
 {
-    struct config *conf = ctx->conf;
     const char *key = ctx->key;
 
     size_t key_len = strlen(key);
@@ -1350,28 +1349,26 @@ parse_section_colors(struct context *ctx)
 
     if (isdigit(key[0])) {
         unsigned long index;
-        if (!str_to_ulong(key, 0, &index) ||
-            index >= ALEN(conf->colors.table))
-        {
+        if (!str_to_ulong(key, 0, &index) || index >= ALEN(theme->table)) {
             LOG_CONTEXTUAL_ERR(
                 "invalid color palette index: %s (not in range 0-%zu)",
-                key, ALEN(conf->colors.table));
+                key, ALEN(theme->table));
             return false;
         }
-        color = &conf->colors.table[index];
+        color = &theme->table[index];
     }
 
     else if (key_len == 8 && str_has_prefix(key, "regular") && last_digit < 8)
-        color = &conf->colors.table[last_digit];
+        color = &theme->table[last_digit];
 
     else if (key_len == 7 && str_has_prefix(key, "bright") && last_digit < 8)
-        color = &conf->colors.table[8 + last_digit];
+        color = &theme->table[8 + last_digit];
 
     else if (key_len == 4 && str_has_prefix(key, "dim") && last_digit < 8) {
-        if (!value_to_color(ctx, &conf->colors.dim[last_digit], false))
+        if (!value_to_color(ctx, &theme->dim[last_digit], false))
             return false;
 
-        conf->colors.use_custom.dim |= 1 << last_digit;
+        theme->use_custom.dim |= 1 << last_digit;
         return true;
     }
 
@@ -1380,90 +1377,90 @@ parse_section_colors(struct context *ctx)
               (key_len == 7 && key[5] == '1' && last_digit < 6)))
     {
         size_t idx = key_len == 6 ? last_digit : 10 + last_digit;
-        return value_to_color(ctx, &conf->colors.sixel[idx], false);
+        return value_to_color(ctx, &theme->sixel[idx], false);
     }
 
-    else if (streq(key, "flash")) color = &conf->colors.flash;
-    else if (streq(key, "foreground")) color = &conf->colors.fg;
-    else if (streq(key, "background")) color = &conf->colors.bg;
-    else if (streq(key, "selection-foreground")) color = &conf->colors.selection_fg;
-    else if (streq(key, "selection-background")) color = &conf->colors.selection_bg;
+    else if (streq(key, "flash")) color = &theme->flash;
+    else if (streq(key, "foreground")) color = &theme->fg;
+    else if (streq(key, "background")) color = &theme->bg;
+    else if (streq(key, "selection-foreground")) color = &theme->selection_fg;
+    else if (streq(key, "selection-background")) color = &theme->selection_bg;
 
     else if (streq(key, "jump-labels")) {
         if (!value_to_two_colors(
                 ctx,
-                &conf->colors.jump_label.fg,
-                &conf->colors.jump_label.bg,
+                &theme->jump_label.fg,
+                &theme->jump_label.bg,
                 false))
         {
             return false;
         }
 
-        conf->colors.use_custom.jump_label = true;
+        theme->use_custom.jump_label = true;
         return true;
     }
 
     else if (streq(key, "scrollback-indicator")) {
         if (!value_to_two_colors(
                 ctx,
-                &conf->colors.scrollback_indicator.fg,
-                &conf->colors.scrollback_indicator.bg,
+                &theme->scrollback_indicator.fg,
+                &theme->scrollback_indicator.bg,
                 false))
         {
             return false;
         }
 
-        conf->colors.use_custom.scrollback_indicator = true;
+        theme->use_custom.scrollback_indicator = true;
         return true;
     }
 
     else if (streq(key, "search-box-no-match")) {
         if (!value_to_two_colors(
                 ctx,
-                &conf->colors.search_box.no_match.fg,
-                &conf->colors.search_box.no_match.bg,
+                &theme->search_box.no_match.fg,
+                &theme->search_box.no_match.bg,
                 false))
         {
             return false;
         }
 
-        conf->colors.use_custom.search_box_no_match = true;
+        theme->use_custom.search_box_no_match = true;
         return true;
     }
 
     else if (streq(key, "search-box-match")) {
         if (!value_to_two_colors(
                 ctx,
-                &conf->colors.search_box.match.fg,
-                &conf->colors.search_box.match.bg,
+                &theme->search_box.match.fg,
+                &theme->search_box.match.bg,
                 false))
         {
             return false;
         }
 
-        conf->colors.use_custom.search_box_match = true;
+        theme->use_custom.search_box_match = true;
         return true;
     }
 
     else if (streq(key, "cursor")) {
         if (!value_to_two_colors(
                 ctx,
-                &conf->colors.cursor.text,
-                &conf->colors.cursor.cursor,
+                &theme->cursor.text,
+                &theme->cursor.cursor,
                 false))
         {
             return false;
         }
 
-        conf->colors.use_custom.cursor = true;
+        theme->use_custom.cursor = true;
         return true;
     }
 
     else if (streq(key, "urls")) {
-        if (!value_to_color(ctx, &conf->colors.url, false))
+        if (!value_to_color(ctx, &theme->url, false))
             return false;
 
-        conf->colors.use_custom.url = true;
+        theme->use_custom.url = true;
         return true;
     }
 
@@ -1477,7 +1474,7 @@ parse_section_colors(struct context *ctx)
             return false;
         }
 
-        conf->colors.alpha = alpha * 65535.;
+        theme->alpha = alpha * 65535.;
         return true;
     }
 
@@ -1491,18 +1488,18 @@ parse_section_colors(struct context *ctx)
             return false;
         }
 
-        conf->colors.flash_alpha = alpha * 65535.;
+        theme->flash_alpha = alpha * 65535.;
         return true;
     }
 
     else if (strcmp(key, "alpha-mode") == 0) {
-        _Static_assert(sizeof(conf->colors.alpha_mode) == sizeof(int),
+        _Static_assert(sizeof(theme->alpha_mode) == sizeof(int),
         "enum is not 32-bit");
 
         return value_to_enum(
             ctx,
             (const char *[]){"default", "matching", "all", NULL},
-            (int *)&conf->colors.alpha_mode);
+            (int *)&theme->alpha_mode);
     }
 
     else {
@@ -1516,6 +1513,12 @@ parse_section_colors(struct context *ctx)
 
     *color = color_value;
     return true;
+}
+
+static bool
+parse_section_colors(struct context *ctx)
+{
+    return parse_color_theme(ctx, &ctx->conf->colors);
 }
 
 static bool
