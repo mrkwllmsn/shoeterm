@@ -142,6 +142,9 @@ static const char *const binding_action_map[] = {
     [BIND_ACTION_QUIT] = "quit",
     [BIND_ACTION_REGEX_LAUNCH] = "regex-launch",
     [BIND_ACTION_REGEX_COPY] = "regex-copy",
+    [BIND_ACTION_THEME_SWITCH_1] = "color-theme-switch-1",
+    [BIND_ACTION_THEME_SWITCH_2] = "color-theme-switch-2",
+    [BIND_ACTION_THEME_TOGGLE] = "color-theme-toggle",
 
     /* Mouse-specific actions */
     [BIND_ACTION_SCROLLBACK_UP_MOUSE] = "scrollback-up-mouse",
@@ -3479,6 +3482,7 @@ config_load(struct config *conf, const char *conf_path,
 
     memcpy(conf->colors.table, default_color_table, sizeof(default_color_table));
     memcpy(conf->colors.sixel, default_sixel_colors, sizeof(default_sixel_colors));
+    memcpy(&conf->colors2, &conf->colors, sizeof(conf->colors));
     parse_modifiers(XKB_MOD_NAME_SHIFT, 5, &conf->mouse.selection_override_modifiers);
 
     tokenize_cmdline(

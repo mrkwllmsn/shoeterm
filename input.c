@@ -484,6 +484,51 @@ execute_binding(struct seat *seat, struct terminal *term,
 
         return true;
 
+    case BIND_ACTION_THEME_SWITCH_1:
+        if (term->colors.active_theme != COLOR_THEME1) {
+            term_theme_apply(term, &term->conf->colors);
+            term->colors.active_theme = COLOR_THEME1;
+
+            wayl_win_alpha_changed(term->window);
+            term_font_subpixel_changed(term);
+
+            term_damage_view(term);
+            term_damage_margins(term);
+            render_refresh(term);
+        }
+        return true;
+
+    case BIND_ACTION_THEME_SWITCH_2:
+        if (term->colors.active_theme != COLOR_THEME2) {
+            term_theme_apply(term, &term->conf->colors2);
+            term->colors.active_theme = COLOR_THEME2;
+
+            wayl_win_alpha_changed(term->window);
+            term_font_subpixel_changed(term);
+
+            term_damage_view(term);
+            term_damage_margins(term);
+            render_refresh(term);
+        }
+        return true;
+
+    case BIND_ACTION_THEME_TOGGLE:
+        if (term->colors.active_theme == COLOR_THEME1) {
+            term_theme_apply(term, &term->conf->colors2);
+            term->colors.active_theme = COLOR_THEME2;
+        } else {
+            term_theme_apply(term, &term->conf->colors);
+            term->colors.active_theme = COLOR_THEME1;
+        }
+
+        wayl_win_alpha_changed(term->window);
+        term_font_subpixel_changed(term);
+
+        term_damage_view(term);
+        term_damage_margins(term);
+        render_refresh(term);
+        return true;
+
     case BIND_ACTION_SELECT_BEGIN:
         selection_start(
             term, seat->mouse.col, seat->mouse.row, SELECTION_CHAR_WISE, false);

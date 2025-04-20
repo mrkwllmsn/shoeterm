@@ -1303,6 +1303,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
             .selection_fg = conf->colors.selection_fg,
             .selection_bg = conf->colors.selection_bg,
             .use_custom_selection = conf->colors.use_custom.selection,
+            .active_theme = COLOR_THEME1,
         },
         .color_stack = {
             .stack = NULL,
@@ -2150,16 +2151,8 @@ term_reset(struct terminal *term, bool hard)
     term->flash.active = false;
     term->blink.state = BLINK_ON;
     fdm_del(term->fdm, term->blink.fd); term->blink.fd = -1;
-    term->colors.fg = term->conf->colors.fg;
-    term->colors.bg = term->conf->colors.bg;
-    term->colors.alpha = term->conf->colors.alpha;
-    term->colors.cursor_fg = (term->conf->colors.use_custom.cursor ? 1u << 31 : 0) | term->conf->colors.cursor.text;
-    term->colors.cursor_bg = (term->conf->colors.use_custom.cursor ? 1u << 31 : 0) | term->conf->colors.cursor.cursor;
-    term->colors.selection_fg = term->conf->colors.selection_fg;
-    term->colors.selection_bg = term->conf->colors.selection_bg;
-    term->colors.use_custom_selection = term->conf->colors.use_custom.selection;
-    memcpy(term->colors.table, term->conf->colors.table,
-           sizeof(term->colors.table));
+    term_theme_apply(term, &term->conf->colors);
+    term->colors.active_theme = COLOR_THEME1;
     free(term->color_stack.stack);
     term->color_stack.stack = NULL;
     term->color_stack.size = 0;
@@ -4692,4 +4685,18 @@ term_send_size_notification(struct terminal *term)
         buf, sizeof(buf), "\033[48;%d;%d;%d;%dt",
         term->rows, term->cols, height, width);
     term_to_slave(term, buf, n);
+}
+
+void
+term_theme_apply(struct terminal *term, const struct color_theme *theme)
+{
+    term->colors.fg = theme->fg;
+    term->colors.bg = theme->bg;
+    term->colors.alpha = theme->alpha;
+    term->colors.cursor_fg = (theme->use_custom.cursor ? 1u << 31 : 0) | theme->cursor.text;
+    term->colors.cursor_bg = (theme->use_custom.cursor ? 1u << 31 : 0) | theme->cursor.cursor;
+    term->colors.selection_fg = theme->selection_fg;
+    term->colors.selection_bg = theme->selection_bg;
+    term->colors.use_custom_selection = theme->use_custom.selection;
+    memcpy(term->colors.table, theme->table, sizeof(term->colors.table));
 }

@@ -63,6 +63,16 @@
 
 ## Unreleased
 ### Added
+
+* `colors2` config section. This section duplicates the `colors`
+  section, and lets you define an alternative color theme.
+* `key-bindings.color-theme-switch-1`,
+  `key-bindings.color-theme-switch-2` and
+  `key-bindings.color-theme-toggle` key bindings. These can be used to
+  switch between the primary and alternative color themes. They are
+  not bound by default.
+
+
 ### Changed
 
 * `cursor.color` moved to `colors.cursor`.

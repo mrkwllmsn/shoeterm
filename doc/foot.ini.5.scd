@@ -1396,6 +1396,22 @@ e.g. *search-start=none*.
 	
 	Default: _Control+Shift+u_.
 
+*color-theme-switch-1*, *color-theme-switch-2*, *color-theme-toggle*
+	Switch between the primary color theme (defined in the *colors*
+	section), and the alternative color theme (defined in the
+	*colors2* section).
+	
+	*color-theme-switch-1* applies the primary color theme regardless
+	of which color theme is currently active.
+	
+	*color-theme-switch-2* applies the alternative color theme regardless
+	of which color theme is currently active.
+	
+	*color-theme-toggle* toggles between the primary and alternative
+	color themes.
+	
+	Default: _none_
+
 *quit*
 	Quit foot. Default: _none_.
 

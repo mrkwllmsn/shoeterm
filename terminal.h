@@ -405,6 +405,7 @@ struct colors {
     uint32_t selection_fg;
     uint32_t selection_bg;
     bool use_custom_selection;
+    enum { COLOR_THEME1, COLOR_THEME2 } active_theme;
 };
 
 struct terminal {
@@ -981,6 +982,8 @@ bool term_ptmx_resume(struct terminal *term);
 void term_enable_size_notifications(struct terminal *term);
 void term_disable_size_notifications(struct terminal *term);
 void term_send_size_notification(struct terminal *term);
+
+void term_theme_apply(struct terminal *term, const struct color_theme *theme);
 
 static inline void term_reset_grapheme_state(struct terminal *term)
 {
