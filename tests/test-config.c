@@ -399,6 +399,16 @@ test_color(struct context *ctx, bool (*parse_fun)(struct context *ctx),
                 BUG("[%s].%s=%s: failed to parse",
                     ctx->section, ctx->key, ctx->value);
             }
+
+            uint32_t color = input[i].color;
+            if (alpha_allowed && strlen(input[i].option_string) == 6)
+                color |= 0xff000000;
+
+            if (*ptr != color) {
+                BUG("[%s].%s=%s: expected 0x%08x, got 0x%08x",
+                    ctx->section, ctx->key, ctx->value,
+                    color, *ptr);
+            }
         }
     }
 }
@@ -444,6 +454,18 @@ test_two_colors(struct context *ctx, bool (*parse_fun)(struct context *ctx),
             if (!parse_fun(ctx)) {
                 BUG("[%s].%s=%s: failed to parse",
                     ctx->section, ctx->key, ctx->value);
+            }
+
+            if (*ptr1 != input[i].color1) {
+                BUG("[%s].%s=%s: expected 0x%08x, got 0x%08x",
+                    ctx->section, ctx->key, ctx->value,
+                    input[i].color1, *ptr1);
+            }
+
+            if (*ptr2 != input[i].color2) {
+                BUG("[%s].%s=%s: expected 0x%08x, got 0x%08x",
+                    ctx->section, ctx->key, ctx->value,
+                    input[i].color2, *ptr2);
             }
         }
     }
@@ -719,6 +741,10 @@ test_section_colors(void)
     test_two_colors(&ctx, &parse_section_colors, "search-box-match", false,
                     &conf.colors.search_box.match.fg,
                     &conf.colors.search_box.match.bg);
+
+    test_two_colors(&ctx, &parse_section_colors, "cursor", false,
+                    &conf.colors.cursor.text,
+                    &conf.colors.cursor.cursor);
 
     test_enum(&ctx, &parse_section_colors, "alpha-mode", 3,
               (const char *[]){"default", "matching", "all"},
