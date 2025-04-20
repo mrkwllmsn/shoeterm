@@ -518,6 +518,7 @@ struct terminal {
 
     bool num_lock_modifier;
     bool bell_action_enabled;
+    bool report_theme_changes;
 
     /* Saved DECSET modes - we save the SET state */
     struct {
@@ -548,6 +549,7 @@ struct terminal {
         bool ime:1;
         bool app_sync_updates:1;
         bool grapheme_shaping:1;
+        bool report_theme_changes:1;
 
         bool size_notifications:1;
 

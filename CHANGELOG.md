@@ -71,6 +71,11 @@
   `key-bindings.color-theme-toggle` key bindings. These can be used to
   switch between the primary and alternative color themes. They are
   not bound by default.
+* Support for private mode 2031 - [_Dark and Light Mode
+  Detection_](https://contour-terminal.org/vt-extensions/color-palette-update-notifications/)
+  ([#2025][2025])
+
+[2025]: https://codeberg.org/dnkl/foot/issues/2025
 
 
 ### Changed

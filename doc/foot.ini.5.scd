@@ -958,6 +958,10 @@ The colors are in RRGGBB format (i.e. plain old 6-digit hex values,
 without prefix). That is, they do *not* have an alpha component. You
 can configure the background transparency with the _alpha_ option.
 
+In the context of private mode 2031 (Dark and Light Mode detection),
+the primary theme (i.e. the *colors* section) is considered to be the
+dark theme (since the default theme is dark).
+
 *cursor*
 	Two space separated RRGGBB values (i.e. plain old 6-digit hex
 	values, without prefix) specifying the foreground (text) and
@@ -1092,6 +1096,10 @@ keys as the *colors* section. The default values are the same.
 Note that values are not inherited. That is, if you set a value in
 *colors*, but not in *colors2*, the value from *colors* is not
 inherited by *colors2*.
+
+In the context of private mode 2031 (Dark and Light Mode detection),
+the primary theme (i.e. the *colors2* section) is considered to be the
+light theme (since the default theme is dark).
 
 # SECTION: csd
 

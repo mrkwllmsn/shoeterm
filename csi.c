@@ -563,6 +563,10 @@ decset_decrst(struct terminal *term, unsigned param, bool enable)
 #endif
         break;
 
+    case 2031:
+        term->report_theme_changes = enable;
+        break;
+
     case 2048:
         if (enable)
             term_enable_size_notifications(term);
@@ -657,6 +661,7 @@ decrqm(const struct terminal *term, unsigned param)
     case 2027: return term->conf->tweak.grapheme_width_method != GRAPHEME_WIDTH_DOUBLE
         ? DECRPM_PERMANENTLY_RESET
         : decrpm(term->grapheme_shaping);
+    case 2031: return decrpm(term->report_theme_changes);
     case 2048: return decrpm(term->size_notifications);
     case 8452: return decrpm(term->sixel.cursor_right_of_graphics);
     case 737769: return decrpm(term_ime_is_enabled(term));
@@ -702,6 +707,7 @@ xtsave(struct terminal *term, unsigned param)
     case 2004: term->xtsave.bracketed_paste = term->bracketed_paste; break;
     case 2026: term->xtsave.app_sync_updates = term->render.app_sync_updates.enabled; break;
     case 2027: term->xtsave.grapheme_shaping = term->grapheme_shaping; break;
+    case 2031: term->xtsave.report_theme_changes = term->report_theme_changes; break;
     case 2048: term->xtsave.size_notifications = term->size_notifications; break;
     case 8452: term->xtsave.sixel_cursor_right_of_graphics = term->sixel.cursor_right_of_graphics; break;
     case 737769: term->xtsave.ime = term_ime_is_enabled(term); break;
@@ -746,6 +752,7 @@ xtrestore(struct terminal *term, unsigned param)
     case 2004: enable = term->xtsave.bracketed_paste; break;
     case 2026: enable = term->xtsave.app_sync_updates; break;
     case 2027: enable = term->xtsave.grapheme_shaping; break;
+    case 2031: enable = term->xtsave.report_theme_changes; break;
     case 2048: enable = term->xtsave.size_notifications; break;
     case 8452: enable = term->xtsave.sixel_cursor_right_of_graphics; break;
     case 737769: enable = term->xtsave.ime; break;
@@ -1535,6 +1542,32 @@ csi_dispatch(struct terminal *term, uint8_t final)
                 int chars = snprintf(reply, sizeof(reply),
                                      "\033[>%d;%dm", resource, value);
                 term_to_slave(term, reply, chars);
+            }
+            break;
+        }
+
+        case 'n': {
+            const int param = vt_param_get(term, 0, 0);
+
+            switch (param) {
+            case 996: {  /* Query current theme mode (see private mode 2031) */
+                /*
+                 * 1 - dark mode
+                 * 2 - light mode
+                 *
+                 * In foot, the themes aren't necessarily light/dark,
+                 * but by convention, the primary theme is dark, and
+                 * the alternative theme is light.
+                 */
+                char reply[16] = {0};
+                int chars = snprintf(
+                    reply, sizeof(reply),
+                    "\033[?997;%dn",
+                    term->colors.active_theme == COLOR_THEME1 ? 1 : 2);
+
+                term_to_slave(term, reply, chars);
+                break;
+            }
             }
             break;
         }
