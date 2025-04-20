@@ -1522,6 +1522,12 @@ parse_section_colors(struct context *ctx)
 }
 
 static bool
+parse_section_colors2(struct context *ctx)
+{
+    return parse_color_theme(ctx, &ctx->conf->colors2);
+}
+
+static bool
 parse_section_cursor(struct context *ctx)
 {
     struct config *conf = ctx->conf;
@@ -2900,6 +2906,7 @@ enum section {
     SECTION_URL,
     SECTION_REGEX,
     SECTION_COLORS,
+    SECTION_COLORS2,
     SECTION_CURSOR,
     SECTION_MOUSE,
     SECTION_CSD,
@@ -2930,6 +2937,7 @@ static const struct {
     [SECTION_URL] =             {&parse_section_url, "url"},
     [SECTION_REGEX] =           {&parse_section_regex, "regex", true},
     [SECTION_COLORS] =          {&parse_section_colors, "colors"},
+    [SECTION_COLORS2] =         {&parse_section_colors2, "colors2"},
     [SECTION_CURSOR] =          {&parse_section_cursor, "cursor"},
     [SECTION_MOUSE] =           {&parse_section_mouse, "mouse"},
     [SECTION_CSD] =             {&parse_section_csd, "csd"},

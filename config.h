@@ -304,6 +304,7 @@ struct config {
     tll(struct custom_regex) custom_regexes;
 
     struct color_theme colors;
+    struct color_theme colors2;
 
     struct {
         enum cursor_style style;

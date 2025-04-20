@@ -1084,6 +1084,15 @@ can configure the background transparency with the _alpha_ option.
 	Flash translucency. A value in the range 0.0-1.0, where 0.0 means
 	completely transparent, and 1.0 is opaque. Default: _0.5_.
 
+# SECTION: colors2
+
+This section defines an alternative color theme. It has the exact same
+keys as the *colors* section. The default values are the same.
+
+Note that values are not inherited. That is, if you set a value in
+*colors*, but not in *colors2*, the value from *colors* is not
+inherited by *colors2*.
+
 # SECTION: csd
 
 This section controls the look of the _CSDs_ (Client Side
