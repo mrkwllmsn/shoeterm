@@ -2,10 +2,8 @@
 # theme: Ayu Mirage
 # description: a theme based on Ayu Mirage for Sublime Text (original: https://github.com/dempfi/ayu)
 
-[cursor]
-color =  ffcc66 665a44
-
 [colors]
+cursor =  ffcc66 665a44
 foreground = cccac2
 background = 242936
 

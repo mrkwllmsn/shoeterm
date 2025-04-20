@@ -3,10 +3,8 @@
 # author: Protesilaos Stavrou (https://protesilaos.com)
 # description: Dark theme with a deep blue-ish, slightly desaturated palette (WCAG AA compliant)
 
-#[cursor]
-#color = 1f252d a2a8ba
-
 [colors]
+#cursor = 1f252d a2a8ba
 foreground = a2a8ba
 background = 1f252d
 regular0 = 1f252d

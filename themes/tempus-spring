@@ -3,10 +3,8 @@
 # author: Protesilaos Stavrou (https://protesilaos.com)
 # description: Dark theme with a palette inspired by early spring colours (WCAG AA compliant)
 
-#[cursor]
-#color = 283a37 b5b8b7
-
 [colors]
+#cursor = 283a37 b5b8b7
 foreground = b5b8b7
 background = 283a37
 regular0 = 283a37

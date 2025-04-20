@@ -3,10 +3,8 @@
 # author: Protesilaos Stavrou (https://protesilaos.com)
 # description: Dark theme with a palette inspired by earthly colours (WCAG AA compliant)
 
-#[cursor]
-#color = 302420 a9a2a6
-
 [colors]
+#cursor = 302420 a9a2a6
 foreground = a9a2a6
 background = 302420
 regular0 = 302420

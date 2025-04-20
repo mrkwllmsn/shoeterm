@@ -3,10 +3,8 @@
 # Uses the light color palette from the default Neovim color scheme
 # See: https://github.com/neovim/neovim/blob/fb6c059dc55c8d594102937be4dd70f5ff51614a/src/nvim/highlight_group.c#L334
 
-[cursor]
-color=e0e2ea 14161b # NvimLightGrey2 NvimDarkGrey2
-
 [colors]
+cursor=e0e2ea 14161b # NvimLightGrey2 NvimDarkGrey2
 foreground=14161b # NvimDarkGrey2
 background=e0e2ea # NvimLightGrey2
 

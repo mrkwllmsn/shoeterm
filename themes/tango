@@ -1,10 +1,8 @@
 # -*- conf -*-
 # Tango
 
-[cursor]
-color=000000 babdb6
-
 [colors]
+cursor=000000 babdb6
 foreground=babdb6
 background=000000
 regular0=2e3436
