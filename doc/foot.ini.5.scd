@@ -349,6 +349,18 @@ empty string to be set, but it must be quoted: *KEY=""*)
 
 	Default: _yes_
 
+*initial-color-theme*
+	Selects which color theme to use, *1*, or *2*.
+	
+	*1* uses the colors defined in the *colors* section, while *2*
+	uses the colors from the *colors2* section.
+	
+	Use the *color-theme-switch-1*, *color-theme-switch-2* and
+	*color-theme-toggle* key bindings to switch between the two themes
+	at runtime.
+	
+	Default: _1_
+
 *initial-window-size-pixels*
 	Initial window width and height in _pixels_ (subject to output
 	scaling), in the form _WIDTHxHEIGHT_. The height _includes_ the

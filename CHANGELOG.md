@@ -71,6 +71,8 @@
   `key-bindings.color-theme-toggle` key bindings. These can be used to
   switch between the primary and alternative color themes. They are
   not bound by default.
+* Added `initial-color-theme=1|2` config option. `1` uses colors from
+  the `[colors]` section, `2` uses `[colors2]`.
 
 
 ### Changed

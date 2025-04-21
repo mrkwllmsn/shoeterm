@@ -405,7 +405,7 @@ struct colors {
     uint32_t selection_fg;
     uint32_t selection_bg;
     bool use_custom_selection;
-    enum { COLOR_THEME1, COLOR_THEME2 } active_theme;
+    enum which_color_theme active_theme;
 };
 
 struct terminal {

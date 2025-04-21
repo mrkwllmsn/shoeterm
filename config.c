@@ -1098,6 +1098,15 @@ parse_section_main(struct context *ctx)
         return true;
     }
 
+    else if (streq(key, "initial-color-theme")) {
+        _Static_assert(
+            sizeof(conf->initial_color_theme) == sizeof(int),
+            "enum is not 32-bit");
+
+        return value_to_enum(ctx, (const char*[]){"1", "2", NULL},
+                             (int *)&conf->initial_color_theme);
+    }
+
     else {
         LOG_CONTEXTUAL_ERR("not a valid option: %s", key);
         return false;
@@ -3402,7 +3411,7 @@ config_load(struct config *conf, const char *conf_path,
                 .url = false,
             },
         },
-
+        .initial_color_theme = COLOR_THEME1,
         .cursor = {
             .style = CURSOR_BLOCK,
             .unfocused_style = CURSOR_UNFOCUSED_HOLLOW,

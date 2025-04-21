@@ -190,6 +190,11 @@ struct color_theme {
     } use_custom;
 };
 
+enum which_color_theme {
+    COLOR_THEME1,
+    COLOR_THEME2,
+};
+
 struct config {
     char *term;
     char *shell;
@@ -305,6 +310,7 @@ struct config {
 
     struct color_theme colors;
     struct color_theme colors2;
+    enum which_color_theme initial_color_theme;
 
     struct {
         enum cursor_style style;

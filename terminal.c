@@ -1262,6 +1262,12 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
 
     const bool ten_bit_surfaces = conf->tweak.surface_bit_depth == SHM_10_BIT;
 
+    const struct color_theme *theme = NULL;
+    switch (conf->initial_color_theme) {
+    case COLOR_THEME1: theme = &conf->colors; break;
+    case COLOR_THEME2: theme = &conf->colors2; break;
+    }
+
     /* Initialize configure-based terminal attributes */
     *term = (struct terminal) {
         .fdm = fdm,
@@ -1279,7 +1285,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
         },
         .font_dpi = 0.,
         .font_dpi_before_unmap = -1.,
-        .font_subpixel = (conf->colors.alpha == 0xffff  /* Can't do subpixel rendering on transparent background */
+        .font_subpixel = (theme->alpha == 0xffff  /* Can't do subpixel rendering on transparent background */
                           ? FCFT_SUBPIXEL_DEFAULT
                           : FCFT_SUBPIXEL_NONE),
         .cursor_keys_mode = CURSOR_KEYS_NORMAL,
@@ -1295,15 +1301,15 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
             .state = 0,  /* STATE_GROUND */
         },
         .colors = {
-            .fg = conf->colors.fg,
-            .bg = conf->colors.bg,
-            .alpha = conf->colors.alpha,
-            .cursor_fg = (conf->colors.use_custom.cursor ? 1u << 31 : 0) | conf->colors.cursor.text,
-            .cursor_bg = (conf->colors.use_custom.cursor ? 1u << 31 : 0) | conf->colors.cursor.cursor,
-            .selection_fg = conf->colors.selection_fg,
-            .selection_bg = conf->colors.selection_bg,
-            .use_custom_selection = conf->colors.use_custom.selection,
-            .active_theme = COLOR_THEME1,
+            .fg = theme->fg,
+            .bg = theme->bg,
+            .alpha = theme->alpha,
+            .cursor_fg = (theme->use_custom.cursor ? 1u << 31 : 0) | theme->cursor.text,
+            .cursor_bg = (theme->use_custom.cursor ? 1u << 31 : 0) | theme->cursor.cursor,
+            .selection_fg = theme->selection_fg,
+            .selection_bg = theme->selection_bg,
+            .use_custom_selection = theme->use_custom.selection,
+            .active_theme = conf->initial_color_theme,
         },
         .color_stack = {
             .stack = NULL,
@@ -1434,7 +1440,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
     xassert(tll_length(term->wl->monitors) > 0);
     term->scale = tll_front(term->wl->monitors).scale;
 
-    memcpy(term->colors.table, term->conf->colors.table, sizeof(term->colors.table));
+    memcpy(term->colors.table, theme->table, sizeof(term->colors.table));
 
     /* Initialize the Wayland window backend */
     if ((term->window = wayl_win_init(term, token)) == NULL)
@@ -2148,11 +2154,18 @@ term_reset(struct terminal *term, bool hard)
     if (!hard)
         return;
 
+    const struct color_theme *theme = NULL;
+
+    switch (term->conf->initial_color_theme) {
+    case COLOR_THEME1: theme = &term->conf->colors; break;
+    case COLOR_THEME2: theme = &term->conf->colors2; break;
+    }
+
     term->flash.active = false;
     term->blink.state = BLINK_ON;
     fdm_del(term->fdm, term->blink.fd); term->blink.fd = -1;
-    term_theme_apply(term, &term->conf->colors);
-    term->colors.active_theme = COLOR_THEME1;
+    term_theme_apply(term, theme);
+    term->colors.active_theme = term->conf->initial_color_theme;
     free(term->color_stack.stack);
     term->color_stack.stack = NULL;
     term->color_stack.size = 0;
