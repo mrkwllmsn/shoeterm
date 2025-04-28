@@ -277,6 +277,12 @@ urls_input(struct seat *seat, struct terminal *term,
 
         switch (match->action) {
         case URL_ACTION_COPY:
+            // If the last hint character was uppercase, copy and paste
+            if (wc >= 'A' && wc <= 'Z') {
+                term_to_slave(term, match->url, strlen(match->url));
+            }
+            urls_reset(term);
+            break;
         case URL_ACTION_LAUNCH:
             urls_reset(term);
             break;
