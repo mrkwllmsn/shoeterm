@@ -279,7 +279,13 @@ urls_input(struct seat *seat, struct terminal *term,
         case URL_ACTION_COPY:
             // If the last hint character was uppercase, copy and paste
             if (wc >= 'A' && wc <= 'Z') {
+                if (term->bracketed_paste)
+                    term_to_slave(term, "\033[200~", 6);
+
                 term_to_slave(term, match->url, strlen(match->url));
+
+                if (term->bracketed_paste)
+                    term_to_slave(term, "\033[201~", 6);
             }
             urls_reset(term);
             break;
