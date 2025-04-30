@@ -1348,7 +1348,8 @@ e.g. *search-start=none*.
 *show-urls-launch*
 	Enter URL mode, where all currently visible URLs are tagged with a
 	jump label with a key sequence that will open the URL (and exit
-	URL mode). Default: _Control+Shift+o_.
+	URL mode). If the hint is completed with an uppercase character,
+	the match will also be pasted. Default: _Control+Shift+o_.
 
 *show-urls-persistent*
 	Similar to *show-urls-launch*, but does not automatically exit URL
@@ -1380,8 +1381,10 @@ e.g. *search-start=none*.
 	Default: _none_.
 
 *regex-copy*
-	Same as *regex-copy*, but the match is placed in the clipboard,
-	instead of "launched", upon activation. Default: _none_.
+	Same as *regex-launch*, but the match is placed in the clipboard,
+	instead of "launched", upon activation. If the hint is completed
+	with an uppercase character, the match will also be pasted.
+	Default: _none_.
 
 *prompt-prev*
 	Jump to the previous, currently not visible, prompt (requires
