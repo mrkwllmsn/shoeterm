@@ -131,7 +131,7 @@ spawn_url_launcher(struct seat *seat, struct terminal *term, const char *url,
 
 static void
 activate_url(struct seat *seat, struct terminal *term, const struct url *url,
-             uint32_t serial)
+             uint32_t serial, bool paste_url_to_self)
 {
     char *url_string = NULL;
 
@@ -159,6 +159,15 @@ activate_url(struct seat *seat, struct terminal *term, const struct url *url,
 
     switch (url->action) {
     case URL_ACTION_COPY:
+        if (paste_url_to_self) {
+          if (term->bracketed_paste)
+            term_to_slave(term, "\033[200~", 6);
+
+          term_to_slave(term, url_string, strlen(url_string));
+
+          if (term->bracketed_paste)
+            term_to_slave(term, "\033[201~", 6);
+        }
         if (text_to_clipboard(seat, term, url_string, seat->kbd.serial)) {
             /* Now owned by our clipboard “manager” */
             url_string = NULL;
@@ -273,20 +282,11 @@ urls_input(struct seat *seat, struct terminal *term,
     }
 
     if (match) {
-        activate_url(seat, term, match, serial);
+        // If the last hint character was uppercase, copy and paste
+        activate_url(seat, term, match, serial, wc == toc32upper(wc));
 
         switch (match->action) {
         case URL_ACTION_COPY:
-            // If the last hint character was uppercase, copy and paste
-            if (wc == toc32upper(wc)) {
-                if (term->bracketed_paste)
-                    term_to_slave(term, "\033[200~", 6);
-
-                term_to_slave(term, match->url, strlen(match->url));
-
-                if (term->bracketed_paste)
-                    term_to_slave(term, "\033[201~", 6);
-            }
             urls_reset(term);
             break;
         case URL_ACTION_LAUNCH:
