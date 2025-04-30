@@ -1348,7 +1348,7 @@ e.g. *search-start=none*.
 *show-urls-launch*
 	Enter URL mode, where all currently visible URLs are tagged with a
 	jump label with a key sequence that will open the URL (and exit
-	URL mode).
+	URL mode). Default: _Control+Shift+o_.
 
 *show-urls-persistent*
 	Similar to *show-urls-launch*, but does not automatically exit URL

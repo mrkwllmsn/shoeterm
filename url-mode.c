@@ -287,8 +287,6 @@ urls_input(struct seat *seat, struct terminal *term,
 
         switch (match->action) {
         case URL_ACTION_COPY:
-            urls_reset(term);
-            break;
         case URL_ACTION_LAUNCH:
             urls_reset(term);
             break;
