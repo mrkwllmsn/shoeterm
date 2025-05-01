@@ -984,8 +984,10 @@ shm_chain_new(struct wayland *wayl, bool scrollable, size_t pix_instances,
     enum wl_shm_format shm_fmt_with_alpha = WL_SHM_FORMAT_ARGB8888;
 
     static bool have_logged = false;
-    static bool have_logged_16f_fallback = false;
     static bool have_logged_10_fallback = false;
+
+#if defined(HAVE_PIXMAN_RGBA_FLOAT16)
+    static bool have_logged_16f_fallback = false;
 
     if (desired_bit_depth == SHM_BITS_16F) {
         if (wayl->shm_have_abgr161616f && wayl->shm_have_xbgr161616f) {
@@ -1010,6 +1012,7 @@ shm_chain_new(struct wayland *wayl, bool scrollable, size_t pix_instances,
             }
         }
     }
+#endif
 
     if (desired_bit_depth == SHM_BITS_10 ||
         (desired_bit_depth == SHM_BITS_16F &&
@@ -1097,7 +1100,9 @@ shm_chain_bit_depth(const struct buffer_chain *chain)
 
     return fmt == PIXMAN_a8r8g8b8
         ? SHM_BITS_8
+#if defined(HAVE_PIXMAN_RGBA_FLOAT16)
         : fmt == PIXMAN_rgba_float16
             ? SHM_BITS_16F
+#endif
             : SHM_BITS_10;
 }

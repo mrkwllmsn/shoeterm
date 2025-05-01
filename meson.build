@@ -145,6 +145,11 @@ if utf8proc.found()
   add_project_arguments('-DFOOT_GRAPHEME_CLUSTERING=1', language: 'c')
 endif
 
+# TODO: should be 0.47.0?
+if pixman.version().version_compare('>=0.44.3')
+  add_project_arguments('-DHAVE_PIXMAN_RGBA_FLOAT16', language: 'c')
+endif
+
 tllist = dependency('tllist', version: '>=1.1.0', fallback: 'tllist')
 fcft = dependency('fcft', version: ['>=3.3.1', '<4.0.0'], fallback: 'fcft')
 

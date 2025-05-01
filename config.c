@@ -2811,9 +2811,7 @@ parse_section_tweak(struct context *ctx)
         _Static_assert(sizeof(conf->tweak.surface_bit_depth) == sizeof(int),
                        "enum is not 32-bit");
 
-        /* TODO: check which version PIXMAN_rgba_float16 ended up in;
-           guessing 0.47.0, but PR is currently stuck at 0.44.3 */
-#if PIXMAN_VERSION >= PIXMAN_VERSION_ENCODE(0, 44, 3)
+#if defined(HAVE_PIXMAN_RGBA_FLOAT16)
         return value_to_enum(
                 ctx,
                 (const char *[]){"auto", "8-bit", "10-bit", "16f-bit", NULL},
