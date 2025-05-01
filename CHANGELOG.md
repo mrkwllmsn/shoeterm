@@ -87,6 +87,9 @@
   - solarized
 * `regex-copy`/`show-urls-copy` will copy and paste the selected text if the hint
   is completed with an uppercase character ([#1975][1975]).
+* `16f-bit` to `tweak.surface-bit-depth`. Makes foot use 16-bit
+  floating point image buffers. They provide the necessary color
+  precision required by `gamma-correct-blending=yes`.
 
 [2025]: https://codeberg.org/dnkl/foot/issues/2025
 [1975]: https://codeberg.org/dnkl/foot/issues/1975
@@ -98,6 +101,8 @@
 * OSC-11 without an alpha value will now restore the configured
   (i.e. from `foot.ini`) alpha, rather than keeping whatever the
   current alpha value is, unchanged.
+* `gamma-correct-blending=yes` now defaults to `16f-bit` image
+  buffers, instead of `10-bit`.
 
 
 ### Deprecated
