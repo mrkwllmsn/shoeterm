@@ -101,8 +101,8 @@
 * OSC-11 without an alpha value will now restore the configured
   (i.e. from `foot.ini`) alpha, rather than keeping whatever the
   current alpha value is, unchanged.
-* `gamma-correct-blending=yes` now defaults to `16f-bit` image
-  buffers, instead of `10-bit`.
+* `gamma-correct-blending=yes` now defaults to `16-bit` image buffers,
+  instead of `10-bit`.
 
 
 ### Deprecated

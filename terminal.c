@@ -1259,7 +1259,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
 
     const enum shm_bit_depth desired_bit_depth =
         conf->tweak.surface_bit_depth == SHM_BITS_AUTO
-            ? wayl_do_linear_blending(wayl, conf) ? SHM_BITS_16F : SHM_BITS_8
+            ? wayl_do_linear_blending(wayl, conf) ? SHM_BITS_16 : SHM_BITS_8
             : conf->tweak.surface_bit_depth;
 
     const struct color_theme *theme = NULL;
