@@ -160,13 +160,13 @@ activate_url(struct seat *seat, struct terminal *term, const struct url *url,
     switch (url->action) {
     case URL_ACTION_COPY:
         if (paste_url_to_self) {
-          if (term->bracketed_paste)
-            term_to_slave(term, "\033[200~", 6);
+            if (term->bracketed_paste)
+                term_to_slave(term, "\033[200~", 6);
 
-          term_to_slave(term, url_string, strlen(url_string));
+            term_to_slave(term, url_string, strlen(url_string));
 
-          if (term->bracketed_paste)
-            term_to_slave(term, "\033[201~", 6);
+            if (term->bracketed_paste)
+                term_to_slave(term, "\033[201~", 6);
         }
         if (text_to_clipboard(seat, term, url_string, seat->kbd.serial)) {
             /* Now owned by our clipboard “manager” */
