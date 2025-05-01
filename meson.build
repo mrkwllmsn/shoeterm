@@ -131,7 +131,7 @@ endif
 math = cc.find_library('m')
 threads = [dependency('threads'), cc.find_library('stdthreads', required: false)]
 libepoll = dependency('epoll-shim', required: false)
-pixman = dependency('pixman-1')
+pixman = dependency('pixman-1', fallback: 'pixman')
 wayland_protocols = dependency('wayland-protocols', version: '>=1.41',
                                fallback: 'wayland-protocols',
                                default_options: ['tests=false'])

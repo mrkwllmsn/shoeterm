@@ -338,7 +338,10 @@ get_new_buffers(struct buffer_chain *chain, size_t count,
     size_t total_size = 0;
     for (size_t i = 0; i < count; i++) {
         stride[i] = stride_for_format_and_width(
-            with_alpha ? PIXMAN_a8r8g8b8 : PIXMAN_x8r8g8b8, widths[i]);
+            with_alpha
+                ? chain->pixman_fmt_with_alpha
+                : chain->pixman_fmt_without_alpha,
+            widths[i]);
         sizes[i] = stride[i] * heights[i];
         total_size += sizes[i];
     }
@@ -981,8 +984,37 @@ shm_chain_new(struct wayland *wayl, bool scrollable, size_t pix_instances,
     enum wl_shm_format shm_fmt_with_alpha = WL_SHM_FORMAT_ARGB8888;
 
     static bool have_logged = false;
+    static bool have_logged_16f_fallback = false;
+    static bool have_logged_10_fallback = false;
 
-    if (desired_bit_depth == SHM_BITS_10) {
+    if (desired_bit_depth == SHM_BITS_16F) {
+        if (wayl->shm_have_abgr161616f && wayl->shm_have_xbgr161616f) {
+            pixman_fmt_without_alpha = PIXMAN_rgba_float16;
+            shm_fmt_without_alpha = WL_SHM_FORMAT_XBGR16161616F;
+
+            pixman_fmt_with_alpha = PIXMAN_rgba_float16;
+            shm_fmt_with_alpha = WL_SHM_FORMAT_ABGR16161616F;
+
+            if (!have_logged) {
+                have_logged = true;
+                LOG_INFO("using 16-bit (float) BGR surfaces");
+            }
+        } else {
+            if (!have_logged_16f_fallback) {
+                have_logged_16f_fallback = true;
+
+                LOG_WARN(
+                    "16f-bit surfaces requested, but compositor does not "
+                    "implement ABGR161616F+XBGR161616F. Falling back to either "
+                    "10- or 8-bit surfaces");
+            }
+        }
+    }
+
+    if (desired_bit_depth == SHM_BITS_10 ||
+        (desired_bit_depth == SHM_BITS_16F &&
+         pixman_fmt_with_alpha == PIXMAN_a8r8g8b8))
+    {
         if (wayl->shm_have_argb2101010 && wayl->shm_have_xrgb2101010) {
             pixman_fmt_without_alpha = PIXMAN_x2r10g10b10;
             shm_fmt_without_alpha = WL_SHM_FORMAT_XRGB2101010;
@@ -1010,8 +1042,8 @@ shm_chain_new(struct wayland *wayl, bool scrollable, size_t pix_instances,
         }
 
         else {
-            if (!have_logged) {
-                have_logged = true;
+            if (!have_logged_10_fallback) {
+                have_logged_10_fallback = true;
 
                 LOG_WARN(
                     "10-bit surfaces requested, but compositor does not "
@@ -1063,7 +1095,9 @@ shm_chain_bit_depth(const struct buffer_chain *chain)
 {
     const pixman_format_code_t fmt = chain->pixman_fmt_with_alpha;
 
-    return (fmt == PIXMAN_a2r10g10b10 || fmt == PIXMAN_a2b10g10r10)
-        ? SHM_BITS_10
-        : SHM_BITS_8;
+    return fmt == PIXMAN_a8r8g8b8
+        ? SHM_BITS_8
+        : fmt == PIXMAN_rgba_float16
+            ? SHM_BITS_16F
+            : SHM_BITS_10;
 }
