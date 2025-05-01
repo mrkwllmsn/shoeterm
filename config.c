@@ -2814,7 +2814,12 @@ parse_section_tweak(struct context *ctx)
 #if defined(HAVE_PIXMAN_RGBA_FLOAT16)
         return value_to_enum(
                 ctx,
-                (const char *[]){"auto", "8-bit", "10-bit", "16f-bit", NULL},
+                (const char *[]){"auto", "8-bit", "10-bit", "16-bit", "16f-bit", NULL},
+                (int *)&conf->tweak.surface_bit_depth);
+#elif defined(HAVE_PIXMAN_RGBA_16)
+        return value_to_enum(
+                ctx,
+                (const char *[]){"auto", "8-bit", "10-bit", "16-bit", NULL},
                 (int *)&conf->tweak.surface_bit_depth);
 #else
         return value_to_enum(

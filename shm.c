@@ -986,10 +986,40 @@ shm_chain_new(struct wayland *wayl, bool scrollable, size_t pix_instances,
     static bool have_logged = false;
     static bool have_logged_10_fallback = false;
 
+#if defined(HAVE_PIXMAN_RGBA_16)
+    static bool have_logged_16_fallback = false;
+
+    if (desired_bit_depth == SHM_BITS_16) {
+        if (wayl->shm_have_abgr161616 && wayl->shm_have_xbgr161616) {
+            pixman_fmt_without_alpha = PIXMAN_a16b16g16r16;
+            shm_fmt_without_alpha = WL_SHM_FORMAT_XBGR16161616;
+
+            pixman_fmt_without_alpha = PIXMAN_a16b16g16r16;
+            shm_fmt_with_alpha = WL_SHM_FORMAT_ABGR16161616;
+
+            if (!have_logged) {
+                have_logged = true;
+                LOG_INFO("using 16-bit BGR surfaces");
+            }
+        } else {
+            if (!have_logged_16_fallback) {
+                have_logged_16_fallback = true;
+
+                LOG_WARN(
+                    "16-bit surfaces requested, but compositor does not "
+                    "implement ABGR161616+XBGR161616");
+            }
+        }
+    }
+#endif
+
 #if defined(HAVE_PIXMAN_RGBA_FLOAT16)
     static bool have_logged_16f_fallback = false;
 
-    if (desired_bit_depth == SHM_BITS_16F) {
+    if (desired_bit_depth == SHM_BITS_16F ||
+        (desired_bit_depth == SHM_BITS_16 &&
+         pixman_fmt_with_alpha == PIXMAN_a8r8g8b8))
+    {
         if (wayl->shm_have_abgr161616f && wayl->shm_have_xbgr161616f) {
             pixman_fmt_without_alpha = PIXMAN_rgba_float16;
             shm_fmt_without_alpha = WL_SHM_FORMAT_XBGR16161616F;
@@ -1007,16 +1037,14 @@ shm_chain_new(struct wayland *wayl, bool scrollable, size_t pix_instances,
 
                 LOG_WARN(
                     "16f-bit surfaces requested, but compositor does not "
-                    "implement ABGR161616F+XBGR161616F. Falling back to either "
-                    "10- or 8-bit surfaces");
+                    "implement ABGR161616F+XBGR161616F");
             }
         }
     }
 #endif
 
-    if (desired_bit_depth == SHM_BITS_10 ||
-        (desired_bit_depth == SHM_BITS_16F &&
-         pixman_fmt_with_alpha == PIXMAN_a8r8g8b8))
+    if (desired_bit_depth >= SHM_BITS_10 &&
+        pixman_fmt_with_alpha == PIXMAN_a8r8g8b8)
     {
         if (wayl->shm_have_argb2101010 && wayl->shm_have_xrgb2101010) {
             pixman_fmt_without_alpha = PIXMAN_x2r10g10b10;
@@ -1051,7 +1079,7 @@ shm_chain_new(struct wayland *wayl, bool scrollable, size_t pix_instances,
                 LOG_WARN(
                     "10-bit surfaces requested, but compositor does not "
                     "implement ARGB2101010+XRGB2101010, or "
-                    "ABGR2101010+XBGR2101010. Falling back to 8-bit surfaces");
+                    "ABGR2101010+XBGR2101010");
             }
         }
     } else  {
