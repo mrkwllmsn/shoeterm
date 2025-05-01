@@ -207,7 +207,7 @@ empty string to be set, but it must be quoted: *KEY=""*)
 	Compared to the default (disabled), bright glyphs on a dark
 	background will appear thicker, and dark glyphs on a light
 	background will appear thinner.
-
+	
 	FreeType can limit the effect of the latter, with a technique
 	called stem darkening. It is only available for CFF fonts
 	(OpenType, .otf) and disabled by default (in FreeType). You can
