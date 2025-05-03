@@ -1128,9 +1128,13 @@ shm_chain_bit_depth(const struct buffer_chain *chain)
 
     return fmt == PIXMAN_a8r8g8b8
         ? SHM_BITS_8
+#if defined(HAVE_PIXMAN_RGBA_16)
+        : fmt == PIXMAN_a16b16g16r16
+            ? SHM_BITS_16
+#endif
 #if defined(HAVE_PIXMAN_RGBA_FLOAT16)
         : fmt == PIXMAN_rgba_float16
             ? SHM_BITS_16F
 #endif
-            : SHM_BITS_10;
+        : SHM_BITS_10;
 }
