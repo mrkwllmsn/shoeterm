@@ -2024,7 +2024,7 @@ any of these options.
 
 *surface-bit-depth*
 	Selects which RGB bit depth to use for image buffers. One of
-	*auto*, *8-bit*, *10-bit*, *16-bit*, or *16f-bit*.
+	*auto*, *8-bit*, *10-bit* or *16-bit*.
 	
 	*auto* chooses bit depth depending on other settings, and
 	availability.
@@ -2036,15 +2036,13 @@ any of these options.
 	alpha channel. Thus, it provides higher precision color channels,
 	but a lower precision alpha channel.
 	
-	*16-bit* and *16f-bit* uses 16 bits (with *16f-bit* being floating
-	point) for each color channel, alpha included. If available, this
-	is the default when *gamma-correct-blending=yes* (with *16-bit*
-	being preferred over *16f-bit*).
+	*16-bit* 16 bits for each color channel, alpha included. If
+	available, this is the default when *gamma-correct-blending=yes*.
 	
-	Note that both *10-bit*, *16-bit* and *16f-bit* are much slower than
-	*8-bit*; if you want to use gamma-correct blending, and if you
-	prefer speed (throughput and input latency) over accurate colors,
-	you can set *surface-bit-depth=8-bit* explicitly.
+	Note that both *10-bit* and *16-bit* are much slower than *8-bit*;
+	if you want to use gamma-correct blending, and if you prefer speed
+	(throughput and input latency) over accurate colors, you can set
+	*surface-bit-depth=8-bit* explicitly.
 	
 	Default: _auto_
 

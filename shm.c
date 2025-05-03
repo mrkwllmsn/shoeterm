@@ -1013,36 +1013,6 @@ shm_chain_new(struct wayland *wayl, bool scrollable, size_t pix_instances,
     }
 #endif
 
-#if defined(HAVE_PIXMAN_RGBA_FLOAT16)
-    static bool have_logged_16f_fallback = false;
-
-    if (desired_bit_depth == SHM_BITS_16F ||
-        (desired_bit_depth == SHM_BITS_16 &&
-         pixman_fmt_with_alpha == PIXMAN_a8r8g8b8))
-    {
-        if (wayl->shm_have_abgr161616f && wayl->shm_have_xbgr161616f) {
-            pixman_fmt_without_alpha = PIXMAN_rgba_float16;
-            shm_fmt_without_alpha = WL_SHM_FORMAT_XBGR16161616F;
-
-            pixman_fmt_with_alpha = PIXMAN_rgba_float16;
-            shm_fmt_with_alpha = WL_SHM_FORMAT_ABGR16161616F;
-
-            if (!have_logged) {
-                have_logged = true;
-                LOG_INFO("using 16-bit (float) BGR surfaces");
-            }
-        } else {
-            if (!have_logged_16f_fallback) {
-                have_logged_16f_fallback = true;
-
-                LOG_WARN(
-                    "16f-bit surfaces requested, but compositor does not "
-                    "implement ABGR161616F+XBGR161616F");
-            }
-        }
-    }
-#endif
-
     if (desired_bit_depth >= SHM_BITS_10 &&
         pixman_fmt_with_alpha == PIXMAN_a8r8g8b8)
     {
@@ -1131,10 +1101,6 @@ shm_chain_bit_depth(const struct buffer_chain *chain)
 #if defined(HAVE_PIXMAN_RGBA_16)
         : fmt == PIXMAN_a16b16g16r16
             ? SHM_BITS_16
-#endif
-#if defined(HAVE_PIXMAN_RGBA_FLOAT16)
-        : fmt == PIXMAN_rgba_float16
-            ? SHM_BITS_16F
 #endif
         : SHM_BITS_10;
 }

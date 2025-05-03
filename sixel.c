@@ -121,8 +121,8 @@ sixel_init(struct terminal *term, int p1, int p2, int p3)
      * blending, and b) use the same pixman format as the main
      * surfaces, for (hopefully) better performance.
      *
-     * For now, don't support 16f surfaces (too much sixel logic that
-     * assumes 32-bit pixels).
+     * For now, don't support 16-bit surfaces (too much sixel logic
+     * that assumes 32-bit pixels).
      */
     if (shm_chain_bit_depth(term->render.chains.grid) >= SHM_BITS_10) {
         if (term->wl->shm_have_argb2101010 && term->wl->shm_have_xrgb2101010) {
