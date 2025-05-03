@@ -1,6 +1,9 @@
 # _*_ conf _*_
 # Catppuccin Latte
 
+[cursor]
+color=eff1f5 dc8a78
+
 [colors]
 foreground=4c4f69
 background=eff1f5
@@ -22,6 +25,9 @@ bright4=1e66f5
 bright5=ea76cb
 bright6=179299
 bright7=bcc0cc
+
+16=fe640b
+17=dc8a78
 
 selection-foreground=4c4f69
 selection-background=ccced7
