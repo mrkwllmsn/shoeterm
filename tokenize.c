@@ -94,7 +94,7 @@ tokenize_cmdline(const char *cmdline, char ***argv)
     if (**argv && (**argv)[0] == '~' && (**argv)[1] == '/') {
         const char *homedir = getenv("HOME");
         if (homedir == NULL) {
-            LOG_ERR("failed to expand '~': HOME not set");
+            LOG_ERR("failed to expand '~/': HOME not set");
             goto err;
         }
 
