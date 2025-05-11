@@ -52,12 +52,10 @@ tokenize_cmdline(const char *cmdline, char ***argv)
                 goto err;
             }
 
-            if (!push_argv(argv, &argv_size, p, final_end - p, &idx) ||
-                !push_argv(argv, &argv_size, NULL, 0, &idx))
-            {
+            if (!push_argv(argv, &argv_size, p, final_end - p, &idx))
                 goto err;
-            } else
-                return true;
+
+            break;
         }
 
         if (end > p && *(end - 1) == '\\') {
@@ -91,6 +89,19 @@ tokenize_cmdline(const char *cmdline, char ***argv)
 
     if (!push_argv(argv, &argv_size, NULL, 0, &idx))
         goto err;
+
+    // expand '~/'
+    if (**argv && (**argv)[0] == '~' && (**argv)[1] == '/') {
+        const char *homedir = getenv("HOME");
+        if (homedir == NULL) {
+            LOG_ERR("failed to expand '~': HOME not set");
+            goto err;
+        }
+
+        char *argv0 = xstrjoin3(homedir, "/", **argv + 2);
+        free(**argv);
+        **argv = argv0;
+    }
 
     return true;
 
