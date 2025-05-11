@@ -98,7 +98,7 @@ tokenize_cmdline(const char *cmdline, char ***argv)
             goto err;
         }
 
-        char *argv0 = xstrjoin3(homedir, "/", **argv + 2);
+        char *argv0 = xstrjoin(homedir, **argv + 1);
         free(**argv);
         **argv = argv0;
     }
