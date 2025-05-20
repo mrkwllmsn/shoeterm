@@ -2254,16 +2254,21 @@ get_csd_data(const struct terminal *term, enum csd_surface surf_idx)
     const int button_width = title_visible
         ? roundf(term->conf->csd.button_width * scale) : 0;
 
-    const int button_close_width = term->width >= 1 * button_width
-        ? button_width : 0;
+    int remaining_width = term->width;
 
-    const int button_maximize_width =
-        term->width >= 2 * button_width && term->window->wm_capabilities.maximize
-            ? button_width : 0;
+    const int button_close_width = remaining_width >= button_width ? button_width : 0;
+    remaining_width -= button_close_width;
+    const int button_close_start = remaining_width;
 
-    const int button_minimize_width =
-        term->width >= 3 * button_width && term->window->wm_capabilities.minimize
-            ? button_width : 0;
+    const int button_maximize_width = remaining_width >= button_width &&
+        term->window->wm_capabilities.maximize ? button_width : 0;
+    remaining_width -= button_maximize_width;
+    const int button_maximize_start = remaining_width;
+
+    const int button_minimize_width = remaining_width >= button_width &&
+        term->window->wm_capabilities.minimize ? button_width : 0;
+    remaining_width -= button_minimize_width;
+    const int button_minimize_start = remaining_width;
 
     /*
      * With fractional scaling, we must ensure the offset, when
@@ -2288,9 +2293,9 @@ get_csd_data(const struct terminal *term, enum csd_surface surf_idx)
     case CSD_SURF_BOTTOM: return (struct csd_data){-border_width,  term->height, top_bottom_width,      border_width};
 
     /* Positioned relative to CSD_SURF_TITLE */
-    case CSD_SURF_MINIMIZE: return (struct csd_data){term->width - 3 * button_width, 0, button_minimize_width, title_height};
-    case CSD_SURF_MAXIMIZE: return (struct csd_data){term->width - 2 * button_width, 0, button_maximize_width, title_height};
-    case CSD_SURF_CLOSE:    return (struct csd_data){term->width - 1 * button_width, 0, button_close_width,    title_height};
+    case CSD_SURF_MINIMIZE: return (struct csd_data){button_minimize_start, 0, button_minimize_width, title_height};
+    case CSD_SURF_MAXIMIZE: return (struct csd_data){button_maximize_start, 0, button_maximize_width, title_height};
+    case CSD_SURF_CLOSE:    return (struct csd_data){   button_close_start, 0,    button_close_width, title_height};
 
     case CSD_SURF_COUNT:
         break;
