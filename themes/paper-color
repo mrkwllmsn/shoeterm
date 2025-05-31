@@ -24,3 +24,26 @@ bright6=00afaf   # bright cyan
 bright7=5f8787   # bright white
 # selection-foreground=1c1c1c
 # selection-background=af87d7
+
+[colors2]
+cursor=eeeeee 444444
+background=eeeeee
+foreground=444444
+regular0=eeeeee  # black
+regular1=af0000  # red
+regular2=008700  # green
+regular3=5f8700  # yellow
+regular4=0087af  # blue
+regular5=878787  # magenta
+regular6=005f87  # cyan
+regular7=764e37  # white
+bright0=bcbcbc   # bright black
+bright1=d70000   # bright red
+bright2=d70087   # bright green
+bright3=8700af   # bright yellow
+bright4=d75f00   # bright blue
+bright5=d75f00   # bright magenta
+bright6=4c7a5d   # bright cyan
+bright7=005faf   # bright white
+# selection-foreground=eeeeee
+# selection-background=0087af

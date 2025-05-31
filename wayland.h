@@ -26,6 +26,7 @@
 #include <fcft/fcft.h>
 #include <tllist.h>
 
+#include "config.h"
 #include "cursor-shape.h"
 #include "fdm.h"
 
@@ -402,6 +403,12 @@ struct wl_window {
     bool is_tiled_left;
     bool is_tiled_right;
     bool is_tiled;  /* At least one of is_tiled_{top,bottom,left,right} is true */
+
+    bool is_constrained_top;
+    bool is_constrained_bottom;
+    bool is_constrained_left;
+    bool is_constrained_right;
+
     struct {
         int width;
         int height;
@@ -409,10 +416,17 @@ struct wl_window {
         bool is_fullscreen:1;
         bool is_maximized:1;
         bool is_resizing:1;
+
         bool is_tiled_top:1;
         bool is_tiled_bottom:1;
         bool is_tiled_left:1;
         bool is_tiled_right:1;
+
+        bool is_constrained_top:1;
+        bool is_constrained_bottom:1;
+        bool is_constrained_left:1;
+        bool is_constrained_right:1;
+
         enum csd_mode csd_mode;
     } configure;
 
@@ -446,6 +460,7 @@ struct wayland {
     struct wp_fractional_scale_manager_v1 *fractional_scale_manager;
 
     struct wp_cursor_shape_manager_v1 *cursor_shape_manager;
+    int shape_manager_version;
 
     struct wp_single_pixel_buffer_manager_v1 *single_pixel_manager;
 
@@ -482,6 +497,8 @@ struct wayland {
     bool shm_have_xrgb2101010:1;
     bool shm_have_abgr2101010:1;
     bool shm_have_xbgr2101010:1;
+    bool shm_have_abgr161616:1;
+    bool shm_have_xbgr161616:1;
 };
 
 struct wayland *wayl_init(
@@ -526,3 +543,4 @@ bool wayl_get_activation_token(
     struct wl_window *win, activation_token_cb_t cb, void *cb_data);
 void wayl_activate(struct wayland *wayl, struct wl_window *win, const char *token);
 
+bool wayl_do_linear_blending(const struct wayland *wayl, const struct config *conf);

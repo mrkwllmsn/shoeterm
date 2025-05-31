@@ -244,6 +244,8 @@ shm_format(void *data, struct wl_shm *wl_shm, uint32_t format)
     case WL_SHM_FORMAT_ARGB2101010: wayl->shm_have_argb2101010 = true; break;
     case WL_SHM_FORMAT_XBGR2101010: wayl->shm_have_xbgr2101010 = true; break;
     case WL_SHM_FORMAT_ABGR2101010: wayl->shm_have_abgr2101010 = true; break;
+    case WL_SHM_FORMAT_XBGR16161616: wayl->shm_have_xbgr161616 = true; break;
+    case WL_SHM_FORMAT_ABGR16161616: wayl->shm_have_abgr161616 = true; break;
     }
 
 #if defined(_DEBUG)
@@ -852,6 +854,10 @@ xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
     bool is_tiled_bottom = false;
     bool is_tiled_left = false;
     bool is_tiled_right = false;
+    bool is_constrained_top = false;
+    bool is_constrained_bottom = false;
+    bool is_constrained_left = false;
+    bool is_constrained_right = false;
     bool is_suspended UNUSED = false;
 
 #if defined(LOG_ENABLE_DBG) && LOG_ENABLE_DBG
@@ -870,6 +876,12 @@ xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 #if defined(XDG_TOPLEVEL_STATE_SUSPENDED_SINCE_VERSION)  /* wayland-protocols >= 1.32 */
         [XDG_TOPLEVEL_STATE_SUSPENDED] = "suspended",
 #endif
+#if defined(XDG_TOPLEVEL_STATE_CONSTRAINED_LEFT_SINCE_VERSION)
+        [XDG_TOPLEVEL_STATE_CONSTRAINED_LEFT] = "constrained:left",
+        [XDG_TOPLEVEL_STATE_CONSTRAINED_RIGHT] = "constrained:right",
+        [XDG_TOPLEVEL_STATE_CONSTRAINED_TOP] = "constrained:top",
+        [XDG_TOPLEVEL_STATE_CONSTRAINED_BOTTOM] = "constrained:bottom",
+#endif
     };
 #endif
 
@@ -887,6 +899,12 @@ xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 
 #if defined(XDG_TOPLEVEL_STATE_SUSPENDED_SINCE_VERSION)
         case XDG_TOPLEVEL_STATE_SUSPENDED:    is_suspended = true; break;
+#endif
+#if defined(XDG_TOPLEVEL_STATE_CONSTRAINED_LEFT_SINCE_VERSION)
+        case XDG_TOPLEVEL_STATE_CONSTRAINED_LEFT: is_constrained_left = true; break;
+        case XDG_TOPLEVEL_STATE_CONSTRAINED_RIGHT: is_constrained_right = true; break;
+        case XDG_TOPLEVEL_STATE_CONSTRAINED_TOP: is_constrained_top = true; break;
+        case XDG_TOPLEVEL_STATE_CONSTRAINED_BOTTOM: is_constrained_bottom = true; break;
 #endif
         }
 
@@ -927,6 +945,10 @@ xdg_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
     win->configure.is_tiled_bottom = is_tiled_bottom;
     win->configure.is_tiled_left = is_tiled_left;
     win->configure.is_tiled_right = is_tiled_right;
+    win->configure.is_constrained_top = is_constrained_top;
+    win->configure.is_constrained_bottom = is_constrained_bottom;
+    win->configure.is_constrained_left = is_constrained_left;
+    win->configure.is_constrained_right = is_constrained_right;
     win->configure.width = width;
     win->configure.height = height;
 }
@@ -1050,14 +1072,22 @@ xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
     win->is_maximized = win->configure.is_maximized;
     win->is_fullscreen = win->configure.is_fullscreen;
     win->is_resizing = win->configure.is_resizing;
+
     win->is_tiled_top = win->configure.is_tiled_top;
     win->is_tiled_bottom = win->configure.is_tiled_bottom;
     win->is_tiled_left = win->configure.is_tiled_left;
     win->is_tiled_right = win->configure.is_tiled_right;
+
+    win->is_constrained_top = win->configure.is_constrained_top;
+    win->is_constrained_bottom = win->configure.is_constrained_bottom;
+    win->is_constrained_left = win->configure.is_constrained_left;
+    win->is_constrained_right = win->configure.is_constrained_right;
+
     win->is_tiled = (win->is_tiled_top ||
                      win->is_tiled_bottom ||
                      win->is_tiled_left ||
                      win->is_tiled_right);
+
     win->csd_mode = win->configure.csd_mode;
 
     bool enable_csd = win->csd_mode == CSD_YES && !win->is_fullscreen;
@@ -1104,7 +1134,7 @@ xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
     else
         term_visual_focus_out(term);
 
-    if (!resized) {
+    if (!resized && !term->render.pending.grid) {
         /*
          * If we didn't resize, we won't be committing a new surface
          * anytime soon. Some compositors require a commit in
@@ -1233,13 +1263,23 @@ handle_global(void *data, struct wl_registry *registry,
             return;
 
         /*
-         * We *require* version 1, but _can_ use version 5. Version 2
-         * adds 'tiled' window states. We use that information to
-         * restore the window size when window is un-tiled. Version 5
-         * adds 'wm_capabilities'. We use that information to draw
-         * window decorations.
+         * We *require* version 1, but _can_ use version 2, 5 or 7, if
+         * available.
+         *
+         * Version 2 adds 'tiled' window states. We use this
+         * information to restore the window size when window is
+         * un-tiled.
+         *
+         * Version 5 adds 'wm_capabilities'. We use this information
+         * to draw window decorations.
+         *
+         * Version 7 adds 'constrained' window states. We use this
+         * information to determine whether to allow window resize
+         * (via CSDs) or not.
          */
-#if defined(XDG_TOPLEVEL_WM_CAPABILITIES_SINCE_VERSION)
+#if defined(XDG_TOPLEVEL_STATE_CONSTRAINED_LEFT_SINCE_VERSION)
+        const uint32_t preferred = XDG_TOPLEVEL_STATE_CONSTRAINED_LEFT_SINCE_VERSION;
+#elif defined(XDG_TOPLEVEL_WM_CAPABILITIES_SINCE_VERSION)
         const uint32_t preferred = XDG_TOPLEVEL_WM_CAPABILITIES_SINCE_VERSION;
 #elif defined(XDG_TOPLEVEL_STATE_TILED_LEFT_SINCE_VERSION)
         const uint32_t preferred = XDG_TOPLEVEL_STATE_TILED_LEFT_SINCE_VERSION;
@@ -1440,8 +1480,16 @@ handle_global(void *data, struct wl_registry *registry,
         if (!verify_iface_version(interface, version, required))
             return;
 
+#if defined(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DND_ASK_SINCE_VERSION)  /* 1.42 */
+        const uint32_t preferred = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DND_ASK_SINCE_VERSION;
+#else
+        const uint32_t preferred = required;
+#endif
+
+        wayl->shape_manager_version = min(required, preferred);
         wayl->cursor_shape_manager = wl_registry_bind(
-            wayl->registry, name, &wp_cursor_shape_manager_v1_interface, required);
+            wayl->registry, name, &wp_cursor_shape_manager_v1_interface,
+            min(required, preferred));
     }
 
     else if (streq(interface, wp_single_pixel_buffer_manager_v1_interface.name)) {
@@ -1454,13 +1502,13 @@ handle_global(void *data, struct wl_registry *registry,
             &wp_single_pixel_buffer_manager_v1_interface, required);
     }
 
-    else if (streq(interface, xdg_toplevel_icon_v1_interface.name)) {
+    else if (streq(interface, xdg_toplevel_icon_manager_v1_interface.name)) {
         const uint32_t required = 1;
         if (!verify_iface_version(interface, version, required))
             return;
 
         wayl->toplevel_icon_manager = wl_registry_bind(
-            wayl->registry, name, &xdg_toplevel_icon_v1_interface, required);
+            wayl->registry, name, &xdg_toplevel_icon_manager_v1_interface, required);
     }
 
     else if (streq(interface, xdg_system_bell_v1_interface.name)) {
@@ -1611,6 +1659,8 @@ fdm_wayl(struct fdm *fdm, int fd, int events, void *data)
             LOG_ERRNO("failed to read events from the Wayland socket");
             return false;
         }
+
+        wl_display_dispatch_pending(wayl->display);
 
         while (wl_display_prepare_read(wayl->display) != 0) {
             if (wl_display_dispatch_pending(wayl->display) < 0) {
@@ -1942,7 +1992,7 @@ wayl_win_init(struct terminal *term, const char *token)
         xdg_toplevel_icon_v1_destroy(icon);
     }
 
-    if (term->conf->gamma_correct != GAMMA_CORRECT_DISABLED) {
+    if (term->conf->gamma_correct) {
         if (wayl->color_management.img_description != NULL) {
             xassert(wayl->color_management.manager != NULL);
 
@@ -1952,7 +2002,7 @@ wayl_win_init(struct terminal *term, const char *token)
             wp_color_management_surface_v1_set_image_description(
                 win->surface.color_management, wayl->color_management.img_description,
                 WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL);
-        } else if (term->conf->gamma_correct == GAMMA_CORRECT_ENABLED) {
+        } else {
             if (wayl->color_management.manager == NULL) {
                 LOG_WARN(
                     "gamma-corrected-blending: disabling; "
@@ -1967,8 +2017,6 @@ wayl_win_init(struct terminal *term, const char *token)
                 LOG_WARN("  - TF: ext_linear");
                 LOG_WARN("  - primaries: sRGB");
             }
-        } else {
-            /* "auto" - don't warn */
         }
     }
 
@@ -2209,7 +2257,14 @@ wayl_flush(struct wayland *wayl)
         }
 
         if (errno != EAGAIN) {
-            LOG_ERRNO("failed to flush wayland socket");
+            const int saved_errno = errno;
+
+            if (errno == EPIPE) {
+                wl_display_read_events(wayl->display);
+                wl_display_dispatch_pending(wayl->display);
+            }
+
+            LOG_ERRNO_P(saved_errno, "failed to flush wayland socket");
             return;
         }
 
@@ -2603,4 +2658,11 @@ wayl_activate(struct wayland *wayl, struct wl_window *win, const char *token)
         return;
 
     xdg_activation_v1_activate(wayl->xdg_activation, token, win->surface.surf);
+}
+
+bool
+wayl_do_linear_blending(const struct wayland *wayl, const struct config *conf)
+{
+    return conf->gamma_correct &&
+           wayl->color_management.img_description != NULL;
 }

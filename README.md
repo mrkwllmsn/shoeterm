@@ -689,7 +689,10 @@ Every now and then I post foot related updates on
 
 # Sponsoring/donations
 
+* Liberapay: https://liberapay.com/dnkl
 * GitHub Sponsors: https://github.com/sponsors/dnkl
+
+[![Donate using Liberapay](https://liberapay.com/assets/widgets/donate.svg)](https://liberapay.com/dnkl/donate)
 
 
 # License

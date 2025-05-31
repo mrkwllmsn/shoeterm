@@ -337,6 +337,9 @@ that corresponds to one of the following modes:
 |  2027
 :  contour
 :  Grapheme cluster processing
+|  2031
+:  contour
+:  Request color theme updates
 |  2048
 :  TODO
 :  In-band window resize notifications
@@ -657,6 +660,13 @@ manipulation sequences. The generic format is:
 :  xterm
 :  Report the current entry on the palette stack, and the number of
    palettes stored on the stack.
+|  \\E[ ? 996 n
+:  Query the current (color) theme mode
+:  contour
+:  The current color theme mode (light or dark) is reported as *CSI ?
+   997 ; 1|2 n*, where *1* means dark and *2* light. By convention, the
+   primary theme in foot is considered dark, and the alternative theme
+   light.
 
 
 # OSC

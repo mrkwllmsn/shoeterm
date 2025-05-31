@@ -1073,19 +1073,20 @@ reload_fonts(struct terminal *term, bool resize_grid)
 
     options->scaling_filter = conf->tweak.fcft_filter;
     options->color_glyphs.format = PIXMAN_a8r8g8b8;
-    options->color_glyphs.srgb_decode = render_do_linear_blending(term);
+    options->color_glyphs.srgb_decode =
+        wayl_do_linear_blending(term->wl, term->conf);
 
-    if (conf->tweak.surface_bit_depth == SHM_10_BIT) {
-        if ((term->wl->shm_have_argb2101010 && term->wl->shm_have_xrgb2101010) ||
-            (term->wl->shm_have_abgr2101010 && term->wl->shm_have_xbgr2101010))
-        {
-            /*
-             * Use a high-res buffer type for emojis. We don't want to
-             * use an a2r10g0b10 type of surface, since we need more
-             * than 2 bits for alpha.
-             */
-            options->color_glyphs.format = PIXMAN_rgba_float;
-        }
+    if (shm_chain_bit_depth(term->render.chains.grid) >= SHM_BITS_10) {
+        /*
+         * Use a high-res buffer type for emojis. We don't want to use
+         * an a2r10g0b10 type of surface, since we need more than 2
+         * bits for alpha.
+         */
+#if defined(HAVE_PIXMAN_RGBA_16)
+        options->color_glyphs.format = PIXMAN_a16b16g16r16;
+#else
+        options->color_glyphs.format = PIXMAN_rgba_float;
+#endif
     }
 
     struct fcft_font *fonts[4];
@@ -1260,7 +1261,16 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
         goto err;
     }
 
-    const bool ten_bit_surfaces = conf->tweak.surface_bit_depth == SHM_10_BIT;
+    const enum shm_bit_depth desired_bit_depth =
+        conf->tweak.surface_bit_depth == SHM_BITS_AUTO
+            ? wayl_do_linear_blending(wayl, conf) ? SHM_BITS_16 : SHM_BITS_8
+            : conf->tweak.surface_bit_depth;
+
+    const struct color_theme *theme = NULL;
+    switch (conf->initial_color_theme) {
+    case COLOR_THEME1: theme = &conf->colors; break;
+    case COLOR_THEME2: theme = &conf->colors2; break;
+    }
 
     /* Initialize configure-based terminal attributes */
     *term = (struct terminal) {
@@ -1279,7 +1289,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
         },
         .font_dpi = 0.,
         .font_dpi_before_unmap = -1.,
-        .font_subpixel = (conf->colors.alpha == 0xffff  /* Can't do subpixel rendering on transparent background */
+        .font_subpixel = (theme->alpha == 0xffff  /* Can't do subpixel rendering on transparent background */
                           ? FCFT_SUBPIXEL_DEFAULT
                           : FCFT_SUBPIXEL_NONE),
         .cursor_keys_mode = CURSOR_KEYS_NORMAL,
@@ -1295,14 +1305,14 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
             .state = 0,  /* STATE_GROUND */
         },
         .colors = {
-            .fg = conf->colors.fg,
-            .bg = conf->colors.bg,
-            .alpha = conf->colors.alpha,
-            .cursor_fg = conf->cursor.color.text,
-            .cursor_bg = conf->cursor.color.cursor,
-            .selection_fg = conf->colors.selection_fg,
-            .selection_bg = conf->colors.selection_bg,
-            .use_custom_selection = conf->colors.use_custom.selection,
+            .fg = theme->fg,
+            .bg = theme->bg,
+            .alpha = theme->alpha,
+            .cursor_fg = (theme->use_custom.cursor ? 1u << 31 : 0) | theme->cursor.text,
+            .cursor_bg = (theme->use_custom.cursor ? 1u << 31 : 0) | theme->cursor.cursor,
+            .selection_fg = theme->selection_fg,
+            .selection_bg = theme->selection_bg,
+            .active_theme = conf->initial_color_theme,
         },
         .color_stack = {
             .stack = NULL,
@@ -1346,13 +1356,13 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
         .render = {
             .chains = {
                 .grid = shm_chain_new(wayl, true, 1 + conf->render_worker_count,
-                                      ten_bit_surfaces),
-                .search = shm_chain_new(wayl, false, 1 ,ten_bit_surfaces),
-                .scrollback_indicator = shm_chain_new(wayl, false, 1, ten_bit_surfaces),
-                .render_timer = shm_chain_new(wayl, false, 1, ten_bit_surfaces),
-                .url = shm_chain_new(wayl, false, 1, ten_bit_surfaces),
-                .csd = shm_chain_new(wayl, false, 1, ten_bit_surfaces),
-                .overlay = shm_chain_new(wayl, false, 1, ten_bit_surfaces),
+                                      desired_bit_depth),
+                .search = shm_chain_new(wayl, false, 1 ,desired_bit_depth),
+                .scrollback_indicator = shm_chain_new(wayl, false, 1, desired_bit_depth),
+                .render_timer = shm_chain_new(wayl, false, 1, desired_bit_depth),
+                .url = shm_chain_new(wayl, false, 1, desired_bit_depth),
+                .csd = shm_chain_new(wayl, false, 1, desired_bit_depth),
+                .overlay = shm_chain_new(wayl, false, 1, desired_bit_depth),
             },
             .scrollback_lines = conf->scrollback.lines,
             .app_sync_updates.timer_fd = app_sync_updates_fd,
@@ -1433,7 +1443,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
     xassert(tll_length(term->wl->monitors) > 0);
     term->scale = tll_front(term->wl->monitors).scale;
 
-    memcpy(term->colors.table, term->conf->colors.table, sizeof(term->colors.table));
+    memcpy(term->colors.table, theme->table, sizeof(term->colors.table));
 
     /* Initialize the Wayland window backend */
     if ((term->window = wayl_win_init(term, token)) == NULL)
@@ -1495,7 +1505,7 @@ term_window_configured(struct terminal *term)
         xassert(term->window->is_configured);
         fdm_add(term->fdm, term->ptmx, EPOLLIN, &fdm_ptmx, term);
 
-        const bool gamma_correct = render_do_linear_blending(term);
+        const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
         LOG_INFO("gamma-correct blending: %s", gamma_correct ? "enabled" : "disabled");
     }
 }
@@ -2147,19 +2157,18 @@ term_reset(struct terminal *term, bool hard)
     if (!hard)
         return;
 
+    const struct color_theme *theme = NULL;
+
+    switch (term->conf->initial_color_theme) {
+    case COLOR_THEME1: theme = &term->conf->colors; break;
+    case COLOR_THEME2: theme = &term->conf->colors2; break;
+    }
+
     term->flash.active = false;
     term->blink.state = BLINK_ON;
     fdm_del(term->fdm, term->blink.fd); term->blink.fd = -1;
-    term->colors.fg = term->conf->colors.fg;
-    term->colors.bg = term->conf->colors.bg;
-    term->colors.alpha = term->conf->colors.alpha;
-    term->colors.cursor_fg = term->conf->cursor.color.text;
-    term->colors.cursor_bg = term->conf->cursor.color.cursor;
-    term->colors.selection_fg = term->conf->colors.selection_fg;
-    term->colors.selection_bg = term->conf->colors.selection_bg;
-    term->colors.use_custom_selection = term->conf->colors.use_custom.selection;
-    memcpy(term->colors.table, term->conf->colors.table,
-           sizeof(term->colors.table));
+    term_theme_apply(term, theme);
+    term->colors.active_theme = term->conf->initial_color_theme;
     free(term->color_stack.stack);
     term->color_stack.stack = NULL;
     term->color_stack.size = 0;
@@ -2760,12 +2769,10 @@ UNITTEST
             },
             .kind = SELECTION_NONE,
             .auto_scroll = {
-                .fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK),
+                .fd = -1,
             },
         },
     };
-
-    xassert(term.selection.auto_scroll.fd >= 0);
 
 #define populate_scrollback() do {                                      \
         for (int i = 0; i < scrollback_rows; i++) {                     \
@@ -2856,7 +2863,7 @@ UNITTEST
 
     /* Cleanup */
     tll_free(term.normal.sixel_images);
-    close(term.selection.auto_scroll.fd);
+    xassert(term.selection.auto_scroll.fd == -1);
     for (int i = 0; i < scrollback_rows; i++)
         grid_row_free(term.normal.rows[i]);
     free(term.normal.rows);
@@ -3564,7 +3571,9 @@ term_xcursor_update_for_seat(struct terminal *term, struct seat *seat)
         if (seat->pointer.hidden)
             shape = CURSOR_SHAPE_HIDDEN;
 
-        else if (cursor_string_to_server_shape(term->mouse_user_cursor) != 0 ||
+        else if (cursor_string_to_server_shape(
+            term->mouse_user_cursor,
+            term->wl->shape_manager_version) != 0 ||
                  render_xcursor_is_valid(seat, term->mouse_user_cursor))
         {
             shape = CURSOR_SHAPE_CUSTOM;
@@ -4188,7 +4197,7 @@ term_process_and_print_non_ascii(struct terminal *term, char32_t wc)
         if (grapheme_clustering) {
             /* Check if we're on a grapheme cluster break */
             if (utf8proc_grapheme_break_stateful(
-                    last, wc, &term->vt.grapheme_state) && width > 0)
+                    last, wc, &term->vt.grapheme_state))
             {
                 term_reset_grapheme_state(term);
                 goto out;
@@ -4694,28 +4703,33 @@ term_send_size_notification(struct terminal *term)
     term_to_slave(term, buf, n);
 }
 
+void
+term_theme_apply(struct terminal *term, const struct color_theme *theme)
+{
+    term->colors.fg = theme->fg;
+    term->colors.bg = theme->bg;
+    term->colors.alpha = theme->alpha;
+    term->colors.cursor_fg = (theme->use_custom.cursor ? 1u << 31 : 0) | theme->cursor.text;
+    term->colors.cursor_bg = (theme->use_custom.cursor ? 1u << 31 : 0) | theme->cursor.cursor;
+    term->colors.selection_fg = theme->selection_fg;
+    term->colors.selection_bg = theme->selection_bg;
+    memcpy(term->colors.table, theme->table, sizeof(term->colors.table));
+}
 /* Reload configured colors from disk. */
 void
-term_hard_reload_config_colors(struct terminal *term) {
+term_reload_config_colors(struct terminal *term) {
     config_reload_colors((struct config *)term->conf);
-    term_soft_reload_config_colors(term);
-}
+    if (term->colors.active_theme == COLOR_THEME1) {
+        term_theme_apply(term, &term->conf->colors);
+    } else {
+        term_theme_apply(term, &term->conf->colors2);
+    }
 
-/* Reset colors to the in-memory config values. Does not reload the config from
-   disk. */
-void
-term_soft_reload_config_colors(struct terminal *term) {
-    term->colors.fg = term->conf->colors.fg;
-    term->colors.bg = term->conf->colors.bg;
-    term->colors.alpha = term->conf->colors.alpha;
-    term->colors.cursor_fg = term->conf->cursor.color.text;
-    term->colors.cursor_bg = term->conf->cursor.color.cursor;
-    term->colors.selection_fg = term->conf->colors.selection_fg;
-    term->colors.selection_bg = term->conf->colors.selection_bg;
+    wayl_win_alpha_changed(term->window);
+    term_font_subpixel_changed(term);
 
-    memcpy(term->colors.table, term->conf->colors.table, sizeof(term->colors.table));
-
-    term_damage_all(term);
+    term_damage_view(term);
     term_damage_margins(term);
     render_refresh(term);
 }
+

@@ -1,10 +1,8 @@
 # -*- conf -*-
 # Aero root theme
 
-[cursor]
-color=1a1a1a 9fd5f5
-
 [colors]
+cursor=1a1a1a 9fd5f5
 foreground=dedeef
 background=1a1a1a
 

@@ -9,6 +9,7 @@
 
 #include <tllist.h>
 
+#include "config.h"
 #include "wayland.h"
 
 struct damage;
@@ -46,9 +47,11 @@ void shm_set_max_pool_size(off_t max_pool_size);
 struct buffer_chain;
 struct buffer_chain *shm_chain_new(
     struct wayland *wayl, bool scrollable, size_t pix_instances,
-    bool ten_bit_it_if_capable);
+    enum shm_bit_depth desired_bit_depth);
 void shm_chain_free(struct buffer_chain *chain);
 
+enum shm_bit_depth shm_chain_bit_depth(const struct buffer_chain *chain);
+ 
 /*
  * Returns a single buffer.
  *

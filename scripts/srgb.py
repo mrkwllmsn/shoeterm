@@ -5,21 +5,16 @@ import math
 import sys
 
 
+# Note: we use a pure gamma 2.2 function, rather than the piece-wise
+# sRGB transfer function, since that is what all compositors do.
+
 def srgb_to_linear(f: float) -> float:
     assert(f >= 0 and f <= 1.0)
-
-    if f <= 0.04045:
-        return f / 12.92
-
-    return math.pow((f + 0.055) / 1.055, 2.4)
+    return math.pow(f, 2.2)
 
 
 def linear_to_srgb(f: float) -> float:
-    if f < 0.0031308:
-        return f * 12.92
-
-    return 1.055 * math.pow(f, 1 / 2.4) - 0.055
-
+    return math.pow(f, 1 / 2.2)
 
 
 def main():
@@ -29,23 +24,9 @@ def main():
     opts = parser.parse_args()
 
     linear_table: list[int] = []
-    srgb_table: list[int] = []
 
     for i in range(256):
         linear_table.append(int(srgb_to_linear(float(i) / 255) * 65535 + 0.5))
-
-    for i in range(4096):
-        srgb_table.append(int(linear_to_srgb(float(i) / 4095) * 255 + 0.5))
-
-    for i in range(256):
-        while True:
-            linear = linear_table[i]
-            srgb = srgb_table[linear >> 4]
-
-            if i == srgb:
-                break
-
-            linear_table[i] += 1
 
 
     opts.h_output.write("#pragma once\n")

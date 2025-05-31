@@ -23,6 +23,11 @@ bright5=ea76cb
 bright6=179299
 bright7=bcc0cc
 
+cursor=eff1f5 dc8a78
+
+16=fe640b
+17=dc8a78
+
 selection-foreground=4c4f69
 selection-background=ccced7
 

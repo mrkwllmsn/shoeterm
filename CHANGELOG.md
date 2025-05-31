@@ -1,6 +1,10 @@
 # Changelog
 
 * [Unreleased](#unreleased)
+* [1.22.3](#1-22-3)
+* [1.22.2](#1-22-2)
+* [1.22.1](#1-22-1)
+* [1.22.0](#1-22-0)
 * [1.21.0](#1-21-0)
 * [1.20.2](#1-20-2)
 * [1.20.1](#1-20-1)
@@ -61,6 +65,164 @@
 
 ## Unreleased
 ### Added
+
+* `colors2` config section. This section duplicates the `colors`
+  section, and lets you define an alternative color theme.
+* `key-bindings.color-theme-switch-1`,
+  `key-bindings.color-theme-switch-2` and
+  `key-bindings.color-theme-toggle` key bindings. These can be used to
+  switch between the primary and alternative color themes. They are
+  not bound by default.
+* Support for private mode 2031 - [_Dark and Light Mode
+  Detection_](https://contour-terminal.org/vt-extensions/color-palette-update-notifications/)
+  ([#2025][2025])
+* Added `initial-color-theme=1|2` config option. `1` uses colors from
+  the `[colors]` section, `2` uses `[colors2]`.
+* Combined dark/light theme files for (dark variant is the default,
+  set `initial-color-theme=2` to use the light variant by default):
+  - gruvbox
+  - nvim
+  - paper-color
+  - selenized
+  - solarized
+* `regex-copy`/`show-urls-copy` will copy and paste the selected text if the hint
+  is completed with an uppercase character ([#1975][1975]).
+* `16-bit` to `tweak.surface-bit-depth`. Makes foot use 16-bit image
+  buffers. They provide the necessary color precision required by
+  `gamma-correct-blending=yes`.
+* New cursor shapes, from `cursor-shape-v1` version 2.
+* `center-when-fullscreen` and `center-when-maximized-and-fullscreen`
+  to the `pad` option. This allows you to configure when the grid is
+  centered in more detail ([#2111][2111]).
+
+[2025]: https://codeberg.org/dnkl/foot/issues/2025
+[1975]: https://codeberg.org/dnkl/foot/issues/1975
+[2111]: https://codeberg.org/dnkl/foot/issues/2111
+
+
+### Changed
+
+* `cursor.color` moved to `colors.cursor`.
+* OSC-11 without an alpha value will now restore the configured
+  (i.e. from `foot.ini`) alpha, rather than keeping whatever the
+  current alpha value is, unchanged.
+* `gamma-correct-blending=yes` now defaults to `16-bit` image buffers,
+  instead of `10-bit`.
+* Allow setting either selection background, or selection foreground,
+  only ([#1846][1846]).
+* Drop required version of libxkbcommon from 1.8.0 back to 1.0.0
+  ([#2103][2103]).
+
+[1846]: https://codeberg.org/dnkl/foot/issues/1846
+[2103]: https://codeberg.org/dnkl/foot/issues/2103
+
+
+### Deprecated
+
+* `cursor.color` config option; use `colors.cursor` instead.
+
+
+### Removed
+### Fixed
+
+* `REP`: wrong width of repeated multi-codepoint graphemes.
+* Incorrect surface commit after a configure event, under certain
+  conditions ([#2105][2105]).
+
+[2105]: https://codeberg.org/dnkl/foot/issues/2105
+
+
+### Security
+### Contributors
+
+
+## 1.22.3
+
+### Added
+
+* `auto` to the `tweak.surface-bit-depth` option.
+
+
+### Changed
+
+* `gamma-correct-blending` now defaults to `no` instead of `yes`.
+* `tweak.surface-bit-depth` default value changed to `auto`; uses
+  10-bit surfaces when `gamma-correct-blending=yes`, and 8-bit
+  surfaces otherwise.
+
+
+### Fixed
+
+* Inaccurate colors when `gamma-correct-blending=yes` ([#2082][2082]).
+
+[2082]: https://codeberg.org/dnkl/foot/issues/2082
+
+
+## 1.22.2
+
+### Changed
+
+* `gamma-correct-blending=yes` now uses a pure gamma 2.2 transfer
+  function, instead of the piece-wise sRGB transfer function, to match
+  what compositors do.
+
+
+### Fixed
+
+* Wrong colors when `gamma-correct-blending=yes` (the default when
+  there is compositor support). Note that some colors will still be
+  off by a **very** small amount, due to loss of precision when
+  converting to a linear color space. ([#2035][2035]).
+
+[2035]: https://codeberg.org/dnkl/foot/issues/2035
+
+
+## 1.22.1
+
+### Fixed
+
+* `colors.alpha-mode=matching` not working as intended.
+* Grapheme shaping was allowed to be "enabled" at runtime, even though
+  disabled at compile time. This caused mis-rendering of certain
+  codepoints ([#2039][2039]).
+* Keyboard modifiers not being reset on keyboard leave events
+  ([#2034][2034]).
+* Fallback font (and possibly wrong color) being used when a character
+  was followed by a zero-width grapheme breaking codepoint (for
+  example, _LEFT-TO-RIGHT MARK_) ([#2049][2049]).
+* Regression: alpha applied to inversed text/selections
+  ([#2073][2073]).
+
+[2039]: https://codeberg.org/dnkl/foot/issues/2039
+[2034]: https://codeberg.org/dnkl/foot/issues/2034
+[2049]: https://codeberg.org/dnkl/foot/issues/2049
+[2073]: https://codeberg.org/dnkl/foot/issues/2073
+
+
+### Contributors
+
+* Jan Palus
+* valoq
+
+
+## 1.22.0
+
+### Added
+
+* Support for toplevel edge constraints. When the compositor indicates
+  the toplevel has edge constraints, foot will not allow the window to
+  be resized (via CSDs) in the constrained directions.
+* Virtual modifiers (e.g. `Alt` instead of `Mod1`, `Super` instead of
+  `Mod4` etc) in key bindings are now recognized as being virtual, and
+  are automatically mapped to the corresponding real modifier. This
+  means you can use e.g. `Alt+b` instead of `Mod1+b`.
+* `alpha-mode` option to `foot.ini`. Defaults to `default`. This
+  config changes how alpha is handled on background colours not set by
+  the terminal.(e.g. vim) ([#2026](2026))
+
+[2026]: https://codeberg.org/dnkl/foot/issues/2026
+
+
 ### Changed
 
 * UTF-8 error recovery now discards fewer bytes.
@@ -75,17 +237,18 @@
     kitty keyboard protocol.
   - some of foot's default shortcuts not working (mainly those using
     `Mod1`) out of the box.
-* Virtual modifiers (e.g. `Alt` instead of `Mod1`, `Super` instead of
-  `Mod4` etc) in key bindings are now recognized as being virtual, and
-  are automatically mapped to the corresponding real modifier. This
-  means you can use e.g. `Alt+b` instead of `Mod1+b`.
+* Default URL regex changed to a much more strict variant
+  ([#2016][2016]). You can manually set the [old
+  one](https://codeberg.org/dnkl/foot/src/tag/1.21.0/foot.ini#L72), if
+  you prefer it over the new regex.
+* A tiled window can now be resized in the corners (via CSDs), unless
+  the compositor has indicated the toplevel has edge constraints.
 
 [2006]: https://codeberg.org/dnkl/foot/issues/2006
 [2009]: https://codeberg.org/dnkl/foot/issues/2009
+[2016]: https://codeberg.org/dnkl/foot/issues/2016
 
 
-### Deprecated
-### Removed
 ### Fixed
 
 * Regression: assertion in `url-mode.c` when activating a second URL
@@ -93,13 +256,23 @@
 * Build failure (`srgb.h` not found) when doing a parallel build.
 * Regression: reflowing (changing the window size) removing empty
   lines ([#2011][2011]).
+* `url/regex-copy` not handling double-width characters correctly
+  ([#2027][2027]).
 
 [2000]: https://codeberg.org/dnkl/foot/issues/2000
 [2011]: https://codeberg.org/dnkl/foot/issues/2011
+[2027]: https://codeberg.org/dnkl/foot/issues/2027
 
 
-### Security
 ### Contributors
+
+* Alex Xu (Hello71)
+* datsudo
+* Dominique Martinet
+* Fazzi
+* llyyr
+* Łukasz Wojniłowicz
+* Sam McCall
 
 
 ## 1.21.0
@@ -179,9 +352,9 @@
   enabled ([#1947][1947]).
 * Reflow of the cursor (active + saved) when at the end of the line
   with a pending wrap (LCF set) ([#1954][1954]).
-* Zero-width characters that also are grapheme breaks (e.g. U+200B,
+* ~~Zero-width characters that also are grapheme breaks (e.g. U+200B,
   ZERO WIDTH SPACE) being ignored (discarded and never stored in the
-  grid) ([#1960][1960]).
+  grid) ([#1960][1960]).~~ (reverted)
 * `--server=<FD>` not working on FreeBSD ([#1956][1956]).
 * Crash when resetting the terminal and an application had previously
   set a custom app ID ([#1963][1963])

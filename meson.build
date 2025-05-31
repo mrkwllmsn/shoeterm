@@ -1,5 +1,5 @@
 project('foot', 'c',
-        version: '1.21.0',
+        version: '1.22.3',
         license: 'MIT',
         meson_version: '>=0.59.0',
         default_options: [
@@ -145,6 +145,10 @@ if utf8proc.found()
   add_project_arguments('-DFOOT_GRAPHEME_CLUSTERING=1', language: 'c')
 endif
 
+if pixman.version().version_compare('>=0.46.0')
+  add_project_arguments('-DHAVE_PIXMAN_RGBA_16', language: 'c')
+endif
+
 tllist = dependency('tllist', version: '>=1.1.0', fallback: 'tllist')
 fcft = dependency('fcft', version: ['>=3.3.1', '<4.0.0'], fallback: 'fcft')
 
@@ -253,7 +257,7 @@ vtlib = static_library(
   'osc.c', 'osc.h',
   'sixel.c', 'sixel.h',
   'vt.c', 'vt.h',
-  builtin_terminfo, emoji_variation_sequences, srgb_funcs,
+  builtin_terminfo, srgb_funcs,
   wl_proto_src + wl_proto_headers,
   version,
   dependencies: [libepoll, pixman, fcft, tllist, wayland_client, xkb, utf8proc],
@@ -268,6 +272,7 @@ pgolib = static_library(
   'config.c', 'config.h',
   'user-notification.c', 'user-notification.h',
   'tokenize.c', 'tokenize.h',
+  emoji_variation_sequences,
   wl_proto_src + wl_proto_headers,
   dependencies: [libepoll, pixman, fcft, tllist, wayland_client, xkb, utf8proc],
   link_with: vtlib,
@@ -317,6 +322,7 @@ executable(
   'url-mode.c', 'url-mode.h',
   'user-notification.c', 'user-notification.h',
   'wayland.c', 'wayland.h', 'shm-formats.h',
+  'xkbcommon-vmod.h',
   srgb_funcs, wl_proto_src + wl_proto_headers, version,
   dependencies: [math, threads, libepoll, pixman, wayland_client, wayland_cursor, xkb, fontconfig, utf8proc,
                  tllist, fcft],

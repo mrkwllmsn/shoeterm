@@ -131,7 +131,7 @@ spawn_url_launcher(struct seat *seat, struct terminal *term, const char *url,
 
 static void
 activate_url(struct seat *seat, struct terminal *term, const struct url *url,
-             uint32_t serial)
+             uint32_t serial, bool paste_url_to_self)
 {
     char *url_string = NULL;
 
@@ -159,6 +159,15 @@ activate_url(struct seat *seat, struct terminal *term, const struct url *url,
 
     switch (url->action) {
     case URL_ACTION_COPY:
+        if (paste_url_to_self) {
+            if (term->bracketed_paste)
+                term_to_slave(term, "\033[200~", 6);
+
+            term_to_slave(term, url_string, strlen(url_string));
+
+            if (term->bracketed_paste)
+                term_to_slave(term, "\033[201~", 6);
+        }
         if (text_to_clipboard(seat, term, url_string, seat->kbd.serial)) {
             /* Now owned by our clipboard “manager” */
             url_string = NULL;
@@ -273,7 +282,8 @@ urls_input(struct seat *seat, struct terminal *term,
     }
 
     if (match) {
-        activate_url(seat, term, match, serial);
+        // If the last hint character was uppercase, copy and paste
+        activate_url(seat, term, match, serial, wc == toc32upper(wc));
 
         switch (match->action) {
         case URL_ACTION_COPY:
@@ -347,6 +357,9 @@ regex_detected(const struct terminal *term, enum url_action action,
                 wc_count = composed->count;
             }
 
+            else if (wc[0] >= CELL_SPACER)
+                continue;
+
             /* Convert wide character to utf8 */
             for (size_t i = 0; i < wc_count; i++) {
                 char buf[16];
@@ -354,6 +367,7 @@ regex_detected(const struct terminal *term, enum url_action action,
 
                 if (char_len == (size_t)-1)
                     continue;
+
 
                 for (size_t j = 0; j < char_len; j++) {
                     const size_t requires_size = vline->len + char_len;
@@ -411,9 +425,9 @@ regex_detected(const struct terminal *term, enum url_action action,
             const size_t end = start + mlen;
 
             LOG_DBG(
-                "regex match at row %d: %.*srow/col = %dx%d",
+                "regex match at row %d: %.*s (%zu bytes), row/col = %dx%d",
                 matches[1].rm_so, (int)mlen, &search_string[matches[1].rm_so],
-                v->map[start].row, v->map[start].col);
+                mlen, v->map[start].row, v->map[start].col);
 
             tll_push_back(
                 *urls,

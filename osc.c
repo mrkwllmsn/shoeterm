@@ -1455,15 +1455,20 @@ osc_dispatch(struct terminal *term)
 
         case 11:
             term->colors.bg = color;
-            if (have_alpha) {
-                const bool changed = term->colors.alpha != alpha;
-                term->colors.alpha = alpha;
-
-                if (changed) {
-                    wayl_win_alpha_changed(term->window);
-                    term_font_subpixel_changed(term);
-                }
+            if (!have_alpha) {
+                alpha = term->colors.active_theme == COLOR_THEME1
+                    ? term->conf->colors.alpha
+                    : term->conf->colors2.alpha;
             }
+
+            const bool changed = term->colors.alpha != alpha;
+            term->colors.alpha = alpha;
+
+            if (changed) {
+                wayl_win_alpha_changed(term->window);
+                term_font_subpixel_changed(term);
+            }
+
             term_damage_color(term, COLOR_DEFAULT, 0);
             term_damage_margins(term);
             break;
@@ -1475,12 +1480,10 @@ osc_dispatch(struct terminal *term)
 
         case 17:
             term->colors.selection_bg = color;
-            term->colors.use_custom_selection = true;
             break;
 
         case 19:
             term->colors.selection_fg = color;
-            term->colors.use_custom_selection = true;
             break;
         }
 
@@ -1570,21 +1573,25 @@ osc_dispatch(struct terminal *term)
 
     case 112:
         LOG_DBG("resetting cursor color");
-        term->colors.cursor_fg = term->conf->cursor.color.text;
-        term->colors.cursor_bg = term->conf->cursor.color.cursor;
+        term->colors.cursor_fg = term->conf->colors.cursor.text;
+        term->colors.cursor_bg = term->conf->colors.cursor.cursor;
+
+        if (term->conf->colors.use_custom.cursor) {
+            term->colors.cursor_fg |= 1u << 31;
+            term->colors.cursor_bg |= 1u << 31;
+        }
+
         term_damage_cursor(term);
         break;
 
     case 117:
         LOG_DBG("resetting selection background color");
         term->colors.selection_bg = term->conf->colors.selection_bg;
-        term->colors.use_custom_selection = term->conf->colors.use_custom.selection;
         break;
 
     case 119:
         LOG_DBG("resetting selection foreground color");
         term->colors.selection_fg = term->conf->colors.selection_fg;
-        term->colors.use_custom_selection = term->conf->colors.use_custom.selection;
         break;
 
     case 133:

@@ -399,6 +399,16 @@ test_color(struct context *ctx, bool (*parse_fun)(struct context *ctx),
                 BUG("[%s].%s=%s: failed to parse",
                     ctx->section, ctx->key, ctx->value);
             }
+
+            uint32_t color = input[i].color;
+            if (alpha_allowed && strlen(input[i].option_string) == 6)
+                color |= 0xff000000;
+
+            if (*ptr != color) {
+                BUG("[%s].%s=%s: expected 0x%08x, got 0x%08x",
+                    ctx->section, ctx->key, ctx->value,
+                    color, *ptr);
+            }
         }
     }
 }
@@ -445,6 +455,18 @@ test_two_colors(struct context *ctx, bool (*parse_fun)(struct context *ctx),
                 BUG("[%s].%s=%s: failed to parse",
                     ctx->section, ctx->key, ctx->value);
             }
+
+            if (*ptr1 != input[i].color1) {
+                BUG("[%s].%s=%s: expected 0x%08x, got 0x%08x",
+                    ctx->section, ctx->key, ctx->value,
+                    input[i].color1, *ptr1);
+            }
+
+            if (*ptr2 != input[i].color2) {
+                BUG("[%s].%s=%s: expected 0x%08x, got 0x%08x",
+                    ctx->section, ctx->key, ctx->value,
+                    input[i].color2, *ptr2);
+            }
         }
     }
 }
@@ -468,6 +490,7 @@ test_section_main(void)
     test_boolean(&ctx, &parse_section_main, "box-drawings-uses-font-glyphs", &conf.box_drawings_uses_font_glyphs);
     test_boolean(&ctx, &parse_section_main, "locked-title", &conf.locked_title);
     test_boolean(&ctx, &parse_section_main, "dpi-aware", &conf.dpi_aware);
+    test_boolean(&ctx, &parse_section_main, "gamma-correct-blending", &conf.gamma_correct);
 
     test_pt_or_px(&ctx, &parse_section_main, "font-size-adjustment", &conf.font_size_adjustment.pt_or_px);  /* TODO: test ‘N%’ values too */
     test_pt_or_px(&ctx, &parse_section_main, "line-height", &conf.line_height);
@@ -719,6 +742,15 @@ test_section_colors(void)
     test_two_colors(&ctx, &parse_section_colors, "search-box-match", false,
                     &conf.colors.search_box.match.fg,
                     &conf.colors.search_box.match.bg);
+
+    test_two_colors(&ctx, &parse_section_colors, "cursor", false,
+                    &conf.colors.cursor.text,
+                    &conf.colors.cursor.cursor);
+
+    test_enum(&ctx, &parse_section_colors, "alpha-mode", 3,
+              (const char *[]){"default", "matching", "all"},
+              (int []){ALPHA_MODE_DEFAULT, ALPHA_MODE_MATCHING, ALPHA_MODE_ALL},
+              (int *)&conf.colors.alpha_mode);
 
     for (size_t i = 0; i < 255; i++) {
         char key_name[4];

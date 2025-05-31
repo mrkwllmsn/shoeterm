@@ -3,10 +3,8 @@
 # author: Protesilaos Stavrou (https://protesilaos.com)
 # description: A green-scale, subtle theme for late night hackers (WCAG AAA compliant)
 
-#[cursor]
-#color = 282b2b b6e0ca
-
 [colors]
+#cursor = 282b2b b6e0ca
 foreground = b6e0ca
 background = 282b2b
 regular0 = 282b2b

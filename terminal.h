@@ -404,7 +404,7 @@ struct colors {
     uint32_t cursor_bg;  /* cursor color */
     uint32_t selection_fg;
     uint32_t selection_bg;
-    bool use_custom_selection;
+    enum which_color_theme active_theme;
 };
 
 struct terminal {
@@ -517,6 +517,7 @@ struct terminal {
 
     bool num_lock_modifier;
     bool bell_action_enabled;
+    bool report_theme_changes;
 
     /* Saved DECSET modes - we save the SET state */
     struct {
@@ -547,6 +548,7 @@ struct terminal {
         bool ime:1;
         bool app_sync_updates:1;
         bool grapheme_shaping:1;
+        bool report_theme_changes:1;
 
         bool size_notifications:1;
 
@@ -982,8 +984,8 @@ void term_enable_size_notifications(struct terminal *term);
 void term_disable_size_notifications(struct terminal *term);
 void term_send_size_notification(struct terminal *term);
 
-void term_hard_reload_config_colors(struct terminal *term);
-void term_soft_reload_config_colors(struct terminal *term);
+void term_theme_apply(struct terminal *term, const struct color_theme *theme);
+void term_reload_config_colors(struct terminal *term);
 
 static inline void term_reset_grapheme_state(struct terminal *term)
 {

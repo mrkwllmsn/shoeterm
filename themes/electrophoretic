@@ -5,10 +5,8 @@
 # text and the white background.
 # author: Eugen Rahaian <eugen@rah.ro>
 
-[cursor]
-color=ffffff 515151
-
 [colors]
+cursor=ffffff 515151
 background= ffffff
 foreground= 000000
 

@@ -2,10 +2,8 @@
 # nightfly
 # Based on https://github.com/bluz71/vim-nightfly-guicolors
 
-[cursor]
-color = 080808 9ca1aa
-
 [colors]
+cursor = 080808 9ca1aa
 foreground = acb4c2
 background = 011627
 

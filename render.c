@@ -605,13 +605,8 @@ cursor_colors_for_cell(const struct terminal *term, const struct cell *cell,
     if (term->colors.cursor_fg >> 31)
         *text_color = color_hex_to_pixman(term->colors.cursor_fg, gamma_correct);
     else {
+        xassert(bg->alpha == 0xffff);
         *text_color = *bg;
-
-        if (unlikely(text_color->alpha != 0xffff)) {
-            /* The *only* color that can have transparency is the
-             * default background color */
-            *text_color = color_hex_to_pixman(term->colors.bg, gamma_correct);
-        }
     }
 
     if (text_color->red == cursor_color->red &&
@@ -631,7 +626,7 @@ draw_cursor(const struct terminal *term, const struct cell *cell,
     pixman_color_t cursor_color;
     pixman_color_t text_color;
     cursor_colors_for_cell(term, cell, fg, bg, &cursor_color, &text_color,
-                           render_do_linear_blending(term));
+                           wayl_do_linear_blending(term->wl, term->conf));
 
     if (unlikely(!term->kbd_focus)) {
         switch (term->conf->cursor.unfocused_style) {
@@ -699,101 +694,140 @@ render_cell(struct terminal *term, pixman_image_t *pix,
     const int x = term->margins.left + col * width;
     const int y = term->margins.top + row_no * height;
 
-    bool is_selected = cell->attrs.selected;
-
     uint32_t _fg = 0;
     uint32_t _bg = 0;
 
     uint16_t alpha = 0xffff;
+    const bool is_selected = cell->attrs.selected;
 
-    if (is_selected && term->colors.use_custom_selection) {
-        _fg = term->colors.selection_fg;
-        _bg = term->colors.selection_bg;
+    /* Use cell specific color, if set, otherwise the default colors (possible reversed) */
+    switch (cell->attrs.fg_src) {
+    case COLOR_RGB:
+        _fg = cell->attrs.fg;
+        break;
+
+    case COLOR_BASE16:
+    case COLOR_BASE256:
+        xassert(cell->attrs.fg < ALEN(term->colors.table));
+        _fg = term->colors.table[cell->attrs.fg];
+        break;
+
+    case COLOR_DEFAULT:
+        _fg = term->reverse ? term->colors.bg : term->colors.fg;
+        break;
+    }
+
+    switch (cell->attrs.bg_src) {
+    case COLOR_RGB:
+        _bg = cell->attrs.bg;
+        break;
+
+    case COLOR_BASE16:
+    case COLOR_BASE256:
+        xassert(cell->attrs.bg < ALEN(term->colors.table));
+        _bg = term->colors.table[cell->attrs.bg];
+        break;
+
+    case COLOR_DEFAULT:
+        _bg = term->reverse ? term->colors.fg : term->colors.bg;
+        break;
+    }
+
+    if (unlikely(is_selected)) {
+        const uint32_t cell_fg = _fg;
+        const uint32_t cell_bg = _bg;
+
+        const bool custom_fg = term->colors.selection_fg >> 24 == 0;
+        const bool custom_bg = term->colors.selection_bg >> 24 == 0;
+        const bool custom_both = custom_fg && custom_bg;
+
+        if (custom_both) {
+            _fg = term->colors.selection_fg;
+            _bg = term->colors.selection_bg;
+        } else if (custom_bg) {
+            _bg = term->colors.selection_bg;
+            _fg = cell->attrs.reverse ? cell_bg : cell_fg;
+        } else if (custom_fg) {
+            _fg = term->colors.selection_fg;
+            _bg = cell->attrs.reverse ? cell_fg : cell_bg;
+        } else {
+            _bg = cell_fg;
+            _fg = cell_bg;
+        }
+
+        if (unlikely(_fg == _bg)) {
+            /* Invert bg when selected/highlighted text has same fg/bg */
+            _bg = ~_bg;
+            alpha = 0xffff;
+        }
+
     } else {
-        /* Use cell specific color, if set, otherwise the default colors (possible reversed) */
-        switch (cell->attrs.fg_src) {
-        case COLOR_RGB:
-            _fg = cell->attrs.fg;
-            break;
-
-        case COLOR_BASE16:
-        case COLOR_BASE256:
-            xassert(cell->attrs.fg < ALEN(term->colors.table));
-            _fg = term->colors.table[cell->attrs.fg];
-            break;
-
-        case COLOR_DEFAULT:
-            _fg = term->reverse ? term->colors.bg : term->colors.fg;
-            break;
-        }
-
-        switch (cell->attrs.bg_src) {
-        case COLOR_RGB:
-            _bg = cell->attrs.bg;
-            break;
-
-        case COLOR_BASE16:
-        case COLOR_BASE256:
-            xassert(cell->attrs.bg < ALEN(term->colors.table));
-            _bg = term->colors.table[cell->attrs.bg];
-            break;
-
-        case COLOR_DEFAULT:
-            _bg = term->reverse ? term->colors.fg : term->colors.bg;
-            break;
-        }
-
-        if (cell->attrs.reverse ^ is_selected) {
+        if (unlikely(cell->attrs.reverse)) {
             uint32_t swap = _fg;
             _fg = _bg;
             _bg = swap;
         }
 
-        else if (cell->attrs.bg_src == COLOR_DEFAULT) {
-            if (term->window->is_fullscreen) {
-                /*
-                 * Note: disable transparency when fullscreened.
-                 *
-                 * This is because the wayland protocol mandates no
-                 * screen content is shown behind the fullscreened
-                 * window.
-                 *
-                 * The _intent_ of the specification is that a black
-                 * (or other static color) should be used as
-                 * background.
-                 *
-                 * There's a bit of gray area however, and some
-                 * compositors have chosen to interpret the
-                 * specification in a way that allows wallpapers to be
-                 * seen through a fullscreen window.
-                 *
-                 * Given that a) the intent of the specification, and
-                 * b) we don't know what the compositor will do, we
-                 * simply disable transparency while in fullscreen.
-                 *
-                 * To see why, consider what happens if we keep our
-                 * transparency. For example, if the background color
-                 * is white, and alpha is 0.5, then the window will be
-                 * drawn in a shade of gray while fullscreened.
-                 *
-                 * See
-                 * https://gitlab.freedesktop.org/wayland/wayland-protocols/-/issues/116
-                 * for a discussion on whether transparent, fullscreen
-                 * windows should be allowed in some way or not.
-                 *
-                 * NOTE: if changing this, also update render_margin()
-                 */
-                xassert(alpha == 0xffff);
-            } else {
-                alpha = term->colors.alpha;
+        else if (!term->window->is_fullscreen && term->colors.alpha != 0xffff) {
+            switch (term->conf->colors.alpha_mode) {
+            case ALPHA_MODE_DEFAULT: {
+                if (cell->attrs.bg_src == COLOR_DEFAULT) {
+                    alpha = term->colors.alpha;
+                }
+                break;
             }
-        }
-    }
 
-    if (unlikely(is_selected && _fg == _bg)) {
-        /* Invert bg when selected/highlighted text has same fg/bg */
-        _bg = ~_bg;
-        alpha = 0xffff;
+            case ALPHA_MODE_MATCHING: {
+                if (cell->attrs.bg_src == COLOR_DEFAULT ||
+                    ((cell->attrs.bg_src == COLOR_BASE16 ||
+                      cell->attrs.bg_src == COLOR_BASE256) &&
+                     term->colors.table[cell->attrs.bg] == term->colors.bg) ||
+                    (cell->attrs.bg_src == COLOR_RGB &&
+                     cell->attrs.bg == term->colors.bg))
+                {
+                    alpha = term->colors.alpha;
+                }
+                break;
+            }
+
+            case ALPHA_MODE_ALL: {
+                alpha = term->colors.alpha;
+                break;
+            }
+            }
+        } else {
+            /*
+             * Note: disable transparency when fullscreened.
+             *
+             * This is because the wayland protocol mandates no screen
+             * content is shown behind the fullscreened window.
+             *
+             * The _intent_ of the specification is that a black (or
+             * other static color) should be used as background.
+             *
+             * There's a bit of gray area however, and some
+             * compositors have chosen to interpret the specification
+             * in a way that allows wallpapers to be seen through a
+             * fullscreen window.
+             *
+             * Given that a) the intent of the specification, and b)
+             * we don't know what the compositor will do, we simply
+             * disable transparency while in fullscreen.
+             *
+             * To see why, consider what happens if we keep our
+             * transparency. For example, if the background color is
+             * white, and alpha is 0.5, then the window will be drawn
+             * in a shade of gray while fullscreened.
+             *
+             * See
+             * https://gitlab.freedesktop.org/wayland/wayland-protocols/-/issues/116
+             * for a discussion on whether transparent, fullscreen
+             * windows should be allowed in some way or not.
+             *
+             * NOTE: if changing this, also update render_margin()
+             */
+            xassert(alpha == 0xffff);
+        }
     }
 
     if (cell->attrs.dim)
@@ -804,7 +838,7 @@ render_cell(struct terminal *term, pixman_image_t *pix,
     if (cell->attrs.blink && term->blink.state == BLINK_OFF)
         _fg = color_blend_towards(_fg, 0x00000000, term->conf->dim.amount);
 
-    const bool gamma_correct = render_do_linear_blending(term);
+    const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
     pixman_color_t fg = color_hex_to_pixman(_fg, gamma_correct);
     pixman_color_t bg = color_hex_to_pixman_with_alpha(_bg, alpha, gamma_correct);
 
@@ -991,8 +1025,10 @@ render_cell(struct terminal *term, pixman_image_t *pix,
         mtx_unlock(&term->render.workers.lock);
     }
 
-    if (unlikely(has_cursor && term->cursor_style == CURSOR_BLOCK && term->kbd_focus))
-        draw_cursor(term, cell, font, pix, &fg, &bg, x, y, cell_cols);
+    if (unlikely(has_cursor && term->cursor_style == CURSOR_BLOCK && term->kbd_focus)) {
+        const pixman_color_t bg_without_alpha = color_hex_to_pixman(_bg, gamma_correct);
+        draw_cursor(term, cell, font, pix, &fg, &bg_without_alpha, x, y, cell_cols);
+    }
 
     if (cell->wc == 0 || cell->wc >= CELL_SPACER || cell->wc == U'\t' ||
         (unlikely(cell->attrs.conceal) && !is_selected))
@@ -1140,8 +1176,10 @@ render_cell(struct terminal *term, pixman_image_t *pix,
     }
 
 draw_cursor:
-    if (has_cursor && (term->cursor_style != CURSOR_BLOCK || !term->kbd_focus))
-        draw_cursor(term, cell, font, pix, &fg, &bg, x, y, cell_cols);
+    if (has_cursor && (term->cursor_style != CURSOR_BLOCK || !term->kbd_focus)) {
+        const pixman_color_t bg_without_alpha = color_hex_to_pixman(_bg, gamma_correct);
+        draw_cursor(term, cell, font, pix, &fg, &bg_without_alpha, x, y, cell_cols);
+    }
 
     pixman_image_set_clip_region32(pix, NULL);
     return cell_cols;
@@ -1160,7 +1198,8 @@ static void
 render_urgency(struct terminal *term, struct buffer *buf)
 {
     uint32_t red = term->colors.table[1];
-    pixman_color_t bg = color_hex_to_pixman(red, render_do_linear_blending(term));
+    pixman_color_t bg = color_hex_to_pixman(
+        red, wayl_do_linear_blending(term->wl, term->conf));
 
     int width = min(min(term->margins.left, term->margins.right),
                     min(term->margins.top, term->margins.bottom));
@@ -1191,7 +1230,7 @@ render_margin(struct terminal *term, struct buffer *buf,
     const int bmargin = term->height - term->margins.bottom;
     const int line_count = end_line - start_line;
 
-    const bool gamma_correct = render_do_linear_blending(term);
+    const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
     const uint32_t _bg = !term->reverse ? term->colors.bg : term->colors.fg;
     uint16_t alpha = term->colors.alpha;
 
@@ -1679,7 +1718,7 @@ render_ime_preedit_for_seat(struct terminal *term, struct seat *seat,
     if (unlikely(term->is_searching))
         return;
 
-    const bool gamma_correct = render_do_linear_blending(term);
+    const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
 
     /* Adjust cursor position to viewport */
     struct coord cursor;
@@ -1950,7 +1989,8 @@ render_overlay(struct terminal *term)
     case OVERLAY_FLASH:
         color = color_hex_to_pixman_with_alpha(
                 term->conf->colors.flash,
-                term->conf->colors.flash_alpha, render_do_linear_blending(term));
+                term->conf->colors.flash_alpha,
+                wayl_do_linear_blending(term->wl, term->conf));
         break;
 
     case OVERLAY_NONE:
@@ -2214,16 +2254,21 @@ get_csd_data(const struct terminal *term, enum csd_surface surf_idx)
     const int button_width = title_visible
         ? roundf(term->conf->csd.button_width * scale) : 0;
 
-    const int button_close_width = term->width >= 1 * button_width
-        ? button_width : 0;
+    int remaining_width = term->width;
 
-    const int button_maximize_width =
-        term->width >= 2 * button_width && term->window->wm_capabilities.maximize
-            ? button_width : 0;
+    const int button_close_width = remaining_width >= button_width ? button_width : 0;
+    remaining_width -= button_close_width;
+    const int button_close_start = remaining_width;
 
-    const int button_minimize_width =
-        term->width >= 3 * button_width && term->window->wm_capabilities.minimize
-            ? button_width : 0;
+    const int button_maximize_width = remaining_width >= button_width &&
+        term->window->wm_capabilities.maximize ? button_width : 0;
+    remaining_width -= button_maximize_width;
+    const int button_maximize_start = remaining_width;
+
+    const int button_minimize_width = remaining_width >= button_width &&
+        term->window->wm_capabilities.minimize ? button_width : 0;
+    remaining_width -= button_minimize_width;
+    const int button_minimize_start = remaining_width;
 
     /*
      * With fractional scaling, we must ensure the offset, when
@@ -2248,9 +2293,9 @@ get_csd_data(const struct terminal *term, enum csd_surface surf_idx)
     case CSD_SURF_BOTTOM: return (struct csd_data){-border_width,  term->height, top_bottom_width,      border_width};
 
     /* Positioned relative to CSD_SURF_TITLE */
-    case CSD_SURF_MINIMIZE: return (struct csd_data){term->width - 3 * button_width, 0, button_minimize_width, title_height};
-    case CSD_SURF_MAXIMIZE: return (struct csd_data){term->width - 2 * button_width, 0, button_maximize_width, title_height};
-    case CSD_SURF_CLOSE:    return (struct csd_data){term->width - 1 * button_width, 0, button_close_width,    title_height};
+    case CSD_SURF_MINIMIZE: return (struct csd_data){button_minimize_start, 0, button_minimize_width, title_height};
+    case CSD_SURF_MAXIMIZE: return (struct csd_data){button_maximize_start, 0, button_maximize_width, title_height};
+    case CSD_SURF_CLOSE:    return (struct csd_data){   button_close_start, 0,    button_close_width, title_height};
 
     case CSD_SURF_COUNT:
         break;
@@ -2292,7 +2337,7 @@ render_osd(struct terminal *term, const struct wayl_sub_surface *sub_surf,
     pixman_image_set_clip_region32(buf->pix[0], &clip);
     pixman_region32_fini(&clip);
 
-    const bool gamma_correct = render_do_linear_blending(term);
+    const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
     uint16_t alpha = _bg >> 24 | (_bg >> 24 << 8);
     pixman_color_t bg = color_hex_to_pixman_with_alpha(_bg, alpha, gamma_correct);
     pixman_image_fill_rectangles(
@@ -2433,7 +2478,7 @@ render_csd_border(struct terminal *term, enum csd_surface surf_idx,
     if (info->width == 0 || info->height == 0)
         return;
 
-    const bool gamma_correct = render_do_linear_blending(term);
+    const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
 
     {
         /* Fully transparent - no need to do a color space transform */
@@ -2522,7 +2567,7 @@ get_csd_button_fg_color(const struct terminal *term)
     }
 
     return color_hex_to_pixman_with_alpha(
-        _color, alpha, render_do_linear_blending(term));
+        _color, alpha, wayl_do_linear_blending(term->wl, term->conf));
 }
 
 static void
@@ -2799,7 +2844,7 @@ render_csd_button(struct terminal *term, enum csd_surface surf_idx,
     if (!term->visual_focus)
         _color = color_dim(term, _color);
 
-    const bool gamma_correct = render_do_linear_blending(term);
+    const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
     pixman_color_t color = color_hex_to_pixman_with_alpha(_color, alpha, gamma_correct);
     render_csd_part(term, surf->surf, buf, info->width, info->height, &color);
 
@@ -3658,7 +3703,7 @@ render_search_box(struct terminal *term)
         : term->conf->colors.use_custom.search_box_no_match;
 
     /* Background - yellow on empty/match, red on mismatch (default) */
-    const bool gamma_correct = render_do_linear_blending(term);
+    const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
     const pixman_color_t color = color_hex_to_pixman(
         is_match
         ? (custom_colors
@@ -4551,9 +4596,12 @@ render_resize(struct terminal *term, int width, int height, uint8_t opts)
     const int total_x_pad = term->width - grid_width;
     const int total_y_pad = term->height - grid_height;
 
-    const bool centered_padding = term->conf->center
-                                  || term->window->is_fullscreen
-                                  || term->window->is_maximized;
+    const enum center_when center = term->conf->center_when;
+    const bool centered_padding =
+        center == CENTER_ALWAYS ||
+        (center == CENTER_MAXIMIZED_AND_FULLSCREEN &&
+         (term->window->is_fullscreen || term->window->is_maximized)) ||
+        (center == CENTER_FULLSCREEN && term->window->is_fullscreen);
 
     if (centered_padding && !term->window->is_resizing) {
         term->margins.left = total_x_pad / 2;
@@ -4884,8 +4932,9 @@ render_xcursor_update(struct seat *seat)
 
         const enum wp_cursor_shape_device_v1_shape custom_shape =
             (shape == CURSOR_SHAPE_CUSTOM && xcursor != NULL
-             ? cursor_string_to_server_shape(xcursor)
-             : 0);
+                ? cursor_string_to_server_shape(
+                    xcursor, seat->wayl->shape_manager_version)
+                : 0);
 
         if (shape != CURSOR_SHAPE_CUSTOM || custom_shape != 0) {
             xassert(custom_shape == 0 || shape == CURSOR_SHAPE_CUSTOM);
@@ -5226,11 +5275,4 @@ render_xcursor_set(struct seat *seat, struct terminal *term,
     seat->pointer.shape = shape;
     seat->pointer.xcursor_pending = true;
     return true;
-}
-
-bool
-render_do_linear_blending(const struct terminal *term)
-{
-    return term->conf->gamma_correct != GAMMA_CORRECT_DISABLED &&
-           term->wl->color_management.img_description != NULL;
 }

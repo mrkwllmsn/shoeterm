@@ -3,10 +3,8 @@
 # author: Protesilaos Stavrou (https://protesilaos.com)
 # description: Dark theme with a palette inspired by winter nights at the city (WCAG AA compliant)
 
-#[cursor]
-#color = 202427 8da3b8
-
 [colors]
+#cursor = 202427 8da3b8
 foreground = 8da3b8
 background = 202427
 regular0 = 202427

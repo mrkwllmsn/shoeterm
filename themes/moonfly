@@ -2,10 +2,8 @@
 # moonfly
 # Based on https://github.com/bluz71/vim-moonfly-colors
 
-[cursor]
-color = 080808 9e9e9e
-
 [colors]
+cursor = 080808 9e9e9e
 foreground = b2b2b2
 background = 080808
 

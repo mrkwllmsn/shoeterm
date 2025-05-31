@@ -131,6 +131,84 @@ struct custom_regex {
     struct config_spawn_template launch;
 };
 
+struct color_theme {
+    uint32_t fg;
+    uint32_t bg;
+    uint32_t flash;
+    uint32_t flash_alpha;
+    uint32_t table[256];
+    uint16_t alpha;
+    uint32_t selection_fg;
+    uint32_t selection_bg;
+    uint32_t url;
+
+    uint32_t dim[8];
+    uint32_t sixel[16];
+
+    enum {
+        ALPHA_MODE_DEFAULT,
+        ALPHA_MODE_MATCHING,
+        ALPHA_MODE_ALL
+    } alpha_mode;
+
+    struct {
+        uint32_t text;
+        uint32_t cursor;
+    } cursor;
+
+    struct {
+        uint32_t fg;
+        uint32_t bg;
+    } jump_label;
+
+    struct {
+        uint32_t fg;
+        uint32_t bg;
+    } scrollback_indicator;
+
+    struct {
+        struct {
+            uint32_t fg;
+            uint32_t bg;
+        } no_match;
+
+        struct {
+            uint32_t fg;
+            uint32_t bg;
+        } match;
+    } search_box;
+
+    struct {
+        bool cursor:1;
+        bool jump_label:1;
+        bool scrollback_indicator:1;
+        bool url:1;
+        bool search_box_no_match:1;
+        bool search_box_match:1;
+        uint8_t dim;
+    } use_custom;
+};
+
+enum which_color_theme {
+    COLOR_THEME1,
+    COLOR_THEME2,
+};
+
+enum shm_bit_depth {
+    SHM_BITS_AUTO,
+    SHM_BITS_8,
+    SHM_BITS_10,
+    SHM_BITS_16,
+};
+
+enum center_when {
+    CENTER_INVALID,
+    CENTER_NEVER,
+    CENTER_FULLSCREEN,
+    CENTER_MAXIMIZED_AND_FULLSCREEN,
+    CENTER_ALWAYS,
+};
+
 struct config {
     char *path;
     char *term;
@@ -149,7 +227,7 @@ struct config {
 
     unsigned pad_x;
     unsigned pad_y;
-    bool center;
+    enum center_when center_when;
 
     bool resize_by_cells;
     bool resize_keep_grid;
@@ -169,9 +247,7 @@ struct config {
     enum { STARTUP_WINDOWED, STARTUP_MAXIMIZED, STARTUP_FULLSCREEN } startup_mode;
 
     bool dpi_aware;
-    enum {GAMMA_CORRECT_DISABLED,
-          GAMMA_CORRECT_ENABLED,
-          GAMMA_CORRECT_AUTO} gamma_correct;
+    bool gamma_correct;
     struct config_font_list fonts[4];
     struct font_size_adjustment font_size_adjustment;
 
@@ -245,52 +321,9 @@ struct config {
 
     tll(struct custom_regex) custom_regexes;
 
-    struct {
-        uint32_t fg;
-        uint32_t bg;
-        uint32_t flash;
-        uint32_t flash_alpha;
-        uint32_t table[256];
-        uint16_t alpha;
-        uint32_t selection_fg;
-        uint32_t selection_bg;
-        uint32_t url;
-
-        uint32_t dim[8];
-        uint32_t sixel[16];
-
-        struct {
-            uint32_t fg;
-            uint32_t bg;
-        } jump_label;
-
-        struct {
-            uint32_t fg;
-            uint32_t bg;
-        } scrollback_indicator;
-
-        struct {
-            struct {
-                uint32_t fg;
-                uint32_t bg;
-            } no_match;
-
-            struct {
-                uint32_t fg;
-                uint32_t bg;
-            } match;
-        } search_box;
-
-        struct {
-            bool selection:1;
-            bool jump_label:1;
-            bool scrollback_indicator:1;
-            bool url:1;
-            bool search_box_no_match:1;
-            bool search_box_match:1;
-            uint8_t dim;
-        } use_custom;
-    } colors;
+    struct color_theme colors;
+    struct color_theme colors2;
+    enum which_color_theme initial_color_theme;
 
     struct {
         enum cursor_style style;
@@ -299,10 +332,6 @@ struct config {
             bool enabled;
             uint32_t rate_ms;
         } blink;
-        struct {
-            uint32_t text;
-            uint32_t cursor;
-        } color;
         struct pt_or_px beam_thickness;
         struct pt_or_px underline_thickness;
     } cursor;
@@ -405,7 +434,7 @@ struct config {
         bool box_drawing_solid_shades;
         bool font_monospace_warn;
         bool sixel;
-        enum { SHM_8_BIT, SHM_10_BIT } surface_bit_depth;
+        enum shm_bit_depth surface_bit_depth;
     } tweak;
 
     struct {

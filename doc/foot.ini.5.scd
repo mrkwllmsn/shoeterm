@@ -207,7 +207,7 @@ empty string to be set, but it must be quoted: *KEY=""*)
 	Compared to the default (disabled), bright glyphs on a dark
 	background will appear thicker, and dark glyphs on a light
 	background will appear thinner.
-
+	
 	FreeType can limit the effect of the latter, with a technique
 	called stem darkening. It is only available for CFF fonts
 	(OpenType, .otf) and disabled by default (in FreeType). You can
@@ -220,12 +220,16 @@ empty string to be set, but it must be quoted: *KEY=""*)
 	than intended when rendered with gamma-correct blending, since the
 	font designer set the font weight based on incorrect rendering.
 	
-	You may also want to enable 10-bit image buffers when
-	gamma-correct blending is enabled. Though probably only if you do
-	not use a transparent background (with 10-bit buffers, you only
-	get 2 bits alpha). See *tweak.surface-bit-depth*.
+	In order to represent colors faithfully, higher precision image
+	buffers are required. By default, foot will use either 16-bit, or
+	10-bit color channels, depending on availability, when
+	gamma-correct blending is enabled. However, the high precision
+	buffers are slow; if you want to use gamma-correct blending, but
+	prefer speed (throughput and input latency) over accurate colors,
+	you can force 8-bit color channels by setting
+	*tweak.surface-bit-depth=8-bit*.
 	
-	Default: enabled when compositor support is available
+	Default: _no_.
 
 *box-drawings-uses-font-glyphs*
 	Boolean. When disabled, foot generates box/line drawing characters
@@ -249,6 +253,7 @@ empty string to be set, but it must be quoted: *KEY=""*)
 	
 		- U+02500 - U+0259F
 		- U+02800 - U+028FF
+		- U+1CD00 - U+1CDE5
 		- U+1Fb00 - U+1FB9B
 	
 	Default: _no_.
@@ -284,18 +289,29 @@ empty string to be set, but it must be quoted: *KEY=""*)
 
 *pad*
 	Padding between border and glyphs, in pixels (subject to output
-	scaling), in the form _XxY_.
+	scaling), in the form
+	
+	```
+	_XxY_ [center | center-when-fullscreen | center-when-maximized-and-fullscreen]
+	```
 	
 	This will add _at least_ X pixels on both the left and right
-	sides, and Y pixels on the top and bottom sides. The grid content
-	will be anchored in the top left corner. I.e. if the window
-	manager forces an odd window size on foot, the additional pixels
-	will be added to the right and bottom sides.
+	sides, and Y pixels on the top and bottom sides.
 	
-	To instead center the grid content, append *center* (e.g. *pad=5x5
-	center*).
+	When no centering is specified, the grid content is anchored to
+	the top left corner. I.e. if the window manager forces an odd
+	window size on foot, the additional pixels will be added to the
+	right and bottom sides.
 	
-	Default: _0x0_.
+	If *center* is specified, the grid content is instead
+	centered. This may cause "jumpiness" when resizing the window.
+	
+	With *center-when-fullscreen* and
+	*center-when-maximized-and-fullscreen*, the grid is anchored to
+	the top left corner, unless the window is maximized, or
+	fullscreened.
+	
+	Default: _0x0_ center-when-maximized-and-fullscreen.
 
 *resize-delay-ms*
 
@@ -346,6 +362,18 @@ empty string to be set, but it must be quoted: *KEY=""*)
 	This option only applies to floating windows.
 
 	Default: _yes_
+
+*initial-color-theme*
+	Selects which color theme to use, *1*, or *2*.
+	
+	*1* uses the colors defined in the *colors* section, while *2*
+	uses the colors from the *colors2* section.
+	
+	Use the *color-theme-switch-1*, *color-theme-switch-2* and
+	*color-theme-toggle* key bindings to switch between the two themes
+	at runtime.
+	
+	Default: _1_
 
 *initial-window-size-pixels*
 	Initial window width and height in _pixels_ (subject to output
@@ -419,6 +447,10 @@ empty string to be set, but it must be quoted: *KEY=""*)
 	multithreading. Default: the number of available logical CPUs
 	(including SMT). Note that this is not always the best value. In
 	some cases, the number of physical _cores_ is better.
+	
+	In case you have a ridiculous amount of cores and/or threads,
+	consider limiting the number of *workers*, since foot cannot
+	parallelize more than the number of visible rows.
 
 *utmp-helper*
 	Path to utmp logging helper binary.
@@ -828,7 +860,7 @@ section.
 	whole regex match to be used as an URL, surround all of it with
 	parenthesis: *(regex-pattern)*.
 	
-	Default: _(([a-z][[:alnum:]-]+:(/{1,3}|[a-z0-9%])|www[:digit:]{0,3}[.])([^[:space:](){}<>]+|\(([^[:space:](){}<>]+|(\([^[:space:](){}<>]+\)))\*\)|\[([^]\[[:space:](){}<>]+|(\[[^]\[[:space:](){}<>]+\]))\*\])+(\(([^[:space:](){}<>]+|(\([^[:space:](){}<>]+\)))\*\)|\[([^]\[[:space:](){}<>]+|(\[[^]\[[:space:](){}<>]+\]))\*\]|[^]\[[:space:]`!(){};:'".,<>?«»“”‘’]))_
+	Default: _(((https?://|mailto:|ftp://|file:|ssh:|ssh://|git://|tel:|magnet:|ipfs://|ipns://|gemini://|gopher://|news:)|www\.)([0-9a-zA-Z:/?#@!$&\*+,;=.~\_%^\-]+|\([]\["0-9a-zA-Z:/?#@!$&'\*+,;=.~\_%^\-]\*\)|\[[\(\)"0-9a-zA-Z:/?#@!$&'\*+,;=.~\_%^\-]\*\]|"[]\[\(\)0-9a-zA-Z:/?#@!$&'\*+,;=.~\_%^\-]\*"|'[]\[\(\)0-9a-zA-Z:/?#@!$&\*+,;=.~\_%^\-]\*')+([0-9a-zA-Z/#@$&\*+=~\_%^\-]|\([]\["0-9a-zA-Z:/?#@!$&'\*+,;=.~\_%^\-]\*\)|\[[\(\)"0-9a-zA-Z:/?#@!$&'\*+,;=.~\_%^\-]\*\]|"[]\[\(\)0-9a-zA-Z:/?#@!$&'\*+,;=.~\_%^\-]\*"|'[]\[\(\)0-9a-zA-Z:/?#@!$&\*+,;=.~\_%^\-]\*'))_
 
 # SECTION: regex
 
@@ -892,15 +924,6 @@ applications can change these at runtime.
 	enabled. Expressed in milliseconds between each blink. Default:
 	_500_.
 
-*color*
-	Two space separated RRGGBB values (i.e. plain old 6-digit hex
-	values, without prefix) specifying the foreground (text) and
-	background (cursor) colors for the cursor.
-	
-	Example: *ff0000 00ff00* (green cursor, red text)
-	
-	Default: the regular foreground and background colors, reversed.
-
 *beam-thickness*
 	Thickness (width) of the beam styled cursor. The value is in
 	points, and its exact value thus depends on the monitor's DPI. To
@@ -960,6 +983,19 @@ applications can change these at runtime.
 The colors are in RRGGBB format (i.e. plain old 6-digit hex values,
 without prefix). That is, they do *not* have an alpha component. You
 can configure the background transparency with the _alpha_ option.
+
+In the context of private mode 2031 (Dark and Light Mode detection),
+the primary theme (i.e. the *colors* section) is considered to be the
+dark theme (since the default theme is dark).
+
+*cursor*
+	Two space separated RRGGBB values (i.e. plain old 6-digit hex
+	values, without prefix) specifying the foreground (text) and
+	background (cursor) colors for the cursor.
+	
+	Example: *ff0000 00ff00* (green cursor, red text)
+	
+	Default: the regular foreground and background colors, reversed.
 
 *foreground*
 	Default foreground color. This is the color used when no ANSI
@@ -1027,10 +1063,24 @@ can configure the background transparency with the _alpha_ option.
 	Background translucency. A value in the range 0.0-1.0, where 0.0
 	means completely transparent, and 1.0 is opaque. Default: _1.0_.
 
+*alpha-mode*
+	Specifies when *alpha* is applied. One of *default*, *matching* or
+	*all*.
+	
+	*default* applies *alpha* to cells with the default background
+	color, excluding cells with the same RGB value as the default
+	background color.
+	
+	*matching* is the same as *default*, but also applies *alpha* to
+	cells with the same RGB value as the default background color.
+	
+	*all* applies *alpha* to all cells, regardless of background color.
+	
+	Default: _default_
+
 *selection-foreground*, *selection-background*
 	Foreground (text) and background color to use in selected
-	text. Note that *both* options must be set, or the default will be
-	used. Default: _inverse foreground/background_.
+	text. Default: _inverse foreground/background_.
 
 *jump-labels*
 	Two color values specifying the foreground (text) and background
@@ -1062,6 +1112,19 @@ can configure the background transparency with the _alpha_ option.
 *flash-alpha*
 	Flash translucency. A value in the range 0.0-1.0, where 0.0 means
 	completely transparent, and 1.0 is opaque. Default: _0.5_.
+
+# SECTION: colors2
+
+This section defines an alternative color theme. It has the exact same
+keys as the *colors* section. The default values are the same.
+
+Note that values are not inherited. That is, if you set a value in
+*colors*, but not in *colors2*, the value from *colors* is not
+inherited by *colors2*.
+
+In the context of private mode 2031 (Dark and Light Mode detection),
+the alternative theme (i.e. the *colors2* section) is considered to be
+the light theme (since the default, the primary theme, is dark).
 
 # SECTION: csd
 
@@ -1171,17 +1234,18 @@ different approaches.
 As an example, let's say you press ctrl+shift+c (assume plain us ASCII
 layout). XKB will tell foot *Control+C* was pressed. Note the lack of
 the shift modifier, and the upper case 'C'. Internally, this is called
-the "translated" form, and is what foot tries to match first.
+the "translated" form.
 
-If no "translated" key bindings can be found, foot proceeds to
-checking the "untranslated" variant. Using the same example as above,
-this will match *Control+Shift+c* (shift modifier present, lower case
-'c').
+The "untranslated" form (*Control+Shift+c*) is derived from the
+translated form, and is what foot tries to match first.
+
+If no "untranslated" key bindings can be found, foot proceeds to
+checking the "translated" variant.
 
 This means you can use either form in your foot configuration, and
-that *Control+C* (and similar) has higher priority than
-*Control+Shift+c*. Also note that while foot normally detects when the
-same combination is assigned to multiple actions, it will not detect
+that *Control+Shift+c* (and similar) has higher priority than
+*Control+C*. Also note that while foot normally detects when the same
+combination is assigned to multiple actions, it will not detect
 *Control+C* vs. *Control+Shift+c* collisions. Call it a known bug...
 
 Finally, foot tries to match the raw key code. Here, the primary
@@ -1305,7 +1369,8 @@ e.g. *search-start=none*.
 *show-urls-copy*
 	Enter URL mode, where all currently visible URLs are tagged with a
 	jump label with a key sequence that will place the URL in the
-	clipboard. Default: _none_.
+	clipboard. If the hint is completed with an uppercase character,
+	the match will also be pasted. Default: _none_.
 
 *regex-launch*
 	Enter regex mode. This works exactly the same as URL mode; all
@@ -1328,8 +1393,10 @@ e.g. *search-start=none*.
 	Default: _none_.
 
 *regex-copy*
-	Same as *regex-copy*, but the match is placed in the clipboard,
-	instead of "launched", upon activation. Default: _none_.
+	Same as *regex-launch*, but the match is placed in the clipboard,
+	instead of "launched", upon activation. If the hint is completed
+	with an uppercase character, the match will also be pasted.
+	Default: _none_.
 
 *prompt-prev*
 	Jump to the previous, currently not visible, prompt (requires
@@ -1364,6 +1431,22 @@ e.g. *search-start=none*.
 	etc is by using an IME.
 	
 	Default: _Control+Shift+u_.
+
+*color-theme-switch-1*, *color-theme-switch-2*, *color-theme-toggle*
+	Switch between the primary color theme (defined in the *colors*
+	section), and the alternative color theme (defined in the
+	*colors2* section).
+	
+	*color-theme-switch-1* applies the primary color theme regardless
+	of which color theme is currently active.
+	
+	*color-theme-switch-2* applies the alternative color theme regardless
+	of which color theme is currently active.
+	
+	*color-theme-toggle* toggles between the primary and alternative
+	color themes.
+	
+	Default: _none_
 
 *quit*
 	Quit foot. Default: _none_.
@@ -1951,23 +2034,27 @@ any of these options.
 
 *surface-bit-depth*
 	Selects which RGB bit depth to use for image buffers. One of
-	*8-bit*, or *10-bit*.
+	*auto*, *8-bit*, *10-bit* or *16-bit*.
 	
-	The default, *8-bit*, uses 8 bits for all channels, alpha
-	included. When *gamma-correct-blending* is disabled, this is the
-	best option.
+	*auto* chooses bit depth depending on other settings, and
+	availability.
 	
-	When *gamma-correct-blending* is enabled, you may want to enable
-	10-bit surfaces, as that improves the color resolution. Be aware
-	however, that in this mode, the alpha channel is only 2 bits
-	instead of 8 bits. Thus, if you are using a transparent
-	background, you may want to use the default, *8-bit*, even if you
-	have gamma-correct blending enabled.
+	*8-bit*, uses 8 bits for each color channel, alpha included. This
+	is the default when *gamma-correct-blending=no*.
 	
-	You should also note that 10-bit surface is slower. This will
-	increase input latency and decrease rendering throughput.
+	*10-bit* uses 10 bits for each RGB channel, and 2 bits for the
+	alpha channel. Thus, it provides higher precision color channels,
+	but a lower precision alpha channel.
 	
-	Default: _8-bit_
+	*16-bit* 16 bits for each color channel, alpha included. If
+	available, this is the default when *gamma-correct-blending=yes*.
+	
+	Note that both *10-bit* and *16-bit* are much slower than *8-bit*;
+	if you want to use gamma-correct blending, and if you prefer speed
+	(throughput and input latency) over accurate colors, you can set
+	*surface-bit-depth=8-bit* explicitly.
+	
+	Default: _auto_
 
 # LIVE RELOAD
 

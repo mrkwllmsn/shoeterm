@@ -129,7 +129,7 @@ render_worker_thread(void *_ctx)
 }
 
 bool
-render_do_linear_blending(const struct terminal *term)
+wayl_do_linear_blending(const struct wayland *wayl, const struct config *conf)
 {
     return false;
 }
@@ -201,11 +201,12 @@ void urls_reset(struct terminal *term) {}
 
 void shm_unref(struct buffer *buf) {}
 void shm_chain_free(struct buffer_chain *chain) {}
+enum shm_bit_depth shm_chain_bit_depth(const struct buffer_chain *chain) { return SHM_BITS_8; }
 
 struct buffer_chain *
 shm_chain_new(
     struct wayland *wayl, bool scrollable, size_t pix_instances,
-    bool ten_bit_it_if_capable)
+    enum shm_bit_depth desired_bit_depth)
 {
     return NULL;
 }

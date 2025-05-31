@@ -3,10 +3,8 @@
 # author: Protesilaos Stavrou (https://protesilaos.com)
 # description: Dark theme with colours inspired by summer evenings by the sea (WCAG AA compliant)
 
-#[cursor]
-#color = 202c3d a0abae
-
 [colors]
+#cursor = 202c3d a0abae
 foreground = a0abae
 background = 202c3d
 regular0 = 202c3d

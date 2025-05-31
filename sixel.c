@@ -110,10 +110,21 @@ sixel_init(struct terminal *term, int p1, int p2, int p3)
     term->sixel.image.height = 0;
     term->sixel.image.alloc_height = 0;
     term->sixel.image.bottom_pixel = 0;
-    term->sixel.linear_blending = render_do_linear_blending(term);
+    term->sixel.linear_blending = wayl_do_linear_blending(term->wl, term->conf);
     term->sixel.pixman_fmt = PIXMAN_a8r8g8b8;
 
-    if (term->conf->tweak.surface_bit_depth == SHM_10_BIT) {
+    /*
+     * Use higher-precision sixel surfaces if we're using
+     * higher-precision window surfaces.
+     *
+     * This is to a) get more accurate colors when doing gamma-correct
+     * blending, and b) use the same pixman format as the main
+     * surfaces, for (hopefully) better performance.
+     *
+     * For now, don't support 16-bit surfaces (too much sixel logic
+     * that assumes 32-bit pixels).
+     */
+    if (shm_chain_bit_depth(term->render.chains.grid) >= SHM_BITS_10) {
         if (term->wl->shm_have_argb2101010 && term->wl->shm_have_xrgb2101010) {
             term->sixel.use_10bit = true;
             term->sixel.pixman_fmt = PIXMAN_a2r10g10b10;

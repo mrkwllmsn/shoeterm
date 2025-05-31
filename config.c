@@ -142,6 +142,9 @@ static const char *const binding_action_map[] = {
     [BIND_ACTION_QUIT] = "quit",
     [BIND_ACTION_REGEX_LAUNCH] = "regex-launch",
     [BIND_ACTION_REGEX_COPY] = "regex-copy",
+    [BIND_ACTION_THEME_SWITCH_1] = "color-theme-switch-1",
+    [BIND_ACTION_THEME_SWITCH_2] = "color-theme-switch-2",
+    [BIND_ACTION_THEME_TOGGLE] = "color-theme-toggle",
 
     /* Mouse-specific actions */
     [BIND_ACTION_SCROLLBACK_UP_MOUSE] = "scrollback-up-mouse",
@@ -930,21 +933,34 @@ parse_section_main(struct context *ctx)
 
     else if (streq(key, "pad")) {
         unsigned x, y;
-        char mode[16] = {0};
+        char mode[64] = {0};
+        int ret = sscanf(value, "%ux%u %63s", &x, &y, mode);
 
-        int ret = sscanf(value, "%ux%u %15s", &x, &y, mode);
-        bool center = strcasecmp(mode, "center") == 0;
-        bool invalid_mode = !center && mode[0] != '\0';
+        enum center_when center = CENTER_NEVER;
 
-        if ((ret != 2 && ret != 3) || invalid_mode) {
+        if (ret == 3) {
+            if (strcasecmp(mode, "center") == 0)
+                center = CENTER_ALWAYS;
+            else if (strcasecmp(mode, "center-when-fullscreen") == 0)
+                center = CENTER_FULLSCREEN;
+            else if (strcasecmp(mode, "center-when-maximized-and-fullscreen") == 0)
+                center = CENTER_MAXIMIZED_AND_FULLSCREEN;
+            else
+                center = CENTER_INVALID;
+        }
+
+        if ((ret != 2 && ret != 3) || center == CENTER_INVALID) {
             LOG_CONTEXTUAL_ERR(
-                "invalid padding (must be in the form PAD_XxPAD_Y [center])");
+                "invalid padding (must be in the form PAD_XxPAD_Y "
+                "[center|"
+                "center-when-fullscreen|"
+                "center-when-maximized-and-fullscreen])");
             return false;
         }
 
         conf->pad_x = x;
         conf->pad_y = y;
-        conf->center = center;
+        conf->center_when = ret == 2 ? CENTER_NEVER : center;
         return true;
     }
 
@@ -1083,16 +1099,16 @@ parse_section_main(struct context *ctx)
         return true;
     }
 
-    else if (streq(key, "gamma-correct-blending")) {
-        bool gamma_correct;
-        if (!value_to_bool(ctx, &gamma_correct))
-            return false;
+    else if (streq(key, "gamma-correct-blending"))
+        return value_to_bool(ctx, &conf->gamma_correct);
 
-        conf->gamma_correct =
-            gamma_correct
-                ? GAMMA_CORRECT_ENABLED
-                : GAMMA_CORRECT_DISABLED;
-        return true;
+    else if (streq(key, "initial-color-theme")) {
+        _Static_assert(
+            sizeof(conf->initial_color_theme) == sizeof(int),
+            "enum is not 32-bit");
+
+        return value_to_enum(ctx, (const char*[]){"1", "2", NULL},
+                             (int *)&conf->initial_color_theme);
     }
 
     else {
@@ -1338,10 +1354,9 @@ parse_section_regex(struct context *ctx)
     }
 }
 
-static bool
-parse_section_colors(struct context *ctx)
+static bool NOINLINE
+parse_color_theme(struct context *ctx, struct color_theme *theme)
 {
-    struct config *conf = ctx->conf;
     const char *key = ctx->key;
 
     size_t key_len = strlen(key);
@@ -1350,28 +1365,26 @@ parse_section_colors(struct context *ctx)
 
     if (isdigit(key[0])) {
         unsigned long index;
-        if (!str_to_ulong(key, 0, &index) ||
-            index >= ALEN(conf->colors.table))
-        {
+        if (!str_to_ulong(key, 0, &index) || index >= ALEN(theme->table)) {
             LOG_CONTEXTUAL_ERR(
                 "invalid color palette index: %s (not in range 0-%zu)",
-                key, ALEN(conf->colors.table));
+                key, ALEN(theme->table));
             return false;
         }
-        color = &conf->colors.table[index];
+        color = &theme->table[index];
     }
 
     else if (key_len == 8 && str_has_prefix(key, "regular") && last_digit < 8)
-        color = &conf->colors.table[last_digit];
+        color = &theme->table[last_digit];
 
     else if (key_len == 7 && str_has_prefix(key, "bright") && last_digit < 8)
-        color = &conf->colors.table[8 + last_digit];
+        color = &theme->table[8 + last_digit];
 
     else if (key_len == 4 && str_has_prefix(key, "dim") && last_digit < 8) {
-        if (!value_to_color(ctx, &conf->colors.dim[last_digit], false))
+        if (!value_to_color(ctx, &theme->dim[last_digit], false))
             return false;
 
-        conf->colors.use_custom.dim |= 1 << last_digit;
+        theme->use_custom.dim |= 1 << last_digit;
         return true;
     }
 
@@ -1380,76 +1393,90 @@ parse_section_colors(struct context *ctx)
               (key_len == 7 && key[5] == '1' && last_digit < 6)))
     {
         size_t idx = key_len == 6 ? last_digit : 10 + last_digit;
-        return value_to_color(ctx, &conf->colors.sixel[idx], false);
+        return value_to_color(ctx, &theme->sixel[idx], false);
     }
 
-    else if (streq(key, "flash")) color = &conf->colors.flash;
-    else if (streq(key, "foreground")) color = &conf->colors.fg;
-    else if (streq(key, "background")) color = &conf->colors.bg;
-    else if (streq(key, "selection-foreground")) color = &conf->colors.selection_fg;
-    else if (streq(key, "selection-background")) color = &conf->colors.selection_bg;
+    else if (streq(key, "flash")) color = &theme->flash;
+    else if (streq(key, "foreground")) color = &theme->fg;
+    else if (streq(key, "background")) color = &theme->bg;
+    else if (streq(key, "selection-foreground")) color = &theme->selection_fg;
+    else if (streq(key, "selection-background")) color = &theme->selection_bg;
 
     else if (streq(key, "jump-labels")) {
         if (!value_to_two_colors(
                 ctx,
-                &conf->colors.jump_label.fg,
-                &conf->colors.jump_label.bg,
+                &theme->jump_label.fg,
+                &theme->jump_label.bg,
                 false))
         {
             return false;
         }
 
-        conf->colors.use_custom.jump_label = true;
+        theme->use_custom.jump_label = true;
         return true;
     }
 
     else if (streq(key, "scrollback-indicator")) {
         if (!value_to_two_colors(
                 ctx,
-                &conf->colors.scrollback_indicator.fg,
-                &conf->colors.scrollback_indicator.bg,
+                &theme->scrollback_indicator.fg,
+                &theme->scrollback_indicator.bg,
                 false))
         {
             return false;
         }
 
-        conf->colors.use_custom.scrollback_indicator = true;
+        theme->use_custom.scrollback_indicator = true;
         return true;
     }
 
     else if (streq(key, "search-box-no-match")) {
         if (!value_to_two_colors(
                 ctx,
-                &conf->colors.search_box.no_match.fg,
-                &conf->colors.search_box.no_match.bg,
+                &theme->search_box.no_match.fg,
+                &theme->search_box.no_match.bg,
                 false))
         {
             return false;
         }
 
-        conf->colors.use_custom.search_box_no_match = true;
+        theme->use_custom.search_box_no_match = true;
         return true;
     }
 
     else if (streq(key, "search-box-match")) {
         if (!value_to_two_colors(
                 ctx,
-                &conf->colors.search_box.match.fg,
-                &conf->colors.search_box.match.bg,
+                &theme->search_box.match.fg,
+                &theme->search_box.match.bg,
                 false))
         {
             return false;
         }
 
-        conf->colors.use_custom.search_box_match = true;
+        theme->use_custom.search_box_match = true;
+        return true;
+    }
+
+    else if (streq(key, "cursor")) {
+        if (!value_to_two_colors(
+                ctx,
+                &theme->cursor.text,
+                &theme->cursor.cursor,
+                false))
+        {
+            return false;
+        }
+
+        theme->use_custom.cursor = true;
         return true;
     }
 
     else if (streq(key, "urls")) {
-        if (!value_to_color(ctx, &conf->colors.url, false))
+        if (!value_to_color(ctx, &theme->url, false))
             return false;
 
-        conf->colors.use_custom.url = true;
+        theme->use_custom.url = true;
         return true;
     }
 
@@ -1463,7 +1490,7 @@ parse_section_colors(struct context *ctx)
             return false;
         }
 
-        conf->colors.alpha = alpha * 65535.;
+        theme->alpha = alpha * 65535.;
         return true;
     }
 
@@ -1477,10 +1504,19 @@ parse_section_colors(struct context *ctx)
             return false;
         }
 
-        conf->colors.flash_alpha = alpha * 65535.;
+        theme->flash_alpha = alpha * 65535.;
         return true;
     }
 
+    else if (strcmp(key, "alpha-mode") == 0) {
+        _Static_assert(sizeof(theme->alpha_mode) == sizeof(int),
+        "enum is not 32-bit");
+
+        return value_to_enum(
+            ctx,
+            (const char *[]){"default", "matching", "all", NULL},
+            (int *)&theme->alpha_mode);
+    }
 
     else {
         LOG_CONTEXTUAL_ERR("not valid option");
@@ -1493,6 +1529,18 @@ parse_section_colors(struct context *ctx)
 
     *color = color_value;
     return true;
+}
+
+static bool
+parse_section_colors(struct context *ctx)
+{
+    return parse_color_theme(ctx, &ctx->conf->colors);
+}
+
+static bool
+parse_section_colors2(struct context *ctx)
+{
+    return parse_color_theme(ctx, &ctx->conf->colors2);
 }
 
 static bool
@@ -1528,17 +1576,24 @@ parse_section_cursor(struct context *ctx)
         return value_to_uint32(ctx, 10, &conf->cursor.blink.rate_ms);
 
     else if (streq(key, "color")) {
+        LOG_WARN("%s:%d: cursor.color: deprecated; use colors.cursor instead",
+                 ctx->path, ctx->lineno);
+
+        user_notification_add(
+            &conf->notifications,
+            USER_NOTIFICATION_DEPRECATED,
+            xstrdup("cursor.color: use colors.cursor instead"));
+
         if (!value_to_two_colors(
-                ctx,
-                &conf->cursor.color.text,
-                &conf->cursor.color.cursor,
-                false))
+            ctx,
+            &conf->colors.cursor.text,
+            &conf->colors.cursor.cursor,
+            false))
         {
             return false;
         }
 
-        conf->cursor.color.text |= 1u << 31;
-        conf->cursor.color.cursor |= 1u << 31;
+        conf->colors.use_custom.cursor = true;
         return true;
     }
 
@@ -2767,12 +2822,19 @@ parse_section_tweak(struct context *ctx)
 
     else if (streq(key, "surface-bit-depth")) {
         _Static_assert(sizeof(conf->tweak.surface_bit_depth) == sizeof(int),
-            "enum is not 32-bit");
+                       "enum is not 32-bit");
 
+#if defined(HAVE_PIXMAN_RGBA_16)
         return value_to_enum(
                 ctx,
-                (const char *[]){"8-bit", "10-bit", NULL},
+                (const char *[]){"auto", "8-bit", "10-bit", "16-bit", NULL},
                 (int *)&conf->tweak.surface_bit_depth);
+#else
+        return value_to_enum(
+                ctx,
+                (const char *[]){"auto", "8-bit", "10-bit", NULL},
+                (int *)&conf->tweak.surface_bit_depth);
+#endif
     }
 
     else {
@@ -2867,6 +2929,7 @@ enum section {
     SECTION_URL,
     SECTION_REGEX,
     SECTION_COLORS,
+    SECTION_COLORS2,
     SECTION_CURSOR,
     SECTION_MOUSE,
     SECTION_CSD,
@@ -2897,6 +2960,7 @@ static const struct {
     [SECTION_URL] =             {&parse_section_url, "url"},
     [SECTION_REGEX] =           {&parse_section_regex, "regex", true},
     [SECTION_COLORS] =          {&parse_section_colors, "colors"},
+    [SECTION_COLORS2] =         {&parse_section_colors2, "colors2"},
     [SECTION_CURSOR] =          {&parse_section_cursor, "cursor"},
     [SECTION_MOUSE] =           {&parse_section_mouse, "mouse"},
     [SECTION_CSD] =             {&parse_section_csd, "csd"},
@@ -3289,6 +3353,7 @@ config_load(struct config *conf, const char *conf_path,
         },
         .pad_x = 0,
         .pad_y = 0,
+        .center_when = CENTER_MAXIMIZED_AND_FULLSCREEN,
         .resize_by_cells = true,
         .resize_keep_grid = true,
         .resize_delay_ms = 100,
@@ -3310,7 +3375,7 @@ config_load(struct config *conf, const char *conf_path,
         .underline_thickness = {.pt = 0., .px = -1},
         .strikeout_thickness = {.pt = 0., .px = -1},
         .dpi_aware = false,
-        .gamma_correct = GAMMA_CORRECT_AUTO,
+        .gamma_correct = false,
         .security = {
             .osc52 = OSC52_ENABLED,
         },
@@ -3345,26 +3410,26 @@ config_load(struct config *conf, const char *conf_path,
             .flash = 0x7f7f00,
             .flash_alpha = 0x7fff,
             .alpha = 0xffff,
+            .alpha_mode = ALPHA_MODE_DEFAULT,
             .selection_fg = 0x80000000,  /* Use default bg */
             .selection_bg = 0x80000000,  /* Use default fg */
+            .cursor = {
+                .text = 0,
+                .cursor = 0,
+            },
             .use_custom = {
-                .selection = false,
                 .jump_label = false,
                 .scrollback_indicator = false,
                 .url = false,
             },
         },
-
+        .initial_color_theme = COLOR_THEME1,
         .cursor = {
             .style = CURSOR_BLOCK,
             .unfocused_style = CURSOR_UNFOCUSED_HOLLOW,
             .blink = {
                 .enabled = false,
                 .rate_ms = 500,
-            },
-            .color = {
-                .text = 0,
-                .cursor = 0,
             },
             .beam_thickness = {.pt = 1.5},
             .underline_thickness = {.pt = 0., .px = -1},
@@ -3419,7 +3484,7 @@ config_load(struct config *conf, const char *conf_path,
             .box_drawing_solid_shades = true,
             .font_monospace_warn = true,
             .sixel = true,
-            .surface_bit_depth = 8,
+            .surface_bit_depth = SHM_BITS_AUTO,
         },
 
         .touch = {
@@ -3438,6 +3503,7 @@ config_load(struct config *conf, const char *conf_path,
 
     memcpy(conf->colors.table, default_color_table, sizeof(default_color_table));
     memcpy(conf->colors.sixel, default_sixel_colors, sizeof(default_sixel_colors));
+    memcpy(&conf->colors2, &conf->colors, sizeof(conf->colors));
     parse_modifiers(XKB_MOD_NAME_SHIFT, 5, &conf->mouse.selection_override_modifiers);
 
     tokenize_cmdline(
@@ -3447,39 +3513,46 @@ config_load(struct config *conf, const char *conf_path,
     tokenize_cmdline("xdg-open ${url}", &conf->url.launch.argv.args);
 
     {
-        /*
-         * Based on https://gist.github.com/gruber/249502, but modified:
-         *  - Do not allow {} at all
-         *  - Do allow matched []
-         */
-        const char *url_regex_string =
+    const char *url_regex_string =
+        "("
             "("
-                "("
-                    "[a-z][[:alnum:]-]+:"       // protocol
-                    "("
-                        "/{1,3}|[a-z0-9%]"     // slashes (what's the OR part for?)
-                    ")"
-                    "|"
-                    "www[:digit:]{0,3}[.]"
-                    //"|"
-                    //"[a-z0-9.\\-]+[.][a-z]{2,4}/"  /* "looks like domain name followed by a slash" - remove? */
-                ")"
-                "("
-                    "[^[:space:](){}<>]+"
-                    "|"
-                    "\\(([^[:space:](){}<>]+|(\\([^[:space:](){}<>]+\\)))*\\)"
-                    "|"
-                    "\\[([^]\\[[:space:](){}<>]+|(\\[[^]\\[[:space:](){}<>]+\\]))*\\]"
-                ")+"
-                "("
-                    "\\(([^[:space:](){}<>]+|(\\([^[:space:](){}<>]+\\)))*\\)"
-                    "|"
-                    "\\[([^]\\[[:space:](){}<>]+|(\\[[^]\\[[:space:](){}<>]+\\]))*\\]"
-                    "|"
-                    "[^]\\[[:space:]`!(){};:'\".,<>?«»“”‘’]"
-                ")"
+                "(https?://|mailto:|ftp://|file:|ssh:|ssh://|git://|tel:|magnet:|ipfs://|ipns://|gemini://|gopher://|news:)"
+                "|"
+                "www\\."
             ")"
-        ;
+            "("
+                /* Safe + reserved + some unsafe characters parenthesis and double quotes omitted (we only allow them when balanced) */
+                "[0-9a-zA-Z:/?#@!$&*+,;=.~_%^\\-]+"
+                "|"
+                 /* Balanced "(...)". Content is same as above, plus all _other_ characters we require to be balanced */
+                "\\([]\\[\"0-9a-zA-Z:/?#@!$&'*+,;=.~_%^\\-]*\\)"
+                "|"
+                 /* Balanced "[...]". Content is same as above, plus all _other_ characters we require to be balanced */
+                "\\[[\\(\\)\"0-9a-zA-Z:/?#@!$&'*+,;=.~_%^\\-]*\\]"
+                "|"
+                 /* Balanced '"..."'. Content is same as above, plus all _other_ characters we require to be balanced */
+                "\"[]\\[\\(\\)0-9a-zA-Z:/?#@!$&'*+,;=.~_%^\\-]*\""
+                "|"
+                 /* Balanced "'...'". Content is same as above, plus all _other_ characters we require to be balanced */
+                "'[]\\[\\(\\)0-9a-zA-Z:/?#@!$&*+,;=.~_%^\\-]*'"
+            ")+"
+            "("
+                /* Same as above, except :?!,;. are excluded */
+                "[0-9a-zA-Z/#@$&*+=~_%^\\-]"
+                "|"
+                 /* Balanced "(...)". Content is same as above, plus all _other_ characters we require to be balanced */
+                "\\([]\\[\"0-9a-zA-Z:/?#@!$&'*+,;=.~_%^\\-]*\\)"
+                "|"
+                 /* Balanced "[...]". Content is same as above, plus all _other_ characters we require to be balanced */
+                "\\[[\\(\\)\"0-9a-zA-Z:/?#@!$&'*+,;=.~_%^\\-]*\\]"
+                "|"
+                 /* Balanced '"..."'. Content is same as above, plus all _other_ characters we require to be balanced */
+                "\"[]\\[\\(\\)0-9a-zA-Z:/?#@!$&'*+,;=.~_%^\\-]*\""
+                "|"
+                 /* Balanced "'...'". Content is same as above, plus all _other_ characters we require to be balanced */
+                "'[]\\[\\(\\)0-9a-zA-Z:/?#@!$&*+,;=.~_%^\\-]*'"
+            ")"
+        ")";
 
         int r = regcomp(&conf->url.preg, url_regex_string, REG_EXTENDED);
         xassert(r == 0);
@@ -3535,10 +3608,6 @@ config_load(struct config *conf, const char *conf_path,
 
     if (!config_override_apply(conf, overrides, errors_are_fatal))
         ret = !errors_are_fatal;
-
-    conf->colors.use_custom.selection =
-        conf->colors.selection_fg >> 24 == 0 &&
-        conf->colors.selection_bg >> 24 == 0;
 
     if (ret && conf->fonts[0].count == 0) {
         struct config_font font;

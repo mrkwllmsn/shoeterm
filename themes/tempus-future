@@ -3,10 +3,8 @@
 # author: Protesilaos Stavrou (https://protesilaos.com)
 # description: Dark theme with colours inspired by concept art of outer space (WCAG AAA compliant)
 
-#[cursor]
-#color = 090a18 b4abac
-
 [colors]
+#cursor = 090a18 b4abac
 foreground = b4abac
 background = 090a18
 regular0 = 090a18

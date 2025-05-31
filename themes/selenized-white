@@ -1,10 +1,8 @@
 # -*- conf -*-
 # Selenized white
 
-[cursor]
-color=ffffff 009a8a
-
 [colors]
+cursor=ffffff 009a8a
 background= ffffff
 foreground= 474747
 

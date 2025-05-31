@@ -1,10 +1,8 @@
 # -*- conf -*-
 # Selenized light
 
-[cursor]
-color=fbf3db 00978a
-
 [colors]
+cursor=fbf3db 00978a
 background= fbf3db
 foreground= 53676d
 

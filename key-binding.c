@@ -11,6 +11,7 @@
 #include "terminal.h"
 #include "util.h"
 #include "wayland.h"
+#include "xkbcommon-vmod.h"
 #include "xmalloc.h"
 
 struct vmod_map {

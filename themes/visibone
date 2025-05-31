@@ -1,10 +1,8 @@
 # -*- conf -*-
 # VisiBone
 
-[cursor]
-color=010101 ffffff
-
 [colors]
+cursor=010101 ffffff
 foreground=ffffff
 background=010101
 regular0=666666

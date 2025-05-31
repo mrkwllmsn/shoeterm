@@ -1,10 +1,8 @@
 # -*- conf -*-
 # Derp
 
-[cursor]
-color=000000 ffffff
-
 [colors]
+cursor=000000 ffffff
 foreground=ffffff
 background=000000
 regular0=111111

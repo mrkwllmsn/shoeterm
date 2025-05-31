@@ -54,7 +54,7 @@ cursor_shape_to_server_shape(enum cursor_shape shape)
 }
 
 enum wp_cursor_shape_device_v1_shape
-cursor_string_to_server_shape(const char *xcursor)
+cursor_string_to_server_shape(const char *xcursor, int bound_version)
 {
     if (xcursor == NULL)
         return 0;
@@ -72,7 +72,7 @@ cursor_string_to_server_shape(const char *xcursor)
         [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_VERTICAL_TEXT] = {"vertical-text"},
         [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALIAS] = {"alias", "dnd-link"},
         [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY] = {"copy", "dnd-copy"},
-        [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE] = {"move"},  /* dnd-move? */
+        [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE] = {"move", "dnd-move"},
         [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP] = {"no-drop", "dnd-no-drop"},
         [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NOT_ALLOWED] = {"not-allowed", "crossed_circle"},
         [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRAB] = {"grab", "hand1"},
@@ -94,9 +94,29 @@ cursor_string_to_server_shape(const char *xcursor)
         [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_SCROLL] = {"all-scroll", "fleur"},
         [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ZOOM_IN] = {"zoom-in"},
         [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ZOOM_OUT] = {"zoom-out"},
+#if defined(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DND_ASK_SINCE_VERSION)   /* 1.42 */
+        [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DND_ASK] = {"dnd-ask"},
+#endif
+#if defined(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_RESIZE_SINCE_VERSION)  /* 1.42 */
+        [WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_RESIZE] = {"all-resize"},
+#endif
     };
 
     for (size_t i = 0; i < ALEN(table); i++) {
+#if defined(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DND_ASK_SINCE_VERSION)
+        if (i == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DND_ASK &&
+            bound_version < WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DND_ASK_SINCE_VERSION)
+        {
+            continue;
+        }
+#endif
+#if defined(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_RESIZE_SINCE_VERSION)
+        if (i == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_RESIZE &&
+            bound_version < WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_RESIZE_SINCE_VERSION)
+        {
+            continue;
+        }
+#endif
         for (size_t j = 0; j < ALEN(table[i]); j++) {
             if (table[i][j] != NULL && streq(xcursor, table[i][j])) {
                 return i;

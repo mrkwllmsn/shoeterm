@@ -3,10 +3,8 @@
 # author: Protesilaos Stavrou (https://protesilaos.com)
 # description: Light theme with a soft, slightly desaturated palette (WCAG AA compliant)
 
-#[cursor]
-#color = eff0f2 4a4b4e
-
 [colors]
+#cursor = eff0f2 4a4b4e
 foreground = 4a4b4e
 background = eff0f2
 regular0 = 4a4b4e

@@ -1,8 +1,7 @@
 # -*- conf -*-
-[cursor]
-color=141414 c9c9c9
 
 [colors]
+cursor=141414 c9c9c9
 foreground=c9c9c9
 background=141414
 regular0=191918   # black

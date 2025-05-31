@@ -1,10 +1,8 @@
 # Based on Poimandres color theme for kitti terminal emulator
 # https://github.com/ubmit/poimandres-kitty
 
-[cursor]
-color=1b1e28 ffffff
-
 [colors]
+cursor=1b1e28 ffffff
 foreground=a6accd
 background=1b1e28
 

@@ -1,10 +1,8 @@
 # -*- conf -*-
 # Solarized dark
 
-[cursor]
-color= 002b36 93a1a1
-
 [colors]
+cursor= 002b36 93a1a1
 background= 002b36
 foreground= 839496
 regular0=   073642

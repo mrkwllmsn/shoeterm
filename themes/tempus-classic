@@ -3,10 +3,8 @@
 # author: Protesilaos Stavrou (https://protesilaos.com)
 # description: Dark theme with warm hues (WCAG AA compliant)
 
-#[cursor]
-#color = 232323 aeadaf
-
 [colors]
+#cursor = 232323 aeadaf
 foreground = aeadaf
 background = 232323
 regular0 = 232323
