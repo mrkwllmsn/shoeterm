@@ -48,14 +48,14 @@ fdm_sigint(struct fdm *fdm, int signo, void *data)
 static bool
 fdm_sigusr1_server(struct fdm *fdm, int signo, void *data)
 {
-    server_hard_reload_config_colors(data);
+    server_reload_config_colors(data);
     return true;
 }
 
 static bool
 fdm_sigusr1_term(struct fdm *fdm, int signo, void *data)
 {
-    term_hard_reload_config_colors(data);
+    term_reload_config_colors(data);
     return true;
 }
 

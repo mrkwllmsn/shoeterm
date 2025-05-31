@@ -3872,6 +3872,7 @@ config_reload_colors(struct config *conf)
     // loading the config?
 
     conf->colors = new_conf.colors;
+    conf->colors2 = new_conf.colors2;
 
     config_free(&new_conf);
 }

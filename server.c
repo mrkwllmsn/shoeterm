@@ -593,7 +593,7 @@ err:
 
 /* Reload configured colors from disk. */
 void
-server_hard_reload_config_colors(struct server *server) {
+server_reload_config_colors(struct server *server) {
     config_reload_colors((struct config *)server->conf);
 
     tll_foreach(server->wayl->terms, it) {
@@ -601,7 +601,11 @@ server_hard_reload_config_colors(struct server *server) {
 
         ((struct config *)term->conf)->colors = server->conf->colors;
 
-        term_soft_reload_config_colors(term);
+        if (term->colors.active_theme == COLOR_THEME1) {
+            term_theme_apply(term, &term->conf->colors);
+        } else {
+            term_theme_apply(term, &term->conf->colors2);
+        }
     }
 }
 
