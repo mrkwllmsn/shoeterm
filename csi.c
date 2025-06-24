@@ -983,11 +983,45 @@ csi_dispatch(struct terminal *term, uint8_t final)
                 break;
             }
 
-            case 2:
+            case 2: {
                 /* Erase entire screen */
+                
+                /* First, scroll the visible content into scrollback history
+                 * (like Alacritty and Ghostty do) - only for normal screen */
+                if (term->grid == &term->normal) {
+                    /* Find the last non-empty row to avoid scrolling empty space */
+                    int last_non_empty_row = -1;
+                    for (int r = term->rows - 1; r >= 0; r--) {
+                        const struct row *row = grid_row_in_view(term->grid, r);
+                        if (row != NULL) {
+                            /* Check if this row has any non-empty cells */
+                            bool row_has_content = false;
+                            for (int c = 0; c < term->cols; c++) {
+                                const struct cell *cell = &row->cells[c];
+                                if (!(cell->wc == 0 || cell->wc == CELL_SPACER)) {
+                                    row_has_content = true;
+                                    break;
+                                }
+                            }
+                            if (row_has_content) {
+                                last_non_empty_row = r;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    /* Only scroll if we have content to preserve */
+                    if (last_non_empty_row >= 0) {
+                        /* Scroll only up to the last non-empty row + 1 */
+                        term_scroll(term, last_non_empty_row + 1);
+                    }
+                }
+                
+                /* Then clear the now-empty visible screen */
                 term_erase(term, 0, 0, term->rows - 1, term->cols - 1);
                 term->grid->cursor.lcf = false;
                 break;
+            }
 
             case 3: {
                 /* Erase scrollback */
