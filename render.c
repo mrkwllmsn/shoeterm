@@ -725,7 +725,10 @@ render_cell(struct terminal *term, pixman_image_t *pix,
     case COLOR_BASE16:
     case COLOR_BASE256:
         xassert(cell->attrs.bg < ALEN(term->colors.table));
-        _bg = term->colors.table[cell->attrs.bg];
+        if (cell->attrs.bg < 8 && term->conf->colors.use_custom.background & (1 << cell->attrs.bg))
+            _bg = term->conf->colors.background[cell->attrs.bg];
+        else
+            _bg = term->colors.table[cell->attrs.bg];
         break;
 
     case COLOR_DEFAULT:

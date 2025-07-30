@@ -143,6 +143,7 @@ struct color_theme {
     uint32_t url;
 
     uint32_t dim[8];
+    uint32_t background[8];
     uint32_t sixel[16];
 
     enum {
@@ -186,6 +187,7 @@ struct color_theme {
         bool search_box_no_match:1;
         bool search_box_match:1;
         uint8_t dim;
+        uint8_t background;
     } use_custom;
 };
 

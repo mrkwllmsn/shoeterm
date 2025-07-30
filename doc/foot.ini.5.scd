@@ -1017,6 +1017,14 @@ dark theme (since the default theme is dark).
 	_e9e836_, _5dc5f8_, _feabf2_, _24dfc4_, _ffffff_ (starlight
 	theme, V4).
 
+*background0*, *background1* *..* *background7*
+	Custom colors to use for background colors. By default the eight
+	foreground colors are used.
+
+	Note that applications can change the *regularN* colors at runtime
+	which affects the background colors when *backgroundN* is not
+	defined.
+
 *dim0*, *dim1* *..* *dim7*
 	Custom colors to use with dimmed colors. Dimmed colors do not have
 	an entry in the color palette. Applications emit them by combining

@@ -1388,6 +1388,15 @@ parse_color_theme(struct context *ctx, struct color_theme *theme)
         return true;
     }
 
+    else if (key_len == 11 && str_has_prefix(key, "background") && last_digit < 8)
+    {
+        if (!value_to_color(ctx, &theme->background[last_digit], false))
+            return false;
+
+        theme->use_custom.background |= 1 << last_digit;
+        return true;
+    }
+
     else if (str_has_prefix(key, "sixel") &&
              ((key_len == 6 && last_digit < 10) ||
               (key_len == 7 && key[5] == '1' && last_digit < 6)))
