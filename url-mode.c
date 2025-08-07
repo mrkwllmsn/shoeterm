@@ -283,7 +283,8 @@ urls_input(struct seat *seat, struct terminal *term,
 
     if (match) {
         // If the last hint character was uppercase, copy and paste
-        activate_url(seat, term, match, serial, wc == toc32upper(wc));
+        bool insert = term->conf->uppercase_regex_insert && wc == toc32upper(wc);
+        activate_url(seat, term, match, serial, insert);
 
         switch (match->action) {
         case URL_ACTION_COPY:

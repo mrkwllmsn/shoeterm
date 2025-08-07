@@ -1111,6 +1111,9 @@ parse_section_main(struct context *ctx)
                              (int *)&conf->initial_color_theme);
     }
 
+    else if (streq(key, "uppercase-regex-insert"))
+        return value_to_bool(ctx, &conf->uppercase_regex_insert);
+
     else {
         LOG_CONTEXTUAL_ERR("not a valid option: %s", key);
         return false;
@@ -3375,6 +3378,7 @@ config_load(struct config *conf, const char *conf_path,
         .strikeout_thickness = {.pt = 0., .px = -1},
         .dpi_aware = false,
         .gamma_correct = false,
+        .uppercase_regex_insert = false,
         .security = {
             .osc52 = OSC52_ENABLED,
         },

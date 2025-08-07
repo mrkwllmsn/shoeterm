@@ -247,6 +247,7 @@ struct config {
 
     bool dpi_aware;
     bool gamma_correct;
+    bool uppercase_regex_insert;
     struct config_font_list fonts[4];
     struct font_size_adjustment font_size_adjustment;
 
