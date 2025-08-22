@@ -1266,7 +1266,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
             ? wayl_do_linear_blending(wayl, conf) ? SHM_BITS_16 : SHM_BITS_8
             : conf->tweak.surface_bit_depth;
 
-    const struct color_theme *theme = NULL;
+    const struct color_theme *theme = &conf->colors;
     switch (conf->initial_color_theme) {
     case COLOR_THEME1: theme = &conf->colors; break;
     case COLOR_THEME2: theme = &conf->colors2; break;
@@ -2169,7 +2169,7 @@ term_reset(struct terminal *term, bool hard)
     if (!hard)
         return;
 
-    const struct color_theme *theme = NULL;
+    const struct color_theme *theme = &term->conf->colors;
 
     switch (term->conf->initial_color_theme) {
     case COLOR_THEME1: theme = &term->conf->colors; break;

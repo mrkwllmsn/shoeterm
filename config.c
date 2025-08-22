@@ -1107,8 +1107,12 @@ parse_section_main(struct context *ctx)
             sizeof(conf->initial_color_theme) == sizeof(int),
             "enum is not 32-bit");
 
-        return value_to_enum(ctx, (const char*[]){"1", "2", NULL},
-                             (int *)&conf->initial_color_theme);
+        int initial_color_theme = conf->initial_color_theme;
+        bool status = value_to_enum(ctx, (const char*[]){"1", "2", NULL},
+                             (int *)&initial_color_theme);
+        if(initial_color_theme != -1)
+            conf->initial_color_theme = initial_color_theme;
+        return status;
     }
 
     else {
