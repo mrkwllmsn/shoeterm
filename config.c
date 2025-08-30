@@ -3378,7 +3378,7 @@ config_load(struct config *conf, const char *conf_path,
         .strikeout_thickness = {.pt = 0., .px = -1},
         .dpi_aware = false,
         .gamma_correct = false,
-        .uppercase_regex_insert = false,
+        .uppercase_regex_insert = true,
         .security = {
             .osc52 = OSC52_ENABLED,
         },

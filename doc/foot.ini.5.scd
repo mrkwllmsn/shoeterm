@@ -236,6 +236,8 @@ empty string to be set, but it must be quoted: *KEY=""*)
 	*show-urls-copy* or *regex-copy* mode will insert the selected
 	text into the prompt in addition to copying it to the clipboard.
 
+	Default: _yes_
+
 *box-drawings-uses-font-glyphs*
 	Boolean. When disabled, foot generates box/line drawing characters
 	itself. The are several advantages to doing this instead of using

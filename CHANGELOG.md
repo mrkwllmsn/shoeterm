@@ -70,7 +70,7 @@
 
 * The `uppercase-regex-insert` option controls whether an uppercase hint
   character will insert the selected text into the prompt in `regex-copy`
-  or `show-urls-copy` mode. ([#2159]2159[]).
+  or `show-urls-copy` mode. It defaults to `true`. ([#2159][2159]).
 
 [2159]: https://codeberg.org/dnkl/foot/issues/2159
 
