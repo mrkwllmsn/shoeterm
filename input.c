@@ -38,6 +38,7 @@
 #include "tokenize.h"
 #include "unicode-mode.h"
 #include "url-mode.h"
+#include "message.h"
 #include "util.h"
 #include "vt.h"
 #include "xkbcommon-vmod.h"
@@ -1632,7 +1633,17 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
     xassert(bindings != NULL);
 
     if (pressed) {
-        if (term->unicode_mode.active) {
+        if (msgs_mode_is_active(term)) {
+            if (should_repeat)
+                start_repeater(seat, key);
+
+            msgs_input(
+                seat, term, bindings, key, sym, mods, consumed,
+                raw_syms, raw_count, serial);
+            return;
+        }
+
+        else if (term->unicode_mode.active) {
             unicode_mode_input(seat, term, sym);
             return;
         }

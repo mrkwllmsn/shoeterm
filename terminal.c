@@ -1361,6 +1361,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
                 .scrollback_indicator = shm_chain_new(wayl, false, 1, desired_bit_depth),
                 .render_timer = shm_chain_new(wayl, false, 1, desired_bit_depth),
                 .url = shm_chain_new(wayl, false, 1, desired_bit_depth),
+                .msg = shm_chain_new(wayl, false, 1, desired_bit_depth),
                 .csd = shm_chain_new(wayl, false, 1, desired_bit_depth),
                 .overlay = shm_chain_new(wayl, false, 1, desired_bit_depth),
             },
@@ -1905,6 +1906,7 @@ term_destroy(struct terminal *term)
     shm_chain_free(term->render.chains.scrollback_indicator);
     shm_chain_free(term->render.chains.render_timer);
     shm_chain_free(term->render.chains.url);
+    shm_chain_free(term->render.chains.msg);
     shm_chain_free(term->render.chains.csd);
     shm_chain_free(term->render.chains.overlay);
     pixman_region32_fini(&term->render.last_overlay_clip);

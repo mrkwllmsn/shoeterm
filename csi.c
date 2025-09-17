@@ -584,6 +584,7 @@ decset_decrst(struct terminal *term, unsigned param, bool enable)
         else {
             term_ime_disable(term);
             term->ime_reenable_after_url_mode = false;
+            term->ime_reenable_after_msg_mode = false;
         }
         break;
 

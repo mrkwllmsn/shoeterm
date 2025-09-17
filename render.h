@@ -27,6 +27,7 @@ void render_refresh_csd(struct terminal *term);
 void render_refresh_search(struct terminal *term);
 void render_refresh_title(struct terminal *term);
 void render_refresh_urls(struct terminal *term);
+void render_refresh_msgs(struct terminal *term);
 bool render_xcursor_set(
     struct seat *seat, struct terminal *term, enum cursor_shape shape);
 bool render_xcursor_is_valid(const struct seat *seat, const char *cursor);

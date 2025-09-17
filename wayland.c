@@ -34,6 +34,7 @@
 #include "shm-formats.h"
 #include "util.h"
 #include "xmalloc.h"
+#include "message.h"
 
 static void
 csd_reload_font(struct wl_window *win, float old_scale)
@@ -958,8 +959,61 @@ xdg_toplevel_close(void *data, struct xdg_toplevel *xdg_toplevel)
 {
     struct wl_window *win = data;
     struct terminal *term = win->term;
+
     LOG_DBG("xdg-toplevel: close");
-    term_shutdown(term);
+
+    switch (term->conf->close_policy){
+        case CLOSE_ALWAYS:
+            term_shutdown(term);
+        case CLOSE_NEVER:
+            break;
+        case CLOSE_MESSAGE_ALWAYS:
+            if (!msgs_mode_is_active(term)){
+                close_message(term);
+                msgs_render(term);
+            }
+            break;
+        case CLOSE_MESSAGE_DEMAND: ;
+            /* ifs here check whether it's safe to close */
+            pid_t fgpid = tcgetpgrp(term->ptmx);
+
+
+            /* No foreground process ( --hold mode) */
+            if (fgpid < 0){
+                term_shutdown(term);
+                break;
+            }
+
+
+            /* foreground process is the slave process which typcally is
+             * of some shell kind. Therefore shell integration helps to
+             * ensure that it's really a shell.
+             */
+
+            /* Shells or meant slave process should communicate with
+             * terminal whether they are ok to be therminated or not?
+             * for shells, checking if they have child processes or not
+             * should be enough. This probably can be done through
+             * shell integration, informing their jobs status.
+             */
+
+             // TODO multi line prompt_marker ???
+            bool at_prompt = term->grid->cur_row->shell_integration.prompt_marker;
+
+            if (fgpid == term->slave && at_prompt){
+                // TODO make sure there's no background jobs
+                term_shutdown(term);
+                break;
+            }
+
+
+            /* by here, a close dialog should be necessary */
+            if (!msgs_mode_is_active(term)) {
+                close_message(term);
+                msgs_render(term);
+            }
+            break;
+    }
 }
 
 #if defined(XDG_TOPLEVEL_CONFIGURE_BOUNDS_SINCE_VERSION)
@@ -2119,6 +2173,11 @@ wayl_win_destroy(struct wl_window *win)
         wl_surface_commit(it->item.surf.surface.surf);
     }
 
+    tll_foreach(win->msgs, it) {
+        wl_surface_attach(it->item.surf.surface.surf, NULL, 0, 0);
+        wl_surface_commit(it->item.surf.surface.surf);
+    }
+
     /* CSD */
     for (size_t i = 0; i < ALEN(win->csd.surface); i++) {
         if (win->csd.surface[i].surface.surf != NULL) {
@@ -2142,6 +2201,11 @@ wayl_win_destroy(struct wl_window *win)
         tll_remove(win->urls, it);
     }
 
+    tll_foreach(win->msgs, it) {
+        wayl_win_subsurface_destroy(&it->item.surf);
+        tll_remove(win->msgs, it);
+    }
+
     csd_destroy(win);
     wayl_win_subsurface_destroy(&win->search);
     wayl_win_subsurface_destroy(&win->scrollback_indicator);
@@ -2153,6 +2217,7 @@ wayl_win_destroy(struct wl_window *win)
     shm_purge(term->render.chains.render_timer);
     shm_purge(term->render.chains.grid);
     shm_purge(term->render.chains.url);
+    shm_purge(term->render.chains.msg);
     shm_purge(term->render.chains.csd);
 
     tll_foreach(win->xdg_tokens, it) {

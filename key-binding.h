@@ -110,6 +110,13 @@ enum bind_action_url {
     BIND_ACTION_URL_COUNT,
 };
 
+enum bind_action_close_message{
+    BIND_ACTION_CLOSE_MESSAGE_NONE,
+    BIND_ACTION_CLOSE_MESSAGE_CANCEL,
+    BIND_ACTION_CLOSE_MESSAGE_ACCEPT,
+    BIND_ACTION_MESSAGE_COUNT,
+};
+
 typedef tll(xkb_keycode_t) xkb_keycode_list_t;
 
 struct key_binding {
@@ -142,6 +149,7 @@ struct key_binding_set {
     key_binding_list_t key;
     key_binding_list_t search;
     key_binding_list_t url;
+    key_binding_list_t msg;
     key_binding_list_t mouse;
     xkb_mod_mask_t selection_overrides;
 };

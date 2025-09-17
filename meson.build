@@ -323,6 +323,7 @@ executable(
   'tokenize.c', 'tokenize.h',
   'unicode-mode.c', 'unicode-mode.h',
   'url-mode.c', 'url-mode.h',
+  'message.c', 'message.h',
   'user-notification.c', 'user-notification.h',
   'wayland.c', 'wayland.h', 'shm-formats.h',
   'xkbcommon-vmod.h',

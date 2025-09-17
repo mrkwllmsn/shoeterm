@@ -337,6 +337,11 @@ struct wl_url {
     struct wayl_sub_surface surf;
 };
 
+struct wl_msg {
+    const struct msg *msg;
+    struct wayl_sub_surface surf;
+};
+
 enum csd_mode {CSD_UNKNOWN, CSD_NO, CSD_YES};
 
 typedef void (*activation_token_cb_t)(const char *token, void *data);
@@ -393,6 +398,7 @@ struct wl_window {
 
     tll(const struct monitor *) on_outputs; /* Outputs we're mapped on */
     tll(struct wl_url) urls;
+    tll(struct wl_msg) msgs;
 
     bool is_configured;
     bool is_fullscreen;

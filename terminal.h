@@ -375,6 +375,7 @@ enum term_surface {
 enum overlay_style {
     OVERLAY_NONE,
     OVERLAY_SEARCH,
+    OVERLAY_MESSAGE,
     OVERLAY_FLASH,
     OVERLAY_UNICODE_MODE,
 };
@@ -393,6 +394,13 @@ struct url {
     bool duplicate;
 };
 typedef tll(struct url) url_list_t;
+
+enum close_message_action {CLOSE_MESSAGE_ACCEPT};
+struct msg {
+    uint64_t id;
+    char32_t *text;
+};
+typedef tll(struct msg) msg_list_t;
 
 
 struct colors {
@@ -652,6 +660,7 @@ struct terminal {
             struct buffer_chain *scrollback_indicator;
             struct buffer_chain *render_timer;
             struct buffer_chain *url;
+            struct buffer_chain *msg;
             struct buffer_chain *csd;
             struct buffer_chain *overlay;
         } chains;
@@ -662,6 +671,7 @@ struct terminal {
             bool csd;
             bool search;
             bool urls;
+            bool msgs;
         } refresh;
 
         /* Scheduled for rendering, in the next frame callback */
@@ -670,6 +680,7 @@ struct terminal {
             bool csd;
             bool search;
             bool urls;
+            bool msgs;
         } pending;
 
         bool margins;  /* Someone explicitly requested a refresh of the margins */
@@ -796,6 +807,9 @@ struct terminal {
     struct grid *url_grid_snapshot;
     bool ime_reenable_after_url_mode;
     const struct config_spawn_template *url_launch;
+
+    msg_list_t msgs;
+    bool ime_reenable_after_msg_mode;
 
 #if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
     bool ime_enabled;

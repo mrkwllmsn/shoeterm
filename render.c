@@ -12,6 +12,7 @@
 #include <pthread.h>
 
 #include "macros.h"
+#include "terminal.h"
 #if HAS_INCLUDE(<pthread_np.h>)
  #include <pthread_np.h>
  #define pthread_setname_np(thread, name) (pthread_set_name_np(thread, name), 0)
@@ -42,6 +43,7 @@
 #include "sixel.h"
 #include "srgb.h"
 #include "url-mode.h"
+#include "message.h"
 #include "util.h"
 #include "xmalloc.h"
 
@@ -1959,6 +1961,7 @@ render_overlay(struct terminal *term)
 
     const enum overlay_style style =
         term->is_searching ? OVERLAY_SEARCH :
+        msgs_mode_is_active(term) ? OVERLAY_MESSAGE :
         term->flash.active ? OVERLAY_FLASH :
         unicode_mode_active ? OVERLAY_UNICODE_MODE :
         OVERLAY_NONE;
@@ -1978,6 +1981,7 @@ render_overlay(struct terminal *term)
 
     switch (style) {
     case OVERLAY_SEARCH:
+    case OVERLAY_MESSAGE:
     case OVERLAY_UNICODE_MODE:
         color = (pixman_color_t){0, 0, 0, 0x7fff};
         break;
@@ -4176,6 +4180,143 @@ render_urls(struct terminal *term)
 }
 
 static void
+render_msgs(struct terminal *term)
+{
+    struct wl_window *win = term->window;
+    xassert(tll_length(win->msgs) > 0);
+
+    const float scale = term->scale;
+    const int x_margin = (int)roundf(2 * scale);
+    const int y_margin = (int)roundf(1 * scale);
+
+    struct {
+        const struct wl_msg *msg;
+        char32_t *text;
+        int x;
+        int y;
+    } info[tll_length(win->msgs)];
+
+    /* For shm_get_many() */
+    int widths[tll_length(win->msgs)];
+    int heights[tll_length(win->msgs)];
+
+    int render_count = 0;
+    int row = term->rows - 1 - tll_length(win->msgs);
+    const int max_width = term->width - term->margins.left - term->margins.right;
+    const int max_cols = max_width / term->cell_width;
+
+    tll_foreach(win->msgs, it) {
+        const struct msg *msg = it->item.msg;
+        const char32_t *text = msg->text;
+
+        struct wl_surface *surf = it->item.surf.surface.surf;
+        struct wl_subsurface *sub_surf = it->item.surf.sub;
+
+        if (surf == NULL || sub_surf == NULL)
+            continue;
+
+        if (row < 0) {
+            wl_surface_attach(surf, NULL, 0, 0);
+            wl_surface_commit(surf);
+            continue;
+        }
+
+
+        const size_t text_len = c32len(text);
+        char32_t label[text_len + 1];
+        label[text_len] = U'\0';
+        c32ncpy(label, text, text_len);
+
+
+        int col = max_cols - c32swidth(label, c32len(label)) - 1;
+        if (col < 0)
+            col = 0;
+        int x = col * term->cell_width;
+        int y = row * term->cell_height;
+
+        /* Don't position it outside our window */
+        if (x < -term->margins.left)
+            x = -term->margins.left;
+        if (y < -term->margins.top)
+            y = -term->margins.top;
+
+
+        int cols = 0;
+
+        for (size_t i = 0; i <= c32len(label); i++) {
+            int _cols = c32swidth(label, i);
+
+            if (_cols == (size_t)-1)
+                continue;
+
+            if (_cols >= max_cols) {
+                if (i > 0)
+                    label[i - 1] = U'…';
+                label[i] = U'\0';
+                cols = max_cols;
+                break;
+            }
+            cols = _cols;
+        }
+
+        if (cols == 0)
+            continue;
+
+        int width = x_margin + cols * term->cell_width + x_margin;
+        int height = y_margin + term->cell_height + y_margin;
+
+        width = roundf(scale * ceilf(width / scale));
+        height = roundf(scale * ceilf(height / scale));
+
+        info[render_count].msg = &it->item;
+        info[render_count].text = xc32dup(label);
+        info[render_count].x = x;
+        info[render_count].y = y;
+
+        widths[render_count] = width;
+        heights[render_count] = height;
+
+        row++;
+        render_count++;
+    }
+
+    struct buffer_chain *chain = term->render.chains.msg;
+    struct buffer *bufs[render_count];
+    shm_get_many(chain, render_count, widths, heights, bufs, false);
+
+    render_overlay(term);
+
+    uint32_t fg = term->conf->colors.use_custom.msg_style
+        ? term->conf->colors.msg_style.fg
+        : term->colors.table[0];
+    uint32_t bg = term->conf->colors.use_custom.msg_style
+        ? term->conf->colors.msg_style.bg
+        : term->colors.table[3];
+
+    for (size_t i = 0; i < render_count; i++) {
+        const struct wayl_sub_surface *sub_surf = &info[i].msg->surf;
+
+        const char32_t *label = info[i].text;
+        const int x = info[i].x;
+        const int y = info[i].y;
+
+        xassert(sub_surf->surface.surf != NULL);
+        xassert(sub_surf->sub != NULL);
+
+        wl_subsurface_set_position(
+            sub_surf->sub,
+            roundf((term->margins.left + x) / scale),
+            roundf((term->margins.top + y) / scale));
+
+        render_osd(
+            term, sub_surf, term->fonts[0], bufs[i], label,
+            fg, 0xffu << 24 | bg, x_margin);
+
+        free(info[i].text);
+    }
+}
+
+static void
 render_update_title(struct terminal *term)
 {
     static const size_t max_len = 2048;
@@ -4205,11 +4346,13 @@ frame_callback(void *data, struct wl_callback *wl_callback, uint32_t callback_da
     bool csd = term->render.pending.csd;
     bool search = term->is_searching && term->render.pending.search;
     bool urls = urls_mode_is_active(term) > 0 && term->render.pending.urls;
+    bool msgs = msgs_mode_is_active(term) > 0 && term->render.pending.msgs;
 
     term->render.pending.grid = false;
     term->render.pending.csd = false;
     term->render.pending.search = false;
     term->render.pending.urls = false;
+    term->render.pending.msgs = false;
 
     struct grid *original_grid = term->grid;
     if (urls_mode_is_active(term)) {
@@ -4228,6 +4371,9 @@ frame_callback(void *data, struct wl_callback *wl_callback, uint32_t callback_da
 
     if (urls)
         render_urls(term);
+
+    if (msgs)
+        render_msgs(term);
 
     if ((grid && !term->delayed_render_timer.is_armed) || (csd | search | urls))
         grid_render(term);
@@ -4812,6 +4958,8 @@ render_resize(struct terminal *term, int width, int height, uint8_t opts)
 
     term->render.last_cursor.row = NULL;
 
+    render_refresh_msgs(term);
+
 damage_view:
     /* Signal TIOCSWINSZ */
     send_dimensions_to_client(term);
@@ -5022,8 +5170,9 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
         bool csd = term->render.refresh.csd;
         bool search = term->is_searching && term->render.refresh.search;
         bool urls = urls_mode_is_active(term) && term->render.refresh.urls;
+        bool msgs = msgs_mode_is_active(term) && term->render.refresh.msgs;
 
-        if (!(grid | csd | search | urls))
+        if (!(grid | csd | search | urls | msgs))
             continue;
 
         if (term->render.app_sync_updates.enabled && !(csd | search | urls))
@@ -5033,6 +5182,7 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
         term->render.refresh.csd = false;
         term->render.refresh.search = false;
         term->render.refresh.urls = false;
+        term->render.refresh.msgs = false;
 
         if (term->window->frame_callback == NULL) {
             struct grid *original_grid = term->grid;
@@ -5050,7 +5200,9 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
                 render_search_box(term);
             if (urls)
                 render_urls(term);
-            if (grid | csd | search | urls)
+            if (msgs)
+                render_msgs(term);
+            if (grid | csd | search | urls | msgs)
                 grid_render(term);
 
             tll_foreach(term->wl->seats, it) {
@@ -5065,6 +5217,7 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
             term->render.pending.csd |= csd;
             term->render.pending.search |= search;
             term->render.pending.urls |= urls;
+            term->render.pending.msgs |= msgs;
         }
     }
 
@@ -5193,6 +5346,13 @@ render_refresh_urls(struct terminal *term)
 {
     if (urls_mode_is_active(term))
         term->render.refresh.urls = true;
+}
+
+void
+render_refresh_msgs(struct terminal *term)
+{
+    if (msgs_mode_is_active(term))
+        term->render.refresh.msgs = true;
 }
 
 bool

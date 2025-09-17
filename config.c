@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 
 #include <linux/input-event-codes.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
 #include <xkbcommon/xkbcommon.h>
 #include <fontconfig/fontconfig.h>
 
@@ -204,12 +205,20 @@ static const char *const url_binding_action_map[] = {
     [BIND_ACTION_URL_TOGGLE_URL_ON_JUMP_LABEL] = "toggle-url-visible",
 };
 
+static const char *const msg_binding_action_map[] = {
+    [BIND_ACTION_CLOSE_MESSAGE_NONE] = NULL,
+    [BIND_ACTION_CLOSE_MESSAGE_CANCEL] = "cancel",
+    [BIND_ACTION_CLOSE_MESSAGE_ACCEPT] = "accept",
+};
+
 static_assert(ALEN(binding_action_map) == BIND_ACTION_COUNT,
               "binding action map size mismatch");
 static_assert(ALEN(search_binding_action_map) == BIND_ACTION_SEARCH_COUNT,
               "search binding action map size mismatch");
 static_assert(ALEN(url_binding_action_map) == BIND_ACTION_URL_COUNT,
               "URL binding action map size mismatch");
+static_assert(ALEN(msg_binding_action_map) == BIND_ACTION_MESSAGE_COUNT,
+              "Message binding action map size mismatch");
 
 struct context {
     struct config *conf;
@@ -964,6 +973,20 @@ parse_section_main(struct context *ctx)
         return true;
     }
 
+    else if (streq(key, "close-policy")) {
+        if (strcasecmp(value, "always") == 0)
+            conf->close_policy = CLOSE_ALWAYS;
+        else if (strcasecmp(value, "never") == 0)
+            conf->close_policy = CLOSE_NEVER;
+        else if (strcasecmp(value, "message-always") == 0)
+            conf->close_policy = CLOSE_MESSAGE_ALWAYS;
+        else if (strcasecmp(value, "message-demand") == 0)
+            conf->close_policy = CLOSE_MESSAGE_DEMAND;
+        else
+            return false;
+        return true;
+    }
+
     else if (streq(key, "resize-delay-ms"))
         return value_to_uint16(ctx, 10, &conf->resize_delay_ms);
 
@@ -1283,6 +1306,15 @@ parse_section_url(struct context *ctx)
 }
 
 static bool
+parse_section_msg(struct context *ctx)
+{
+    const char *key = ctx->key;
+    LOG_CONTEXTUAL_ERR("not a valid option: %s", key);
+    return false;
+
+}
+
+static bool
 parse_section_regex(struct context *ctx)
 {
     struct config *conf = ctx->conf;
@@ -1413,6 +1445,20 @@ parse_color_theme(struct context *ctx, struct color_theme *theme)
         }
 
         theme->use_custom.jump_label = true;
+        return true;
+    }
+
+    else if (streq(key, "msg_style")) {
+        if (!value_to_two_colors(
+                ctx,
+                &theme->msg_style.fg,
+                &theme->msg_style.bg,
+                false))
+        {
+            return false;
+        }
+
+        theme->use_custom.msg_style = true;
         return true;
     }
 
@@ -2381,6 +2427,15 @@ parse_section_url_bindings(struct context *ctx)
         &ctx->conf->bindings.url);
 }
 
+static bool
+parse_section_msg_bindings(struct context *ctx)
+{
+    return parse_key_binding_section(
+        ctx,
+        BIND_ACTION_MESSAGE_COUNT, msg_binding_action_map,
+        &ctx->conf->bindings.msg);
+}
+
 static bool NOINLINE
 resolve_key_binding_collisions(struct config *conf, const char *section_name,
                                const char *const action_map[],
@@ -2927,6 +2982,7 @@ enum section {
     SECTION_DESKTOP_NOTIFICATIONS,
     SECTION_SCROLLBACK,
     SECTION_URL,
+    SECTION_MSG,
     SECTION_REGEX,
     SECTION_COLORS,
     SECTION_COLORS2,
@@ -2936,6 +2992,7 @@ enum section {
     SECTION_KEY_BINDINGS,
     SECTION_SEARCH_BINDINGS,
     SECTION_URL_BINDINGS,
+    SECTION_MSG_BINDINGS,
     SECTION_MOUSE_BINDINGS,
     SECTION_TEXT_BINDINGS,
     SECTION_ENVIRONMENT,
@@ -2958,6 +3015,7 @@ static const struct {
     [SECTION_DESKTOP_NOTIFICATIONS] = {&parse_section_desktop_notifications, "desktop-notifications"},
     [SECTION_SCROLLBACK] =      {&parse_section_scrollback, "scrollback"},
     [SECTION_URL] =             {&parse_section_url, "url"},
+    [SECTION_MSG] =             {&parse_section_msg, "msg"},
     [SECTION_REGEX] =           {&parse_section_regex, "regex", true},
     [SECTION_COLORS] =          {&parse_section_colors, "colors"},
     [SECTION_COLORS2] =         {&parse_section_colors2, "colors2"},
@@ -2967,6 +3025,7 @@ static const struct {
     [SECTION_KEY_BINDINGS] =    {&parse_section_key_bindings, "key-bindings"},
     [SECTION_SEARCH_BINDINGS] = {&parse_section_search_bindings, "search-bindings"},
     [SECTION_URL_BINDINGS] =    {&parse_section_url_bindings, "url-bindings"},
+    [SECTION_MSG_BINDINGS] =    {&parse_section_msg_bindings, "msg-bindings"},
     [SECTION_MOUSE_BINDINGS] =  {&parse_section_mouse_bindings, "mouse-bindings"},
     [SECTION_TEXT_BINDINGS] =   {&parse_section_text_bindings, "text-bindings"},
     [SECTION_ENVIRONMENT] =     {&parse_section_environment, "environment"},
@@ -3294,6 +3353,24 @@ add_default_url_bindings(struct config *conf)
 }
 
 static void
+add_default_msg_bindings(struct config *conf)
+{
+    const struct config_key_binding bindings[] = {
+        {BIND_ACTION_CLOSE_MESSAGE_CANCEL, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_c}}},
+        {BIND_ACTION_CLOSE_MESSAGE_CANCEL, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_g}}},
+        {BIND_ACTION_CLOSE_MESSAGE_CANCEL, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_d}}},
+        {BIND_ACTION_CLOSE_MESSAGE_CANCEL, m("none"), {{XKB_KEY_Escape}}},
+        {BIND_ACTION_CLOSE_MESSAGE_CANCEL, m("none"), {{XKB_KEY_n}}},
+        {BIND_ACTION_CLOSE_MESSAGE_ACCEPT, m("none"), {{XKB_KEY_q}}},
+        {BIND_ACTION_CLOSE_MESSAGE_ACCEPT, m("none"), {{XKB_KEY_y}}},
+        {BIND_ACTION_CLOSE_MESSAGE_ACCEPT, m("none"), {{XKB_KEY_Return}}},
+    };
+
+    conf->bindings.msg.count = ALEN(bindings);
+    conf->bindings.msg.arr = xmemdup(bindings, sizeof(bindings));
+}
+
+static void
 add_default_mouse_bindings(struct config *conf)
 {
     const struct config_key_binding bindings[] = {
@@ -3353,6 +3430,7 @@ config_load(struct config *conf, const char *conf_path,
         .pad_x = 0,
         .pad_y = 0,
         .center_when = CENTER_MAXIMIZED_AND_FULLSCREEN,
+        .close_policy = CLOSE_ALWAYS,
         .resize_by_cells = true,
         .resize_keep_grid = true,
         .resize_delay_ms = 100,
@@ -3420,6 +3498,7 @@ config_load(struct config *conf, const char *conf_path,
                 .jump_label = false,
                 .scrollback_indicator = false,
                 .url = false,
+                .msg_style = false,
             },
         },
         .initial_color_theme = COLOR_THEME1,
@@ -3567,6 +3646,7 @@ config_load(struct config *conf, const char *conf_path,
     add_default_key_bindings(conf);
     add_default_search_bindings(conf);
     add_default_url_bindings(conf);
+    add_default_msg_bindings(conf);
     add_default_mouse_bindings(conf);
 
     struct config_file conf_file = {.path = NULL, .fd = -1};
@@ -3628,6 +3708,8 @@ config_load(struct config *conf, const char *conf_path,
         xassert(conf->bindings.search.arr[i].action != BIND_ACTION_SEARCH_NONE);
     for (size_t i = 0; i < conf->bindings.url.count; i++)
         xassert(conf->bindings.url.arr[i].action != BIND_ACTION_URL_NONE);
+    for (size_t i = 0; i < conf->bindings.msg.count; i++)
+        xassert(conf->bindings.msg.arr[i].action != BIND_ACTION_CLOSE_MESSAGE_NONE);
 #endif
 
     free(conf_file.path);
@@ -3706,6 +3788,9 @@ config_override_apply(struct config *conf, config_override_t *overrides,
         resolve_key_binding_collisions(
             conf, section_info[SECTION_URL_BINDINGS].name,
             url_binding_action_map, &conf->bindings.url, KEY_BINDING) &&
+        resolve_key_binding_collisions(
+            conf, section_info[SECTION_MSG_BINDINGS].name,
+            msg_binding_action_map, &conf->bindings.msg, KEY_BINDING) &&
         resolve_key_binding_collisions(
             conf, section_info[SECTION_MOUSE_BINDINGS].name,
             binding_action_map, &conf->bindings.mouse, MOUSE_BINDING);
@@ -3827,6 +3912,7 @@ config_clone(const struct config *old)
     key_binding_list_clone(&conf->bindings.key, &old->bindings.key);
     key_binding_list_clone(&conf->bindings.search, &old->bindings.search);
     key_binding_list_clone(&conf->bindings.url, &old->bindings.url);
+    key_binding_list_clone(&conf->bindings.msg, &old->bindings.msg);
     key_binding_list_clone(&conf->bindings.mouse, &old->bindings.mouse);
 
     conf->env_vars.length = 0;
@@ -3918,6 +4004,7 @@ config_free(struct config *conf)
     free_key_binding_list(&conf->bindings.key);
     free_key_binding_list(&conf->bindings.search);
     free_key_binding_list(&conf->bindings.url);
+    free_key_binding_list(&conf->bindings.msg);
     free_key_binding_list(&conf->bindings.mouse);
     tll_free_and_free(conf->mouse.selection_override_modifiers, free);
 

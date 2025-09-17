@@ -164,6 +164,11 @@ struct color_theme {
     struct {
         uint32_t fg;
         uint32_t bg;
+    } msg_style;
+
+    struct {
+        uint32_t fg;
+        uint32_t bg;
     } scrollback_indicator;
 
     struct {
@@ -183,6 +188,7 @@ struct color_theme {
         bool jump_label:1;
         bool scrollback_indicator:1;
         bool url:1;
+        bool msg_style:1;
         bool search_box_no_match:1;
         bool search_box_match:1;
         uint8_t dim;
@@ -209,6 +215,13 @@ enum center_when {
     CENTER_ALWAYS,
 };
 
+enum close_policy {
+    CLOSE_ALWAYS,
+    CLOSE_NEVER,
+    CLOSE_MESSAGE_ALWAYS,
+    CLOSE_MESSAGE_DEMAND,
+};
+
 struct config {
     char *term;
     char *shell;
@@ -227,6 +240,7 @@ struct config {
     unsigned pad_x;
     unsigned pad_y;
     enum center_when center_when;
+    enum close_policy close_policy;
 
     bool resize_by_cells;
     bool resize_keep_grid;
@@ -357,6 +371,8 @@ struct config {
 
         /* While showing URL jump labels */
         struct config_key_binding_list url;
+
+        struct config_key_binding_list msg;
     } bindings;
 
     struct {
