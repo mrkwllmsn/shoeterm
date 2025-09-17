@@ -1889,7 +1889,7 @@ keyboard_modifiers(void *data, struct wl_keyboard *wl_keyboard, uint32_t serial,
 UNITTEST
 {
     int chan[2];
-    pipe2(chan, O_CLOEXEC);
+    xassert(pipe2(chan, O_CLOEXEC) == 0);
 
     xassert(chan[0] >= 0);
     xassert(chan[1] >= 0);

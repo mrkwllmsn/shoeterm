@@ -199,7 +199,7 @@ add_utmp_record(const struct config *conf, struct reaper *reaper, int ptmx)
         return true;
 
     char *const argv[] = {conf->utmp_helper_path, UTMP_ADD, getenv("WAYLAND_DISPLAY"), NULL};
-    return spawn(reaper, NULL, argv, ptmx, ptmx, -1, NULL, NULL, NULL) >= 0;
+    return spawn(reaper, NULL, argv, ptmx, -1, -1, NULL, NULL, NULL) >= 0;
 #else
     return true;
 #endif
@@ -223,7 +223,7 @@ del_utmp_record(const struct config *conf, struct reaper *reaper, int ptmx)
         ;
 
     char *const argv[] = {conf->utmp_helper_path, UTMP_DEL, del_argument, NULL};
-    return spawn(reaper, NULL, argv, ptmx, ptmx, -1, NULL, NULL, NULL) >= 0;
+    return spawn(reaper, NULL, argv, ptmx, -1, -1, NULL, NULL, NULL) >= 0;
 #else
     return true;
 #endif

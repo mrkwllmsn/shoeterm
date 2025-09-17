@@ -1,6 +1,7 @@
 # Changelog
 
 * [Unreleased](#unreleased)
+* [1.24.0](#1-24-0)
 * [1.23.1](#1-23-1)
 * [1.23.0](#1-23-0)
 * [1.22.3](#1-22-3)
@@ -68,9 +69,27 @@
 ## Unreleased
 ### Added
 ### Changed
+### Deprecated
+### Removed
+### Fixed
+### Security
+### Contributors
+
+
+## 1.24.0
+
+### Added
+
+* The `uppercase-regex-insert` option controls whether an uppercase hint
+  character will insert the selected text into the prompt in `regex-copy`
+  or `show-urls-copy` mode. It defaults to `true`. ([#2159][2159]).
+
+[2159]: https://codeberg.org/dnkl/foot/issues/2159
+
+### Changed
 
 * The label letters are no longer sorted before being assigned to URLs
-  ([#2140]2140[]).
+  ([#2140][2140]).
 * Sending SIGUSR1/SIGUSR2 to a `foot --server` process now causes
   newly spawned client instances to use the selected theme, instead of
   the original one.
@@ -80,11 +99,17 @@
 [2156]: https://codeberg.org/dnkl/foot/issues/2156
 
 
-### Deprecated
-### Removed
 ### Fixed
-### Security
+
+* Invalid configuration values overriding valid ones in surprising
+  ways.
+* Bug where the libutempter utmp backend did not record logouts
+  correctly.
+
 ### Contributors
+
+* Ryan Roden-Corrent
+* Tobias Mock
 
 
 ## 1.23.1
