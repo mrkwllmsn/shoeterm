@@ -1064,6 +1064,7 @@ xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
 
     bool wasnt_configured = !win->is_configured;
     bool was_resizing = win->is_resizing;
+    bool was_fullscreen = win->is_fullscreen;
     bool csd_was_enabled = win->csd_mode == CSD_YES && !win->is_fullscreen;
     int new_width = win->configure.width;
     int new_height = win->configure.height;
@@ -1095,6 +1096,10 @@ xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
         csd_instantiate(win);
     else if (csd_was_enabled && !enable_csd)
         csd_destroy(win);
+
+    /* Update opaque region if fullscreen state changed */
+    if (was_fullscreen != win->is_fullscreen)
+        wayl_win_alpha_changed(win);
 
     if (enable_csd && new_width > 0 && new_height > 0) {
         if (wayl_win_csd_titlebar_visible(win))
@@ -2401,7 +2406,13 @@ wayl_win_alpha_changed(struct wl_window *win)
 {
     struct terminal *term = win->term;
 
-    if (term->colors.alpha == 0xffff) {
+    /*
+     * When fullscreened, transparency is disabled (see render.c).
+     * Update the opaque region to match.
+     */
+    bool is_opaque = term->colors.alpha == 0xffff || win->is_fullscreen;
+
+    if (is_opaque) {
         struct wl_region *region = wl_compositor_create_region(
             term->wl->compositor);
 
