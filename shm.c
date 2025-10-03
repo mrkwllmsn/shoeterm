@@ -13,7 +13,6 @@
 
 #include <pixman.h>
 
-#include <fcft/stride.h>
 #include <tllist.h>
 
 #define LOG_MODULE "shm"
@@ -22,6 +21,7 @@
 #include "debug.h"
 #include "macros.h"
 #include "xmalloc.h"
+#include "stride.h"
 
 #if !defined(MAP_UNINITIALIZED)
  #define MAP_UNINITIALIZED 0
