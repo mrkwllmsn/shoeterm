@@ -1400,6 +1400,9 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
             .cb = shutdown_cb,
             .cb_data = shutdown_data,
         },
+        .ansi_pipe = conf->ansi_pipe,
+        .ansi_selection = false,
+
         .foot_exe = xstrdup(foot_exe),
         .cwd = xstrdup(cwd),
         .grapheme_shaping = conf->tweak.grapheme_shaping,
@@ -4418,9 +4421,9 @@ term_surface_kind(const struct terminal *term, const struct wl_surface *surface)
 
 static bool
 rows_to_text(const struct terminal *term, int start, int end,
-             int col_start, int col_end, char **text, size_t *len)
+             int col_start, int col_end, char **text, size_t *len, bool rich)
 {
-    struct extraction_context *ctx = extract_begin(SELECTION_NONE, true);
+    struct extraction_context *ctx = extract_begin(SELECTION_NONE, true, term->ansi_pipe);
     if (ctx == NULL)
         return false;
 
@@ -4476,7 +4479,7 @@ term_scrollback_to_text(const struct terminal *term, char **text, size_t *len)
             end += term->grid->num_rows;
     }
 
-    return rows_to_text(term, start, end, 0, term->cols, text, len);
+    return rows_to_text(term, start, end, 0, term->cols, text, len, true);
 }
 
 bool
@@ -4484,7 +4487,7 @@ term_view_to_text(const struct terminal *term, char **text, size_t *len)
 {
     int start = grid_row_absolute_in_view(term->grid, 0);
     int end = grid_row_absolute_in_view(term->grid, term->rows - 1);
-    return rows_to_text(term, start, end, 0, term->cols, text, len);
+    return rows_to_text(term, start, end, 0, term->cols, text, len, true);
 }
 
 bool
@@ -4524,7 +4527,7 @@ term_command_output_to_text(const struct terminal *term, char **text, size_t *le
     if (start_row < 0)
         return false;
 
-    bool ret = rows_to_text(term, start_row, end_row, start_col, end_col, text, len);
+    bool ret = rows_to_text(term, start_row, end_row, start_col, end_col, text, len, true);
     if (!ret)
         return false;
 

@@ -874,7 +874,7 @@ search_extend_left(struct terminal *term, const struct coord *target)
 
     const bool move_cursor = term->search.cursor != 0;
 
-    struct extraction_context *ctx = extract_begin(SELECTION_NONE, false);
+    struct extraction_context *ctx = extract_begin(SELECTION_NONE, false, false);
     if (ctx == NULL)
         return;
 
@@ -938,7 +938,7 @@ search_extend_right(struct terminal *term, const struct coord *target)
 
     const bool move_cursor = term->search.cursor == term->search.len;
 
-    struct extraction_context *ctx = extract_begin(SELECTION_NONE, false);
+    struct extraction_context *ctx = extract_begin(SELECTION_NONE, false, false);
     if (ctx == NULL)
         return;
 

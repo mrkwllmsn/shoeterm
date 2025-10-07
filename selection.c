@@ -328,7 +328,7 @@ selection_to_text(const struct terminal *term)
     if (term->selection.coords.end.row == -1)
         return NULL;
 
-    struct extraction_context *ctx = extract_begin(term->selection.kind, true);
+    struct extraction_context *ctx = extract_begin(term->selection.kind, true, term->ansi_selection);
     if (ctx == NULL)
         return NULL;
 

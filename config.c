@@ -132,6 +132,7 @@ static const char *const binding_action_map[] = {
     [BIND_ACTION_PIPE_VIEW] = "pipe-visible",
     [BIND_ACTION_PIPE_SELECTED] = "pipe-selected",
     [BIND_ACTION_PIPE_COMMAND_OUTPUT] = "pipe-command-output",
+    [BIND_ACTION_TOGGLE_ANSI_SELECTION] = "toggle-ansi-selection",
     [BIND_ACTION_SHOW_URLS_COPY] = "show-urls-copy",
     [BIND_ACTION_SHOW_URLS_LAUNCH] = "show-urls-launch",
     [BIND_ACTION_SHOW_URLS_PERSISTENT] = "show-urls-persistent",
@@ -922,6 +923,9 @@ parse_section_main(struct context *ctx)
 
     else if (streq(key, "app-id"))
         return value_to_str(ctx, &conf->app_id);
+
+    else if (streq(key, "ansi-pipe"))
+        return value_to_bool(ctx, &conf->ansi_pipe);
 
     else if (streq(key, "initial-window-size-pixels")) {
         if (!value_to_dimensions(ctx, &conf->size.width, &conf->size.height))

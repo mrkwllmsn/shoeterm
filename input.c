@@ -1,4 +1,5 @@
 #include "input.h"
+#include "key-binding.h"
 
 #include <string.h>
 #include <unistd.h>
@@ -339,6 +340,10 @@ execute_binding(struct seat *seat, struct terminal *term,
         free(ctx);
         return true;
     }
+
+    case BIND_ACTION_TOGGLE_ANSI_SELECTION:
+        term->ansi_selection = !(term->ansi_selection);
+        break;
 
     case BIND_ACTION_SHOW_URLS_COPY:
     case BIND_ACTION_SHOW_URLS_LAUNCH:

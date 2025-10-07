@@ -9,7 +9,7 @@
 struct extraction_context;
 
 struct extraction_context *extract_begin(
-    enum selection_kind kind, bool strip_trailing_empty);
+    enum selection_kind kind, bool strip_trailing_empty, bool rich);
 
 bool extract_one(
     const struct terminal *term, const struct row *row, const struct cell *cell,
@@ -19,3 +19,4 @@ bool extract_finish(
     struct extraction_context *context, char **text, size_t *len);
 bool extract_finish_wide(
     struct extraction_context *context, char32_t **text, size_t *len);
+

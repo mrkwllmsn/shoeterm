@@ -416,6 +416,8 @@ struct config {
 
     char *utmp_helper_path;
 
+    bool ansi_pipe;
+
     struct {
         enum fcft_scaling_filter fcft_filter;
         bool overflowing_glyphs;

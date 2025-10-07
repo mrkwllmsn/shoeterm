@@ -807,6 +807,9 @@ struct terminal {
     bool ime_reenable_after_url_mode;
     const struct config_spawn_template *url_launch;
 
+    bool ansi_selection;
+    bool ansi_pipe;
+
 #if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
     bool ime_enabled;
 #endif
