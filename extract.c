@@ -391,9 +391,7 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
                 ctx->buf[ctx->idx++] = U':';
                 ctx->buf[ctx->idx++] = U'1';
 
-                ctx->underline_style = 0;
-                ctx->un = 0;
-                ctx->un_src = 0;
+                ctx->underline_style = UNDERLINE_SINGLE;
             }
         } else {
             if (!init_x1b(&x1b, ctx))
