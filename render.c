@@ -839,8 +839,13 @@ render_cell(struct terminal *term, pixman_image_t *pix,
 
     if (cell->attrs.dim)
         _fg = color_dim(term, _fg);
-    if (term->conf->bold_in_bright.enabled && cell->attrs.bold)
-        _fg = color_brighten(term, _fg);
+    if (term->conf->bold_in_bright.enabled && cell->attrs.bold) {
+        if (cell->attrs.reverse ^ is_selected) {
+            _bg = color_brighten(term, _bg);
+        } else {
+            _fg = color_brighten(term, _fg);
+        }
+    }
 
     if (cell->attrs.blink && term->blink.state == BLINK_OFF)
         _fg = color_blend_towards(_fg, 0x00000000, term->conf->dim.amount);
