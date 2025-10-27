@@ -20,6 +20,10 @@ static inline int c32cmp(const char32_t *s1, const char32_t *s2) {
     return wcscmp((const wchar_t *)s1, (const wchar_t *)s2);
 }
 
+static inline int c32ncmp(const char32_t *s1, const char32_t *s2, size_t n) {
+    return wcsncmp((const wchar_t *)s1, (const wchar_t *)s2, n);
+}
+
 static inline char32_t *c32ncpy(char32_t *dst, const char32_t *src, size_t n) {
     return (char32_t *)wcsncpy((wchar_t *)dst, (const wchar_t *)src, n);
 }
@@ -60,6 +64,10 @@ static inline char32_t toc32upper(char32_t c) {
     return (char32_t)towupper((wint_t)c);
 }
 
+static inline bool isc32upper(char32_t c32) {
+    return iswupper((wint_t)c32);
+}
+
 static inline bool isc32space(char32_t c32) {
     return iswspace((wint_t)c32);
 }
@@ -70,6 +78,13 @@ static inline bool isc32print(char32_t c32) {
 
 static inline bool isc32graph(char32_t c32) {
     return iswgraph((wint_t)c32);
+}
+
+static inline bool hasc32upper(const char32_t *s) {
+    for (int i = 0; s[i] != '\0'; i++) {
+        if (isc32upper(s[i])) return true;
+    }
+    return false;
 }
 
 static inline int c32width(char32_t c) {
