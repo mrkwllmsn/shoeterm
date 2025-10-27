@@ -283,8 +283,13 @@ matches_cell(const struct terminal *term, const struct cell *cell, size_t search
     if (composed == NULL && base == 0 && term->search.buf[search_ofs] == U' ')
         return 1;
 
-    if (c32ncasecmp(&base, &term->search.buf[search_ofs], 1) != 0)
-        return -1;
+    if (hasc32upper(term->search.buf)) {
+        if (c32ncmp(&base, &term->search.buf[search_ofs], 1) != 0)
+            return -1;
+    } else {
+        if (c32ncasecmp(&base, &term->search.buf[search_ofs], 1) != 0)
+            return -1;
+    }
 
     if (composed != NULL) {
         if (search_ofs + composed->count > term->search.len)
