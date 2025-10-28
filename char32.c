@@ -55,6 +55,14 @@ UNITTEST
 
 UNITTEST
 {
+    xassert(c32ncmp(U"foo", U"foot", 3) == 0);
+    xassert(c32ncmp(U"foot", U"FOOT", 4) > 0);
+    xassert(c32ncmp(U"a", U"b", 1) < 0);
+    xassert(c32ncmp(U"bb", U"aa", 2) > 0);
+}
+
+UNITTEST
+{
     char32_t copy[16];
     char32_t *ret = c32ncpy(copy, U"foobar", 16);
 
@@ -125,6 +133,20 @@ UNITTEST
 
     xassert(ret == dst);
     xassert(c32cmp(dst, U"foobar12345678") == 0);
+}
+
+UNITTEST
+{
+    xassert(!isc32upper(U'a'));
+    xassert(isc32upper(U'A'));
+    xassert(!isc32upper(U'a'));
+}
+
+UNITTEST
+{
+    xassert(hasc32upper(U"abc1A"));
+    xassert(!hasc32upper(U"abc1_aaa"));
+    xassert(!hasc32upper(U""));
 }
 
 UNITTEST
