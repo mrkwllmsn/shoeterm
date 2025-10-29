@@ -316,14 +316,14 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
     if (diff & 1 << idx || diff & 1 << (idx + 1)) {
         x1b = true;
         if (!ensure_size(ctx, 2))
-            goto err;
+            return false;
 
         ctx->buf[ctx->idx++] = U'\x1b';
         ctx->buf[ctx->idx++] = U'[';
 
         if ((!attrs.bold && !attrs.dim) || (attrs.bold ^ attrs.dim)) {
             if (!ensure_size(ctx, 2 + (2 * (attrs.bold ^ attrs.dim))))
-                goto err;
+                return false;
 
             ctx->buf[ctx->idx++] = U'2';
             ctx->buf[ctx->idx++] = U'2';
@@ -345,9 +345,9 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
     idx = 2;
     if (diff & 1 << idx) {
         if (!init_x1b(&x1b, ctx))
-            goto err;
+            return false;
         if (!style_flip_rich(attrs.italic, 3, ctx))
-            goto err;
+            return false;
         ctx->italic = attrs.italic;
     }
 
@@ -362,9 +362,9 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
                     if (range->start <= col && col <= range->end) {
                         if (ctx->underline_style != range->underline.style) {
                             if (!init_x1b(&x1b, ctx))
-                                goto err;
+                                return false;
                             if (!ensure_size(ctx, 3))
-                                goto err;
+                                return false;
                             ctx->buf[ctx->idx++] = U'4';
                             ctx->buf[ctx->idx++] = U':';
                             ctx->buf[ctx->idx++] = U'0' + range->underline.style;
@@ -372,9 +372,9 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
 
                         if ((ctx->un_src != range->underline.color_src) || ((range->underline.color_src != COLOR_DEFAULT) && ctx->un != range->underline.color)) {
                             if (!init_x1b(&x1b, ctx))
-                                goto err;
+                                return false;
                             if (!change_color_rich(range->underline.color_src, range->underline.color, ctx, 5))
-                                goto err;
+                                return false;
                         }
                         ctx->underline_style = range->underline.style;
                         ctx->un = range->underline.color;
@@ -384,9 +384,9 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
                 }
             } else {
                 if (!init_x1b(&x1b, ctx))
-                    goto err;
+                    return false;
                 if (!ensure_size(ctx, 3))
-                    goto err;
+                    return false;
                 ctx->buf[ctx->idx++] = U'4';
                 ctx->buf[ctx->idx++] = U':';
                 ctx->buf[ctx->idx++] = U'1';
@@ -395,9 +395,9 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
             }
         } else {
             if (!init_x1b(&x1b, ctx))
-                goto err;
+                return false;
             if (!ensure_size(ctx, 3))
-                goto err;
+                return false;
             ctx->buf[ctx->idx++] = U'4';
             ctx->buf[ctx->idx++] = U':';
             ctx->buf[ctx->idx++] = U'0';
@@ -409,9 +409,9 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
     idx = 4;
     if (diff & 1 << idx) {
         if (!init_x1b(&x1b, ctx))
-            goto err;
+            return false;
         if (!style_flip_rich(attrs.blink, 5, ctx))
-            goto err;
+            return false;
         ctx->blink = attrs.blink;
     }
 
@@ -419,9 +419,9 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
     idx = 5;
     if (diff & 1 << idx) {
         if (!init_x1b(&x1b, ctx))
-            goto err;
+            return false;
         if (!style_flip_rich(attrs.reverse, 7, ctx))
-            goto err;
+            return false;
         ctx->reverse = attrs.reverse;
     }
 
@@ -429,9 +429,9 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
     idx = 6;
     if (diff & 1 << idx) {
         if (!init_x1b(&x1b, ctx))
-            goto err;
+            return false;
         if (!style_flip_rich(attrs.conceal, 8, ctx))
-            goto err;
+            return false;
         ctx->conceal = attrs.conceal;
     }
 
@@ -439,9 +439,9 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
     idx = 7;
     if (diff & 1 << idx) {
         if (!init_x1b(&x1b, ctx))
-            goto err;
+            return false;
         if (!style_flip_rich(attrs.strikethrough, 9, ctx))
-            goto err;
+            return false;
         ctx->strikethrough = attrs.strikethrough;
     }
 
@@ -449,10 +449,10 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
     idx = 8;
     if (diff & 1 << idx) {
         if (!init_x1b(&x1b, ctx))
-            goto err;
+            return false;
 
         if (!change_color_rich(attrs.fg_src, attrs.fg, ctx, 3))
-            goto err;
+            return false;
 
         ctx->fg = attrs.fg;
         ctx->fg_src = attrs.fg_src;
@@ -462,10 +462,10 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
     idx = 9;
     if (diff & 1 << idx) {
         if (!init_x1b(&x1b, ctx))
-            goto err;
+            return false;
 
         if (!change_color_rich(attrs.bg_src, attrs.bg, ctx, 4))
-            goto err;
+            return false;
 
         ctx->bg = attrs.bg;
         ctx->bg_src = attrs.bg_src;
@@ -473,7 +473,7 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
 
     if (x1b) {
         if (!ensure_size(ctx, 1))
-            goto err;
+            return false;
         ctx->buf[ctx->idx++] = U'm';
     }
 
@@ -491,7 +491,7 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
                     text = ambstoc32(range->uri.uri);
 
                     if (!ensure_size(ctx, 7 + c32len(text)))
-                        goto err;
+                        return false;
                     ctx->buf[ctx->idx++] = U'\x1b';
                     ctx->buf[ctx->idx++] = U']';
                     ctx->buf[ctx->idx++] = U'8';
@@ -510,7 +510,7 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
             }
             if (!found_one) {
                 if (!ensure_size(ctx, 7))
-                    goto err;
+                    return false;
                 ctx->buf[ctx->idx++] = U'\x1b';
                 ctx->buf[ctx->idx++] = U']';
                 ctx->buf[ctx->idx++] = U'8';
@@ -523,7 +523,7 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
             }
         } else {
             if (!ensure_size(ctx, 7))
-                goto err;
+                return false;
             ctx->buf[ctx->idx++] = U'\x1b';
             ctx->buf[ctx->idx++] = U']';
             ctx->buf[ctx->idx++] = U'8';
@@ -536,11 +536,6 @@ add_rich_diff(struct extraction_context *ctx, struct attributes attrs, const str
         }
     }
     return true;
-
-err:
-    free(ctx->buf);
-    free(ctx);
-    return false;
 }
 
 struct extraction_context *
