@@ -1484,7 +1484,8 @@ search_input(struct seat *seat, struct terminal *term,
         count = xkb_compose_state_get_utf8(
             seat->kbd.xkb_compose_state, (char *)buf, sizeof(buf));
         xkb_compose_state_reset(seat->kbd.xkb_compose_state);
-    } else if (compose_status == XKB_COMPOSE_CANCELLED) {
+    } else if (compose_status == XKB_COMPOSE_CANCELLED ||
+               compose_status == XKB_COMPOSE_COMPOSING) {
         count = 0;
     } else {
         count = xkb_state_key_get_utf8(
