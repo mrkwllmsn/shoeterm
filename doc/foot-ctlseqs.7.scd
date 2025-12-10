@@ -664,9 +664,7 @@ manipulation sequences. The generic format is:
 :  Query the current (color) theme mode
 :  contour
 :  The current color theme mode (light or dark) is reported as *CSI ?
-   997 ; 1|2 n*, where *1* means dark and *2* light. By convention, the
-   primary theme in foot is considered dark, and the alternative theme
-   light.
+   997 ; 1|2 n*, where *1* means dark and *2* light.
 
 
 # OSC

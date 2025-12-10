@@ -70,6 +70,7 @@
 ## Unreleased
 ### Added
 
+* TODO
 * `toplevel-tag` option (and `--toplevel-tag` command line options to
   `foot` and `footclient`), allowing you to set a custom toplevel
   tag. The compositor must implement the new `xdg-toplevel-tag-v1`

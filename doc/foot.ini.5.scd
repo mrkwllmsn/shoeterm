@@ -1138,16 +1138,11 @@ dark theme (since the default theme is dark).
 # SECTION: colors2
 
 This section defines an alternative color theme. It has the exact same
-keys as the *colors* section. The default values are the same, except
-for *dim-blend-towards*, which defaults to *white* instead.
+keys and default values as the *colors* section.
 
 Note that values are not inherited. That is, if you set a value in
 *colors*, but not in *colors2*, the value from *colors* is not
 inherited by *colors2*.
-
-In the context of private mode 2031 (Dark and Light Mode detection),
-the alternative theme (i.e. the *colors2* section) is considered to be
-the light theme (since the default, the primary theme, is dark).
 
 # SECTION: csd
 

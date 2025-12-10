@@ -1,4 +1,6 @@
 #include "terminal.h"
+#include "pixman.h"
+#include <stdint.h>
 
 #if defined(__GLIBC__)
 #include <malloc.h>
@@ -4785,10 +4787,6 @@ term_theme_toggle(struct terminal *term)
 /*
  * 1 - dark mode
  * 2 - light mode
- *
- * In foot, the themes aren't necessarily light/dark,
- * but by convention, the primary theme is dark, and
- * the alternative theme is light.
  */
 void term_send_color_theme_mode(struct terminal* term)
 {
@@ -4796,6 +4794,6 @@ void term_send_color_theme_mode(struct terminal* term)
         "\033[?997;2n",
         "\033[?997;1n",
     };
-    const bool is_dark = term->colors.active_theme == COLOR_THEME1;
+    const bool is_dark = is_dark_theme(term->colors.fg, term->colors.bg);
     term_to_slave(term, reply[is_dark], 9);
 }

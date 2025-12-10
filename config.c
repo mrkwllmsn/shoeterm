@@ -25,6 +25,7 @@
 #include "input.h"
 #include "key-binding.h"
 #include "macros.h"
+#include "srgb.h"
 #include "tokenize.h"
 #include "util.h"
 #include "xmalloc.h"
@@ -3185,6 +3186,16 @@ parse_config_file(FILE *f, struct config *conf, const char *path, bool errors_ar
         errno = 0;
     }
 
+    struct color_theme *color_themes[] = {&conf->colors, &conf->colors2};
+    for (int i = 0; i < ALEN(color_themes); i++) {
+        struct color_theme *color_theme = color_themes[i];
+        if (color_theme->dim_blend_towards != DIM_BLEND_TOWARDS_INVALID)
+            continue;
+        color_theme->dim_blend_towards =
+            is_dark_theme(color_theme->fg, color_theme->bg)
+            ? DIM_BLEND_TOWARDS_BLACK : DIM_BLEND_TOWARDS_WHITE;
+    }
+
     if (errno != 0) {
         LOG_AND_NOTIFY_ERRNO("failed to read from configuration");
         if (errors_are_fatal)
@@ -3442,7 +3453,7 @@ config_load(struct config *conf, const char *conf_path,
             .flash_alpha = 0x7fff,
             .alpha = 0xffff,
             .alpha_mode = ALPHA_MODE_DEFAULT,
-            .dim_blend_towards = DIM_BLEND_TOWARDS_BLACK,
+            .dim_blend_towards = DIM_BLEND_TOWARDS_INVALID,
             .selection_fg = 0x80000000,  /* Use default bg */
             .selection_bg = 0x80000000,  /* Use default fg */
             .cursor = {
@@ -3538,7 +3549,6 @@ config_load(struct config *conf, const char *conf_path,
     memcpy(conf->colors.table, default_color_table, sizeof(default_color_table));
     memcpy(conf->colors.sixel, default_sixel_colors, sizeof(default_sixel_colors));
     memcpy(&conf->colors2, &conf->colors, sizeof(conf->colors));
-    conf->colors2.dim_blend_towards = DIM_BLEND_TOWARDS_WHITE;
 
     parse_modifiers(XKB_MOD_NAME_SHIFT, 5, &conf->mouse.selection_override_modifiers);
 
@@ -4094,6 +4104,30 @@ check_if_font_is_monospaced(const char *pattern,
 
     fcft_destroy(f);
     return is_monospaced;
+}
+
+pixman_color_t
+color_hex_to_pixman_srgb(uint32_t color, uint16_t alpha)
+{
+    return (pixman_color_t){
+        .alpha = alpha,  /* Consider alpha linear already? */
+        .red = srgb_decode_8_to_16((color >> 16) & 0xff),
+        .green = srgb_decode_8_to_16((color >> 8) & 0xff),
+        .blue = srgb_decode_8_to_16((color >> 0) & 0xff),
+    };
+}
+
+// See https://en.wikipedia.org/wiki/Relative_luminance
+static float relative_luminance(uint32_t rgb)
+{
+    pixman_color_t srgb =
+        color_hex_to_pixman_srgb(rgb, /*alpha=*/UINT16_MAX);
+    return 0.2126 * srgb.red + 0.7152 * srgb.green + 0.0722 * srgb.blue;
+}
+
+bool is_dark_theme(uint32_t fg, uint32_t bg)
+{
+    return relative_luminance(bg) < relative_luminance(fg);
 }
 
 #if 0

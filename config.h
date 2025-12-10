@@ -148,6 +148,7 @@ struct color_theme {
     enum {
         DIM_BLEND_TOWARDS_BLACK,
         DIM_BLEND_TOWARDS_WHITE,
+        DIM_BLEND_TOWARDS_INVALID,
     } dim_blend_towards;
 
     enum {
@@ -473,3 +474,7 @@ conf_modifiers_to_mask(
 #endif
 bool check_if_font_is_monospaced(
     const char *pattern, user_notifications_t *notifications);
+
+pixman_color_t
+color_hex_to_pixman_srgb(uint32_t color, uint16_t alpha);
+bool is_dark_theme(uint32_t fg, uint32_t bg);

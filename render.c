@@ -40,7 +40,6 @@
 #include "selection.h"
 #include "shm.h"
 #include "sixel.h"
-#include "srgb.h"
 #include "url-mode.h"
 #include "util.h"
 #include "xmalloc.h"
@@ -227,17 +226,6 @@ attrs_to_font(const struct terminal *term, const struct attributes *attrs)
 {
     int idx = attrs->italic << 1 | attrs->bold;
     return term->fonts[idx];
-}
-
-static pixman_color_t
-color_hex_to_pixman_srgb(uint32_t color, uint16_t alpha)
-{
-    return (pixman_color_t){
-        .alpha = alpha,  /* Consider alpha linear already? */
-        .red = srgb_decode_8_to_16((color >> 16) & 0xff),
-        .green = srgb_decode_8_to_16((color >> 8) & 0xff),
-        .blue = srgb_decode_8_to_16((color >> 0) & 0xff),
-    };
 }
 
 static inline pixman_color_t
