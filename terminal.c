@@ -4734,7 +4734,7 @@ term_theme_switch_to_1(struct terminal *term)
     term_font_subpixel_changed(term);
 
     if (term->report_theme_changes)
-        term_to_slave(term, "\033[?997;1n", 9);
+        term_send_color_theme_mode(term);
 
     term_damage_view(term);
     term_damage_margins(term);
@@ -4754,7 +4754,7 @@ term_theme_switch_to_2(struct terminal *term)
     term_font_subpixel_changed(term);
 
     if (term->report_theme_changes)
-        term_to_slave(term, "\033[?997;2n", 9);
+        term_send_color_theme_mode(term);
 
     term_damage_view(term);
     term_damage_margins(term);
@@ -4767,16 +4767,12 @@ term_theme_toggle(struct terminal *term)
     if (term->colors.active_theme == COLOR_THEME1) {
         term_theme_apply(term, &term->conf->colors2);
         term->colors.active_theme = COLOR_THEME2;
-
-        if (term->report_theme_changes)
-            term_to_slave(term, "\033[?997;2n", 9);
     } else {
         term_theme_apply(term, &term->conf->colors);
         term->colors.active_theme = COLOR_THEME1;
-
-        if (term->report_theme_changes)
-            term_to_slave(term, "\033[?997;1n", 9);
     }
+    if (term->report_theme_changes)
+        term_send_color_theme_mode(term);
 
     wayl_win_alpha_changed(term->window);
     term_font_subpixel_changed(term);
@@ -4784,4 +4780,22 @@ term_theme_toggle(struct terminal *term)
     term_damage_view(term);
     term_damage_margins(term);
     render_refresh(term);
+}
+
+/*
+ * 1 - dark mode
+ * 2 - light mode
+ *
+ * In foot, the themes aren't necessarily light/dark,
+ * but by convention, the primary theme is dark, and
+ * the alternative theme is light.
+ */
+void term_send_color_theme_mode(struct terminal* term)
+{
+    static const char reply[2][9] = {
+        "\033[?997;2n",
+        "\033[?997;1n",
+    };
+    const bool is_dark = term->colors.active_theme == COLOR_THEME1;
+    term_to_slave(term, reply[is_dark], 9);
 }

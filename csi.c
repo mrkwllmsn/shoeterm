@@ -1566,21 +1566,7 @@ csi_dispatch(struct terminal *term, uint8_t final)
 
             switch (param) {
             case 996: {  /* Query current theme mode (see private mode 2031) */
-                /*
-                 * 1 - dark mode
-                 * 2 - light mode
-                 *
-                 * In foot, the themes aren't necessarily light/dark,
-                 * but by convention, the primary theme is dark, and
-                 * the alternative theme is light.
-                 */
-                char reply[16] = {0};
-                int chars = snprintf(
-                    reply, sizeof(reply),
-                    "\033[?997;%dn",
-                    term->colors.active_theme == COLOR_THEME1 ? 1 : 2);
-
-                term_to_slave(term, reply, chars);
+                term_send_color_theme_mode(term);
                 break;
             }
             }
