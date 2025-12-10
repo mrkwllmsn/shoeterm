@@ -33,7 +33,6 @@
 #include "ime.h"
 #include "input.h"
 #include "notify.h"
-#include "quirks.h"
 #include "reaper.h"
 #include "render.h"
 #include "selection.h"
