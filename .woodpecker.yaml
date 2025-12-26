@@ -1,7 +1,7 @@
 # -*- yaml -*-
 
 steps:
-  - name: codespell
+  - name: python-venv
     when:
       - event: [manual, pull_request]
       - event: [push, tag]
@@ -11,9 +11,26 @@ steps:
       - apk add openssl
       - apk add python3
       - apk add py3-pip
-      - python3 -m venv codespell-venv
-      - source codespell-venv/bin/activate
+      - python -m venv venv
+      - source venv/bin/activate
+      - python -m pip install --upgrade pip
       - pip install codespell
+      - pip install mypy
+      - pip install ruff
+      - deactivate
+
+  - name: codespell
+    when:
+      - event: [manual, pull_request]
+      - event: [push, tag]
+        branch: [master, releases/*]
+    depends_on: [python-venv]
+    image: alpine:edge
+    commands:
+      - ls -a
+      - ls venv
+      - python --version
+      - source venv/bin/activate
       - codespell
       - deactivate
 
@@ -22,15 +39,10 @@ steps:
       - event: [manual, pull_request]
       - event: [push, tag]
         branch: [master, releases/*]
+    depends_on: [python-venv]
     image: alpine:edge
     commands:
-      - apk add openssl
-      - apk add python3
-      - apk add py3-pip
-      - python3 -m venv mypy-venv
-      - source mypy-venv/bin/activate
-      - pip install mypy
-      - pip install ruff
+      - source venv/bin/activate
       - mypy
       - ruff check
       - deactivate
