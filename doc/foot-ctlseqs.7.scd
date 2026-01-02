@@ -175,6 +175,10 @@ m*.
 :  Disable conceal
 |  29
 :  Disable crossed-out
+|  53
+:  Overline
+|  55
+:  Disable overline
 |  30-37
 :  Select foreground color (using *regularN* in *foot.ini*(5))
 |  38

@@ -599,6 +599,27 @@ draw_strikeout(const struct terminal *term, pixman_image_t *pix,
 }
 
 static void
+draw_overline(const struct terminal *term, pixman_image_t *pix,
+              const struct fcft_font *font,
+              const pixman_color_t *color, int x, int y, int cols)
+{
+    const int thickness = term->conf->overline_thickness.px >= 0
+        ? term_pt_or_px_as_pixels(
+            term, &term->conf->overline_thickness)
+        : font->underline.thickness;
+
+    const int offset = term->conf->overline_offset.px >= 0
+        ? term_pt_or_px_as_pixels(
+            term, &term->conf->overline_offset)
+        : 0;
+
+    pixman_image_fill_rectangles(
+        PIXMAN_OP_SRC, pix, color,
+        1, &(pixman_rectangle16_t){
+            x, y + offset, cols * term->cell_width, thickness});
+}
+
+static void
 cursor_colors_for_cell(const struct terminal *term, const struct cell *cell,
                        const pixman_color_t *fg, const pixman_color_t *bg,
                        pixman_color_t *cursor_color, pixman_color_t *text_color,
@@ -1172,6 +1193,9 @@ render_cell(struct terminal *term, pixman_image_t *pix,
 
     if (cell->attrs.strikethrough)
         draw_strikeout(term, pix, font, &fg, x, y, cell_cols);
+
+    if (cell->attrs.overline)
+        draw_overline(term, pix, font, &fg, x, y, cell_cols);
 
     if (unlikely(cell->attrs.url)) {
         pixman_color_t url_color = color_hex_to_pixman(

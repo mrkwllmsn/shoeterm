@@ -273,6 +273,9 @@ struct config {
 
     struct pt_or_px strikeout_thickness;
 
+    struct pt_or_px overline_thickness;
+    struct pt_or_px overline_offset;
+
     bool box_drawings_uses_font_glyphs;
     bool can_shape_grapheme;
 

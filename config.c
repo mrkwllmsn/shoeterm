@@ -1078,6 +1078,12 @@ parse_section_main(struct context *ctx)
     else if (streq(key, "strikeout-thickness"))
         return value_to_pt_or_px(ctx, &conf->strikeout_thickness);
 
+    else if (streq(key, "overline-thickness"))
+        return value_to_pt_or_px(ctx, &conf->overline_thickness);
+
+    else if (streq(key, "overline-offset"))
+        return value_to_pt_or_px(ctx, &conf->overline_offset);
+
     else if (streq(key, "dpi-aware"))
         return value_to_bool(ctx, &conf->dpi_aware);
 
@@ -3476,6 +3482,8 @@ config_load(struct config *conf, const char *conf_path,
         .box_drawings_uses_font_glyphs = false,
         .underline_thickness = {.pt = 0., .px = -1},
         .strikeout_thickness = {.pt = 0., .px = -1},
+        .overline_thickness = {.pt = 0., .px = -1},
+        .overline_offset = {.pt = 0., .px = -1},
         .dpi_aware = false,
         .gamma_correct = false,
         .uppercase_regex_insert = true,

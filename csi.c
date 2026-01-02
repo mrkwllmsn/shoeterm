@@ -150,6 +150,9 @@ csi_sgr(struct terminal *term)
         case 28: term->vt.attrs.conceal = false; break;
         case 29: term->vt.attrs.strikethrough = false; break;
 
+        case 53: term->vt.attrs.overline = true; break;
+        case 55: term->vt.attrs.overline = false; break;
+
         /* Regular foreground colors */
         case 30:
         case 31:

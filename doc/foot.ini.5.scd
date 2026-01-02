@@ -198,6 +198,29 @@ empty string to be set, but it must be quoted: *KEY=""*)
 
 	Default: _unset_
 
+*overline-thickness*
+	Use a custom thickness (height) for overlines. The thickness is, by
+	default, in _points_.
+
+	To specify a thickness in _pixels_, append *px*:
+	*overline-thickness=1px*.
+
+	If left unset (the default), the font's underline thickness is used.
+
+	Default: _unset_
+
+*overline-offset*
+	Vertical offset of the overline from the top of the cell. The offset is,
+	by default, in _points_.
+
+	To specify an offset in _pixels_, append *px*:
+	*overline-offset=2px*.
+
+	If left unset (the default), the overline is drawn at the absolute top
+	of the cell (offset = 0).
+
+	Default: _unset_ (0)
+
 *gamma-correct-blending*
 	Boolean. When enabled, foot will do gamma-correct blending in
 	linear color space. This is how font glyphs are supposed to be

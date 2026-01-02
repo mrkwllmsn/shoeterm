@@ -57,8 +57,11 @@ struct attributes {
     bool selected:1;
     bool url:1;
     uint32_t bg:24;
+
+    bool overline:1;
+    uint32_t reserved:31;  /* Future attributes? */
 };
-static_assert(sizeof(struct attributes) == 8, "VT attribute struct too large");
+static_assert(sizeof(struct attributes) == 12, "VT attribute struct size mismatch");
 
 /* Last valid Unicode code point is 0x0010FFFFul */
 #define CELL_COMB_CHARS_LO          0x00200000ul
@@ -69,7 +72,7 @@ struct cell {
     char32_t wc;
     struct attributes attrs;
 };
-static_assert(sizeof(struct cell) == 12, "bad size");
+static_assert(sizeof(struct cell) == 16, "bad size");
 
 struct scroll_region {
     int start;
