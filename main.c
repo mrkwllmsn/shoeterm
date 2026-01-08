@@ -624,8 +624,16 @@ main(int argc, char *const *argv)
     if ((renderer = render_init(fdm, wayl)) == NULL)
         goto out;
 
+    char foot_exe_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", foot_exe_path, sizeof(foot_exe_path) - 1);
+    if (len == -1) {
+        fprintf(stderr, "error: /proc/self/exe: not exists\n");
+        return ret;
+    }
+    foot_exe_path[len] = '\0';
+
     if (!as_server && (term = term_init(
-                           &conf, fdm, reaper, wayl, "foot", cwd, token, pty_path,
+                           &conf, fdm, reaper, wayl, foot_exe_path, cwd, token, pty_path,
                            argc, argv, NULL,
                            &term_shutdown_cb, &shutdown_ctx)) == NULL) {
         goto out;
