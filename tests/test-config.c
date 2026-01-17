@@ -739,6 +739,9 @@ test_section_colors_dark(void)
     test_color(&ctx, &parse_section_colors_dark, "dim7", false, &conf.colors_dark.dim[7]);
     test_color(&ctx, &parse_section_colors_dark, "selection-foreground", false, &conf.colors_dark.selection_fg);
     test_color(&ctx, &parse_section_colors_dark, "selection-background", false, &conf.colors_dark.selection_bg);
+    test_color(&ctx, &parse_section_colors_dark, "bold", false, &conf.colors_dark.bold);
+    test_color(&ctx, &parse_section_colors_dark, "italic", false, &conf.colors_dark.italic);
+    test_color(&ctx, &parse_section_colors_dark, "underline", false, &conf.colors_dark.underline);
     test_color(&ctx, &parse_section_colors_dark, "urls", false, &conf.colors_dark.url);
     test_two_colors(&ctx, &parse_section_colors_dark, "jump-labels", false,
                     &conf.colors_dark.jump_label.fg,
@@ -820,6 +823,9 @@ test_section_colors_light(void)
     test_color(&ctx, &parse_section_colors_light, "dim7", false, &conf.colors_light.dim[7]);
     test_color(&ctx, &parse_section_colors_light, "selection-foreground", false, &conf.colors_light.selection_fg);
     test_color(&ctx, &parse_section_colors_light, "selection-background", false, &conf.colors_light.selection_bg);
+    test_color(&ctx, &parse_section_colors_light, "bold", false, &conf.colors_light.bold);
+    test_color(&ctx, &parse_section_colors_light, "italic", false, &conf.colors_light.italic);
+    test_color(&ctx, &parse_section_colors_light, "underline", false, &conf.colors_light.underline);
     test_color(&ctx, &parse_section_colors_light, "urls", false, &conf.colors_light.url);
     test_two_colors(&ctx, &parse_section_colors_light, "jump-labels", false,
                     &conf.colors_light.jump_label.fg,

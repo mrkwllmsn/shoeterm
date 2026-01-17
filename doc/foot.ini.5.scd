@@ -1128,6 +1128,21 @@ The default theme used is *colors-dark*, unless
 	Foreground (text) and background color to use in selected
 	text. Default: _inverse foreground/background_.
 
+*bold*
+	Specifies the color to use for bold characters when the foreground color is the default (undefined).
+	This setting applies primarily to legacy applications that utilize SGR 1 codes instead of SGR 9 codes.
+	If not set, the behavior defaults to the terminal's standard bold rendering. Default: unset.
+
+*italic*
+	Specifies the color to use for italic characters when the foreground color is the default (undefined).
+	This setting applies primarily to legacy applications that utilize SGR 1 codes instead of SGR 9 codes.
+	If not set, the behavior defaults to the terminal's standard italic rendering. Default: unset.
+
+*underline*
+	Specifies the color to use for underline characters when the foreground color is the default (undefined).
+	This setting applies primarily to legacy applications that utilize SGR 1 codes instead of SGR 9 codes.
+	If not set, the behavior defaults to the terminal's standard underline rendering. Default: unset.
+
 *jump-labels*
 	Two color values specifying the foreground (text) and background
 	colors to use when rendering jump labels in URL mode. Default:

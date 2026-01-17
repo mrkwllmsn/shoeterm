@@ -1464,6 +1464,9 @@ parse_color_theme(struct context *ctx, struct color_theme *theme)
     else if (streq(key, "flash")) color = &theme->flash;
     else if (streq(key, "foreground")) color = &theme->fg;
     else if (streq(key, "background")) color = &theme->bg;
+    else if (streq(key, "bold")) color = &theme->bold;
+    else if (streq(key, "italic")) color = &theme->italic;
+    else if (streq(key, "underline")) color = &theme->underline;
     else if (streq(key, "selection-foreground")) color = &theme->selection_fg;
     else if (streq(key, "selection-background")) color = &theme->selection_bg;
 
@@ -3540,6 +3543,9 @@ config_load(struct config *conf, const char *conf_path,
             .dim_blend_towards = DIM_BLEND_TOWARDS_BLACK,
             .selection_fg = 0x80000000,  /* Use default bg */
             .selection_bg = 0x80000000,  /* Use default fg */
+            .bold = 0x80000000, /* default: unset */
+            .italic = 0x80000000, /* default: unset */
+            .underline = 0x80000000, /* default: unset */
             .cursor = {
                 .text = 0,
                 .cursor = 0,

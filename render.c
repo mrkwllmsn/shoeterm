@@ -701,6 +701,7 @@ render_cell(struct terminal *term, pixman_image_t *pix,
 
     uint32_t _fg = 0;
     uint32_t _bg = 0;
+    bool allow_brighten = true;
 
     uint16_t alpha = 0xffff;
     const bool is_selected = cell->attrs.selected;
@@ -718,7 +719,20 @@ render_cell(struct terminal *term, pixman_image_t *pix,
         break;
 
     case COLOR_DEFAULT:
-        _fg = term->reverse ? term->colors.bg : term->colors.fg;
+        if (term->reverse) {
+            _fg = term->colors.bg;
+        } else if (unlikely(cell->attrs.bold && term->colors.bold >> 24 == 0)) {
+            _fg = term->colors.bold;
+            allow_brighten = false;
+        } else if (unlikely(cell->attrs.italic && term->colors.italic >> 24 == 0)) {
+            _fg = term->colors.italic;
+            allow_brighten = false;
+        } else if (unlikely(cell->attrs.underline && term->colors.underline >> 24 == 0)) {
+            _fg = term->colors.underline;
+            allow_brighten = false;
+        } else {
+            _fg = term->colors.fg;
+        }
         break;
     }
 
@@ -837,7 +851,7 @@ render_cell(struct terminal *term, pixman_image_t *pix,
 
     if (cell->attrs.dim)
         _fg = color_dim(term, _fg);
-    if (term->conf->bold_in_bright.enabled && cell->attrs.bold)
+    if (term->conf->bold_in_bright.enabled && cell->attrs.bold && allow_brighten)
         _fg = color_brighten(term, _fg);
 
     if (cell->attrs.blink && term->blink.state == BLINK_OFF)

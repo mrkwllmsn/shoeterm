@@ -404,6 +404,9 @@ struct colors {
     uint32_t cursor_bg;  /* cursor color */
     uint32_t selection_fg;
     uint32_t selection_bg;
+    uint32_t bold;
+    uint32_t italic;
+    uint32_t underline;
     enum which_color_theme active_theme;
 };
 

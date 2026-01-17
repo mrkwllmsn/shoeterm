@@ -141,6 +141,9 @@ struct color_theme {
     uint32_t selection_fg;
     uint32_t selection_bg;
     uint32_t url;
+    uint32_t bold;
+    uint32_t italic;
+    uint32_t underline;
 
     uint32_t dim[8];
     uint32_t sixel[16];
