@@ -524,48 +524,66 @@ draw_styled_underline(const struct terminal *term, pixman_image_t *pix,
     }
 
     case UNDERLINE_CURLY: {
-        const int top = y + y_ofs;
-        const int bot = top + thickness * 3;
-        const int half_x = x + ceil_w / 2.0, full_x = x + ceil_w;
+        if (term->conf->curly_pixelated) {
+            /* Pixelated curly: 4px blocks, 4px gaps, alternating rows */
+            const int y_top = y + underline_offset(term, font);
+            const int y_bot = y_top + thickness;
 
-        const double bt_2 = (bot - top) * (bot - top);
-        const double th_2 = thickness * thickness;
-        const double hx_2 = ceil_w * ceil_w / 4.0;
-        const int th = round(sqrt(th_2 + (th_2 * bt_2 / hx_2)) / 2.);
+            for (int bx = x; bx < x + ceil_w; bx += 8) {
+                int w1 = min(4, x + ceil_w - bx);
+                int w2 = min(4, x + ceil_w - bx - 4);
+                if (w1 > 0)
+                    pixman_image_fill_rectangles(PIXMAN_OP_SRC, pix, color, 1,
+                        &(pixman_rectangle16_t){bx, y_top, w1, thickness});
+                if (w2 > 0)
+                    pixman_image_fill_rectangles(PIXMAN_OP_SRC, pix, color, 1,
+                        &(pixman_rectangle16_t){bx + 4, y_bot, w2, thickness});
+            }
+        } else {
+            /* Smooth curly using trapezoids */
+            const int top = y + y_ofs;
+            const int bot = top + thickness * 3;
+            const int half_x = x + ceil_w / 2.0, full_x = x + ceil_w;
 
-        #define I(x) pixman_int_to_fixed(x)
-        const pixman_trapezoid_t traps[] = {
+            const double bt_2 = (bot - top) * (bot - top);
+            const double th_2 = thickness * thickness;
+            const double hx_2 = ceil_w * ceil_w / 4.0;
+            const int th = round(sqrt(th_2 + (th_2 * bt_2 / hx_2)) / 2.);
+
+            #define I(x) pixman_int_to_fixed(x)
+            const pixman_trapezoid_t traps[] = {
 #if 0  /* characters sit within the "dips" of the curlies */
-            {
-                I(top), I(bot),
-                {{I(x), I(top + th)}, {I(half_x), I(bot + th)}},
-                {{I(x), I(top - th)}, {I(half_x), I(bot - th)}},
-            },
-            {
-                I(top), I(bot),
-                {{I(half_x), I(bot - th)}, {I(full_x), I(top - th)}},
-                {{I(half_x), I(bot + th)}, {I(full_x), I(top + th)}},
-            }
+                {
+                    I(top), I(bot),
+                    {{I(x), I(top + th)}, {I(half_x), I(bot + th)}},
+                    {{I(x), I(top - th)}, {I(half_x), I(bot - th)}},
+                },
+                {
+                    I(top), I(bot),
+                    {{I(half_x), I(bot - th)}, {I(full_x), I(top - th)}},
+                    {{I(half_x), I(bot + th)}, {I(full_x), I(top + th)}},
+                }
 #else  /* characters sit on top of the curlies */
-            {
-                I(top), I(bot),
-                {{I(x), I(bot - th)}, {I(half_x), I(top - th)}},
-                {{I(x), I(bot + th)}, {I(half_x), I(top + th)}},
-            },
-            {
-                I(top), I(bot),
-                {{I(half_x), I(top + th)}, {I(full_x), I(bot + th)}},
-                {{I(half_x), I(top - th)}, {I(full_x), I(bot - th)}},
-            }
+                {
+                    I(top), I(bot),
+                    {{I(x), I(bot - th)}, {I(half_x), I(top - th)}},
+                    {{I(x), I(bot + th)}, {I(half_x), I(top + th)}},
+                },
+                {
+                    I(top), I(bot),
+                    {{I(half_x), I(top + th)}, {I(full_x), I(bot + th)}},
+                    {{I(half_x), I(top - th)}, {I(full_x), I(bot - th)}},
+                }
 #endif
-        };
+            };
 
-        pixman_image_t *fill = pixman_image_create_solid_fill(color);
-        pixman_composite_trapezoids(
-            PIXMAN_OP_OVER, fill, pix, PIXMAN_a8, 0, 0, 0, 0,
-            sizeof(traps) / sizeof(traps[0]), traps);
+            pixman_image_t *fill = pixman_image_create_solid_fill(color);
+            pixman_composite_trapezoids(
+                PIXMAN_OP_OVER, fill, pix, PIXMAN_a8, 0, 0, 0, 0,
+                sizeof(traps) / sizeof(traps[0]), traps);
 
-        pixman_image_unref(fill);
+            pixman_image_unref(fill);
+        }
         break;
     }
 
