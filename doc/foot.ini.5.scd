@@ -186,6 +186,12 @@ empty string to be set, but it must be quoted: *KEY=""*
 
 	Default: _unset_
 
+*curly-pixelated*
+	Render curly underlines as alternating 4px blocks instead of smooth
+	trapezoids. This style works better with bitmap/monospace fonts.
+
+	Default: _no_
+
 *strikeout-thickness*
 	Use a custom thickness (height) for strikeouts. The thickness is, by
 	default, in _points_.
