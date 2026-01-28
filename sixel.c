@@ -1559,6 +1559,9 @@ resize(struct terminal *term, int new_width_mutable, int new_height_mutable)
         new_height_mutable = term->sixel.max_height;
     }
 
+    if (unlikely(new_height_mutable == 0)) {
+        new_height_mutable = 6 * term->sixel.pan;
+    }
 
     uint32_t *old_data = term->sixel.image.data;
     const int old_width = term->sixel.image.width;

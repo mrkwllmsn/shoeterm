@@ -120,10 +120,14 @@ execute_binding(struct seat *seat, struct terminal *term,
 
     case BIND_ACTION_SCROLLBACK_UP_MOUSE:
         if (term->grid == &term->alt) {
-            if (term->alt_scrolling)
+            if (term->alt_scrolling) {
                 alternate_scroll(seat, amount, BTN_BACK);
-        } else
-                cmd_scrollback_up(term, amount);
+                return true;
+            }
+        } else {
+            cmd_scrollback_up(term, amount);
+            return true;
+        }
         break;
 
     case BIND_ACTION_SCROLLBACK_DOWN_PAGE:
@@ -149,10 +153,14 @@ execute_binding(struct seat *seat, struct terminal *term,
 
     case BIND_ACTION_SCROLLBACK_DOWN_MOUSE:
         if (term->grid == &term->alt) {
-            if (term->alt_scrolling)
+            if (term->alt_scrolling) {
                 alternate_scroll(seat, amount, BTN_FORWARD);
-        } else
+                return true;
+            }
+        } else {
             cmd_scrollback_down(term, amount);
+            return true;
+        }
         break;
 
     case BIND_ACTION_SCROLLBACK_HOME:
@@ -535,7 +543,7 @@ execute_binding(struct seat *seat, struct terminal *term,
     case BIND_ACTION_SELECT_QUOTE:
         selection_start(
             term, seat->mouse.col, seat->mouse.row, SELECTION_QUOTE_WISE, false);
-        break;
+        return true;
 
     case BIND_ACTION_SELECT_ROW:
         selection_start(
@@ -1597,6 +1605,9 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
     if (released)
         stop_repeater(seat, key);
 
+    if (pressed)
+        seat->kbd.last_shortcut_sym = XKB_KEYSYM_MAX + 1;
+
     bool should_repeat =
         pressed && xkb_keymap_key_repeats(seat->kbd.xkb_keymap, key);
 
@@ -1698,6 +1709,7 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
                 if (bind->k.sym == raw_syms[i] &&
                     execute_binding(seat, term, bind, serial, 1))
                 {
+                    seat->kbd.last_shortcut_sym = sym;
                     goto maybe_repeat;
                 }
             }
@@ -1711,6 +1723,7 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
                 bind->mods == (mods & ~consumed) &&
                 execute_binding(seat, term, bind, serial, 1))
             {
+                seat->kbd.last_shortcut_sym = sym;
                 goto maybe_repeat;
             }
         }
@@ -1726,10 +1739,29 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
                 if (code->item == key &&
                     execute_binding(seat, term, bind, serial, 1))
                 {
+                    seat->kbd.last_shortcut_sym = sym;
                     goto maybe_repeat;
                 }
             }
         }
+    }
+
+    if (released && seat->kbd.last_shortcut_sym == sym) {
+        /*
+         * Don't process a release event, if it corresponds to a
+         * triggered shortcut.
+         *
+         * 1. If we consumed a key (press) event, we shouldn't emit an
+         *    escape for its release event.
+         * 2. Ignoring the incorrectness of doing so; this also caused
+         *    us to reset the viewport.
+         *
+         * Background: if the kitty keyboard protocol was enabled,
+         * then the viewport was instantly reset to the bottom, after
+         * scrolling up.
+         */
+        //seat->kbd.last_shortcut_sym = XKB_KEYSYM_MAX + 1;
+        goto maybe_repeat;
     }
 
     /*
