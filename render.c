@@ -1228,6 +1228,21 @@ render_urgency(struct terminal *term, struct buffer *buf)
         });
 }
 
+static uint32_t
+cell_bg_color(const struct terminal *term, const struct cell *cell)
+{
+    switch (cell->attrs.bg_src) {
+    case COLOR_RGB:
+        return cell->attrs.bg;
+    case COLOR_BASE16:
+    case COLOR_BASE256:
+        return term->colors.table[cell->attrs.bg];
+    case COLOR_DEFAULT:
+    default:
+        return term->reverse ? term->colors.fg : term->colors.bg;
+    }
+}
+
 static void
 render_margin(struct terminal *term, struct buffer *buf,
               int start_line, int end_line, bool apply_damage)
@@ -1265,6 +1280,88 @@ render_margin(struct terminal *term, struct buffer *buf,
             {rmargin, term->margins.top + start_line * term->cell_height,
              term->margins.right, line_count * term->cell_height},
     });
+
+    /* Extend edge cell colors into margins if enabled */
+    if (term->conf->pad_extend) {
+        /* Left/right margins: extend each row's edge cell colors */
+        for (int r = 0; r < term->rows; r++) {
+            struct row *row = grid_row_in_view(term->grid, r);
+            if (row == NULL || row->cells == NULL)
+                continue;
+
+            int y_pos = term->margins.top + r * term->cell_height;
+
+            uint32_t left_bg = cell_bg_color(term, &row->cells[0]);
+            if (left_bg != _bg) {
+                pixman_color_t c = color_hex_to_pixman_with_alpha(left_bg, alpha, gamma_correct);
+                pixman_image_fill_rectangles(PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                    &(pixman_rectangle16_t){0, y_pos, term->margins.left, term->cell_height});
+            }
+
+            uint32_t right_bg = cell_bg_color(term, &row->cells[term->cols - 1]);
+            if (right_bg != _bg) {
+                pixman_color_t c = color_hex_to_pixman_with_alpha(right_bg, alpha, gamma_correct);
+                pixman_image_fill_rectangles(PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                    &(pixman_rectangle16_t){rmargin, y_pos, term->margins.right, term->cell_height});
+            }
+        }
+
+        /* Top/bottom margins: extend each column's edge cell colors */
+        struct row *top_row = grid_row_in_view(term->grid, 0);
+        struct row *bot_row = grid_row_in_view(term->grid, term->rows - 1);
+
+        for (int c = 0; c < term->cols; c++) {
+            int x_pos = term->margins.left + c * term->cell_width;
+
+            if (top_row != NULL && top_row->cells != NULL) {
+                uint32_t top_bg = cell_bg_color(term, &top_row->cells[c]);
+                if (top_bg != _bg) {
+                    pixman_color_t col = color_hex_to_pixman_with_alpha(top_bg, alpha, gamma_correct);
+                    pixman_image_fill_rectangles(PIXMAN_OP_SRC, buf->pix[0], &col, 1,
+                        &(pixman_rectangle16_t){x_pos, 0, term->cell_width, term->margins.top});
+                }
+            }
+
+            if (bot_row != NULL && bot_row->cells != NULL) {
+                uint32_t bot_bg = cell_bg_color(term, &bot_row->cells[c]);
+                if (bot_bg != _bg) {
+                    pixman_color_t col = color_hex_to_pixman_with_alpha(bot_bg, alpha, gamma_correct);
+                    pixman_image_fill_rectangles(PIXMAN_OP_SRC, buf->pix[0], &col, 1,
+                        &(pixman_rectangle16_t){x_pos, bmargin, term->cell_width, term->margins.bottom});
+                }
+            }
+        }
+
+        /* Fill corners with corner cell colors */
+        if (top_row != NULL && top_row->cells != NULL) {
+            uint32_t tl = cell_bg_color(term, &top_row->cells[0]);
+            uint32_t tr = cell_bg_color(term, &top_row->cells[term->cols - 1]);
+            if (tl != _bg) {
+                pixman_color_t c = color_hex_to_pixman_with_alpha(tl, alpha, gamma_correct);
+                pixman_image_fill_rectangles(PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                    &(pixman_rectangle16_t){0, 0, term->margins.left, term->margins.top});
+            }
+            if (tr != _bg) {
+                pixman_color_t c = color_hex_to_pixman_with_alpha(tr, alpha, gamma_correct);
+                pixman_image_fill_rectangles(PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                    &(pixman_rectangle16_t){rmargin, 0, term->margins.right, term->margins.top});
+            }
+        }
+        if (bot_row != NULL && bot_row->cells != NULL) {
+            uint32_t bl = cell_bg_color(term, &bot_row->cells[0]);
+            uint32_t br = cell_bg_color(term, &bot_row->cells[term->cols - 1]);
+            if (bl != _bg) {
+                pixman_color_t c = color_hex_to_pixman_with_alpha(bl, alpha, gamma_correct);
+                pixman_image_fill_rectangles(PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                    &(pixman_rectangle16_t){0, bmargin, term->margins.left, term->margins.bottom});
+            }
+            if (br != _bg) {
+                pixman_color_t c = color_hex_to_pixman_with_alpha(br, alpha, gamma_correct);
+                pixman_image_fill_rectangles(PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                    &(pixman_rectangle16_t){rmargin, bmargin, term->margins.right, term->margins.bottom});
+            }
+        }
+    }
 
     if (term->render.urgency)
         render_urgency(term, buf);
@@ -3599,6 +3696,10 @@ grid_render(struct terminal *term)
     }
 
     pixman_region32_fini(&damage);
+
+    /* Re-render margins to extend edge cell colors if enabled */
+    if (term->conf->pad_extend)
+        render_margin(term, buf, 0, term->rows, true);
 
     render_overlay(term);
     render_ime_preedit(term, buf);

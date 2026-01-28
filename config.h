@@ -234,6 +234,7 @@ struct config {
 
     unsigned pad_x;
     unsigned pad_y;
+    bool pad_extend;
     enum center_when center_when;
 
     bool resize_by_cells;
