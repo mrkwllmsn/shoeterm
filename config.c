@@ -994,6 +994,9 @@ parse_section_main(struct context *ctx)
         return true;
     }
 
+    else if (streq(key, "pad-extend"))
+        return value_to_bool(ctx, &conf->pad_extend);
+
     else if (streq(key, "resize-delay-ms"))
         return value_to_uint16(ctx, 10, &conf->resize_delay_ms);
 
@@ -3486,6 +3489,7 @@ config_load(struct config *conf, const char *conf_path,
         .pad_top = 0,
         .pad_right = 0,
         .pad_bottom = 0,
+        .pad_extend = false,
         .center_when = CENTER_MAXIMIZED_AND_FULLSCREEN,
         .resize_by_cells = true,
         .resize_keep_grid = true,

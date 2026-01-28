@@ -331,6 +331,13 @@ empty string to be set, but it must be quoted: *KEY=""*
 	
 	Default: _0x0_ center-when-maximized-and-fullscreen.
 
+*pad-extend*
+	Extend the background color of edge cells into the padding area.
+	Left/right margins use the adjacent edge cell colors, top/bottom
+	margins use the first/last row cell colors.
+
+	Default: _no_
+
 *resize-delay-ms*
 
 	Time, in milliseconds, of "idle time" before foot performs text
