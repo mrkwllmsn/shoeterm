@@ -524,6 +524,23 @@ draw_styled_underline(const struct terminal *term, pixman_image_t *pix,
     }
 
     case UNDERLINE_CURLY: {
+        if (term->conf->curly_pixelated) {
+            /* Pixelated curly: 4px blocks alternating rows */
+            const int y_top = y + underline_offset(term, font);
+            const int y_bot = y_top + thickness;
+            for (int bx = x; bx < x + ceil_w; bx += 8) {
+                int w1 = min(4, x + ceil_w - bx);
+                int w2 = min(4, x + ceil_w - bx - 4);
+                if (w1 > 0)
+                    pixman_image_fill_rectangles(PIXMAN_OP_SRC, pix, color, 1,
+                        &(pixman_rectangle16_t){bx, y_top, w1, thickness});
+                if (w2 > 0)
+                    pixman_image_fill_rectangles(PIXMAN_OP_SRC, pix, color, 1,
+                        &(pixman_rectangle16_t){bx + 4, y_bot, w2, thickness});
+            }
+            break;
+        }
+
         const int top = y + y_ofs;
         const int bot = top + thickness * 3;
         const int half_x = x + ceil_w / 2.0, full_x = x + ceil_w;
