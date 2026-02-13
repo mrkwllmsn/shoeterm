@@ -2860,6 +2860,18 @@ parse_section_tweak(struct context *ctx)
         return true;
     }
 
+    else if (streq(key, "ligatures")) {
+        if (!value_to_bool(ctx, &conf->tweak.ligatures))
+            return false;
+        if (conf->tweak.ligatures && !conf->can_shape_grapheme) {
+            LOG_WARN(
+                "fcft lacks grapheme shaping support; "
+                "ligatures disabled");
+            conf->tweak.ligatures = false;
+        }
+        return true;
+    }
+
     else if (streq(key, "grapheme-width-method")) {
         _Static_assert(sizeof(conf->tweak.grapheme_width_method) == sizeof(int),
                        "enum is not 32-bit");
@@ -3611,6 +3623,7 @@ config_load(struct config *conf, const char *conf_path,
 #if defined(FOOT_GRAPHEME_CLUSTERING) && FOOT_GRAPHEME_CLUSTERING
             .grapheme_shaping = fcft_caps & FCFT_CAPABILITY_GRAPHEME_SHAPING,
 #endif
+            .ligatures = false,
             .grapheme_width_method = GRAPHEME_WIDTH_DOUBLE,
             .delayed_render_lower_ns = 500000,         /* 0.5ms */
             .delayed_render_upper_ns = 16666666 / 2,   /* half a frame period (60Hz) */

@@ -1991,6 +1991,21 @@ any of these options.
 	
 	Default: _yes_
 
+*ligatures*
+	Boolean. When enabled, foot renders font ligatures —
+	multi-character sequences like ->, =>, !=, <= that
+	programming fonts (Fira Code, JetBrains Mono, Cascadia Code,
+	etc.) display as combined glyphs.
+
+	Ligatures are purely visual — copy/paste always preserves
+	the original individual characters.
+
+	Requires a font with ligature tables and fcft compiled with
+	HarfBuzz support. Has no visible effect with fonts that do
+	not define ligatures.
+
+	Default: _no_
+
 *grapheme-width-method*
 	Selects which method to use when calculating the width
 	(i.e. number of columns) of a grapheme cluster. One of

@@ -691,23 +691,12 @@ draw_cursor(const struct terminal *term, const struct cell *cell,
     }
 }
 
-static int
-render_cell(struct terminal *term, pixman_image_t *pix,
-            pixman_region32_t *damage, struct row *row, int row_no, int col,
-            bool has_cursor)
+static void
+resolve_colors(const struct terminal *term,
+               const struct cell *cell,
+               uint32_t *out_fg, uint32_t *out_bg,
+               uint16_t *out_alpha)
 {
-    struct cell *cell = &row->cells[col];
-    if (cell->attrs.clean)
-        return 0;
-
-    cell->attrs.clean = 1;
-    cell->attrs.confined = true;
-
-    int width = term->cell_width;
-    int height = term->cell_height;
-    const int x = term->margins.left + col * width;
-    const int y = term->margins.top + row_no * height;
-
     uint32_t _fg = 0;
     uint32_t _bg = 0;
 
@@ -851,6 +840,40 @@ render_cell(struct terminal *term, pixman_image_t *pix,
 
     if (cell->attrs.blink && term->blink.state == BLINK_OFF)
         _fg = color_blend_towards(_fg, 0x00000000, term->conf->dim.amount);
+
+    *out_fg = _fg;
+    *out_bg = _bg;
+    *out_alpha = alpha;
+}
+
+static inline bool
+is_pua_codepoint(char32_t wc)
+{
+    return (wc >= 0xE000   && wc <= 0xF8FF)   ||  /* BMP PUA */
+           (wc >= 0xF0000  && wc <= 0xFFFFF)  ||  /* Supplementary PUA-A */
+           (wc >= 0x100000 && wc <= 0x10FFFD);    /* Supplementary PUA-B */
+}
+
+static int
+render_cell(struct terminal *term, pixman_image_t *pix,
+            pixman_region32_t *damage, struct row *row, int row_no, int col,
+            bool has_cursor)
+{
+    struct cell *cell = &row->cells[col];
+    if (cell->attrs.clean)
+        return 0;
+
+    cell->attrs.clean = 1;
+    cell->attrs.confined = true;
+
+    int width = term->cell_width;
+    int height = term->cell_height;
+    const int x = term->margins.left + col * width;
+    const int y = term->margins.top + row_no * height;
+
+    uint32_t _fg, _bg;
+    uint16_t alpha;
+    resolve_colors(term, cell, &_fg, &_bg, &alpha);
 
     const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
     pixman_color_t fg = color_hex_to_pixman(_fg, gamma_correct);
@@ -1045,7 +1068,7 @@ render_cell(struct terminal *term, pixman_image_t *pix,
     }
 
     if (cell->wc == 0 || cell->wc >= CELL_SPACER || cell->wc == U'\t' ||
-        (unlikely(cell->attrs.conceal) && !is_selected))
+        (unlikely(cell->attrs.conceal) && !cell->attrs.selected))
     {
         goto draw_cursor;
     }
@@ -1199,7 +1222,533 @@ draw_cursor:
     }
 
     pixman_image_set_clip_region32(pix, NULL);
+    for (int i = 1; i < cell_cols; i++) {
+        row->cells[col + i].attrs.clean = 1;
+        row->cells[col + i].attrs.confined = true;
+    }
     return cell_cols;
+}
+
+static bool
+cell_eligible_for_ligature(const struct cell *cell,
+                           const struct cell *next)
+{
+    char32_t wc = cell->wc;
+    if (wc == 0 || wc == U' ' || wc == U'\t')
+        return false;
+    if (wc >= CELL_COMB_CHARS_LO)
+        return false;
+    /* Skip wide characters (next cell is a spacer) */
+    if (next != NULL && next->wc >= CELL_SPACER)
+        return false;
+    if ((wc >= GLYPH_BOX_DRAWING_FIRST &&
+         wc <= GLYPH_BOX_DRAWING_LAST) ||
+        (wc >= GLYPH_BRAILLE_FIRST &&
+         wc <= GLYPH_BRAILLE_LAST) ||
+        (wc >= GLYPH_LEGACY_FIRST &&
+         wc <= GLYPH_LEGACY_LAST) ||
+        (wc >= GLYPH_OCTANTS_FIRST &&
+         wc <= GLYPH_OCTANTS_LAST))
+    {
+        return false;
+    }
+    /* Private Use Areas — NerdFont icons, custom symbols */
+    if (is_pua_codepoint(wc))
+        return false;
+    return true;
+}
+
+static bool
+attrs_run_compatible(const struct attributes *a,
+                     const struct attributes *b)
+{
+    return a->bold == b->bold
+        && a->italic == b->italic
+        && a->fg_src == b->fg_src && a->fg == b->fg
+        && a->bg_src == b->bg_src && a->bg == b->bg
+        && a->reverse == b->reverse
+        && a->dim == b->dim
+        && a->blink == b->blink
+        && a->selected == b->selected
+        && a->conceal == b->conceal
+        && a->strikethrough == b->strikethrough
+        && a->underline == b->underline
+        && a->url == b->url;
+}
+
+static inline void
+composite_glyph(pixman_image_t *src_pix,
+                const struct fcft_glyph *glyph,
+                pixman_image_t *pix,
+                int dst_x, int dst_y, int x_origin,
+                bool blink_off)
+{
+    if (unlikely(glyph->is_color_glyph)) {
+        if (unlikely(blink_off))
+            return;
+        pixman_image_composite32(
+            PIXMAN_OP_OVER,
+            glyph->pix, NULL, pix,
+            0, 0, 0, 0,
+            dst_x, dst_y,
+            glyph->width, glyph->height);
+    } else {
+        pixman_image_composite32(
+            PIXMAN_OP_OVER,
+            src_pix, glyph->pix, pix,
+            dst_x - x_origin, 0, 0, 0,
+            dst_x, dst_y,
+            glyph->width, glyph->height);
+    }
+}
+
+static void
+render_ligature_run(struct terminal *term,
+                    pixman_image_t *pix,
+                    pixman_region32_t *damage,
+                    struct row *row, int row_no,
+                    int run_start, int run_len,
+                    int cursor_col)
+{
+    const int width = term->cell_width;
+    const int height = term->cell_height;
+    const int x = term->margins.left + run_start * width;
+    const int y = term->margins.top + row_no * height;
+    const int run_width = run_len * width;
+
+    struct cell *first_cell = &row->cells[run_start];
+
+    /* Resolve colors from the first cell (all cells
+     * in the run share the same visual attributes) */
+    uint32_t _fg, _bg;
+    uint16_t alpha;
+    resolve_colors(term, first_cell, &_fg, &_bg, &alpha);
+
+    const bool gamma_correct =
+        wayl_do_linear_blending(term->wl, term->conf);
+
+    struct fcft_font *font =
+        attrs_to_font(term, &first_cell->attrs);
+
+    const bool has_cursor =
+        cursor_col >= run_start &&
+        cursor_col < run_start + run_len;
+    const bool is_block_cursor =
+        has_cursor &&
+        term->cursor_style == CURSOR_BLOCK &&
+        term->kbd_focus;
+
+    /* Mark all cells clean */
+    for (int i = 0; i < run_len; i++) {
+        row->cells[run_start + i].attrs.clean = 1;
+        row->cells[run_start + i].attrs.confined = true;
+    }
+
+    /* Clip to run rectangle */
+    pixman_region32_t clip;
+    pixman_region32_init_rect(
+        &clip, x, y, run_width, height);
+    pixman_image_set_clip_region32(pix, &clip);
+
+    if (damage != NULL) {
+        pixman_region32_union_rect(
+            damage, damage, x, y, run_width, height);
+    }
+
+    pixman_region32_fini(&clip);
+
+    /* Background */
+    pixman_color_t bg =
+        color_hex_to_pixman_with_alpha(
+            _bg, alpha, gamma_correct);
+    pixman_image_fill_rectangles(
+        PIXMAN_OP_SRC, pix, &bg, 1,
+        &(pixman_rectangle16_t){
+            x, y, run_width, height});
+
+    /* Block cursor colors */
+    pixman_color_t cursor_color = {0};
+    pixman_color_t text_color = {0};
+    if (is_block_cursor) {
+        struct cell *cursor_cell =
+            &row->cells[cursor_col];
+        pixman_color_t fg_pix =
+            color_hex_to_pixman(_fg, gamma_correct);
+        const pixman_color_t bg_pix =
+            color_hex_to_pixman(_bg, gamma_correct);
+        cursor_colors_for_cell(
+            term, cursor_cell, &fg_pix, &bg_pix,
+            &cursor_color, &text_color, gamma_correct);
+
+        if (likely(
+                term->cursor_blink.state ==
+                CURSOR_BLINK_ON))
+        {
+            int cx = term->margins.left +
+                cursor_col * width;
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_SRC, pix, &cursor_color, 1,
+                &(pixman_rectangle16_t){
+                    cx, y, width, height});
+        }
+    }
+
+    /* Skip glyph rendering if concealed */
+    if (unlikely(first_cell->attrs.conceal) &&
+        !first_cell->attrs.selected)
+    {
+        goto cursor_overlay;
+    }
+
+    /* Blink handling */
+    const bool blink_off =
+        first_cell->attrs.blink &&
+        term->blink.state == BLINK_OFF;
+    if (first_cell->attrs.blink && term->blink.fd < 0) {
+        mtx_lock(&term->render.workers.lock);
+        term_arm_blink_timer(term);
+        mtx_unlock(&term->render.workers.lock);
+    }
+
+    {
+        pixman_color_t fg =
+            color_hex_to_pixman(_fg, gamma_correct);
+
+        const bool cursor_visible =
+            is_block_cursor &&
+            likely(term->cursor_blink.state ==
+                   CURSOR_BLINK_ON);
+
+        pixman_image_t *src_pix;
+        if (cursor_visible) {
+            /*
+             * Linear gradient with hard color stops:
+             * fg everywhere, text_color at cursor cell.
+             * No pixel buffer — just 4 stop parameters.
+             * PAD repeat clamps out-of-range coords to
+             * edge colors (avoids fixed-point rounding
+             * producing transparent pixels).
+             */
+            xassert(run_width > 0);
+            int cursor_px =
+                (cursor_col - run_start) * width;
+            pixman_fixed_t frac_start =
+                pixman_double_to_fixed(
+                    (double)cursor_px / run_width);
+            pixman_fixed_t frac_end =
+                pixman_double_to_fixed(
+                    (double)(cursor_px + width)
+                    / run_width);
+            pixman_gradient_stop_t stops[4] = {
+                { frac_start, fg },
+                { frac_start, text_color },
+                { frac_end, text_color },
+                { frac_end, fg },
+            };
+            pixman_point_fixed_t p1 = { 0, 0 };
+            pixman_point_fixed_t p2 = {
+                pixman_int_to_fixed(run_width), 0 };
+            src_pix =
+                pixman_image_create_linear_gradient(
+                    &p1, &p2, stops, 4);
+            pixman_image_set_repeat(
+                src_pix, PIXMAN_REPEAT_PAD);
+        } else {
+            src_pix =
+                pixman_image_create_solid_fill(&fg);
+        }
+
+        /* VLA; bounded by term->cols (typically ≤ 200) */
+        uint32_t codepoints[run_len];
+        for (int i = 0; i < run_len; i++)
+            codepoints[i] =
+                row->cells[run_start + i].wc;
+
+        int pen_x = x + term->font_x_ofs;
+
+        /*
+         * Shape the full run and get
+         * individually-cached glyphs.
+         */
+        const struct fcft_glyph *glyphs[run_len];
+        fcft_rasterize_shaped_run(
+            font, run_len, codepoints,
+            term->font_subpixel, glyphs);
+
+        for (int i = 0; i < run_len; i++) {
+            const struct fcft_glyph *gl =
+                glyphs[i];
+
+            if (gl != NULL) {
+                int dst_x = pen_x + gl->x;
+                int dst_y =
+                    y + term->font_baseline
+                    - gl->y;
+                composite_glyph(
+                    src_pix, gl, pix,
+                    dst_x, dst_y, x,
+                    blink_off);
+            }
+
+            pen_x = x + term->font_x_ofs
+                + (i + 1) * width;
+        }
+
+        pixman_image_unref(src_pix);
+
+    }
+
+    /* Per-cell decorations */
+    {
+        pixman_color_t fg =
+            color_hex_to_pixman(_fg, gamma_correct);
+
+        for (int i = 0; i < run_len; i++) {
+            const int col = run_start + i;
+            const struct cell *cell =
+                &row->cells[col];
+            const int cx =
+                term->margins.left + col * width;
+
+            if (cell->attrs.underline) {
+                pixman_color_t ul_color = fg;
+                enum underline_style ul_style =
+                    UNDERLINE_SINGLE;
+
+                if (row->extra != NULL) {
+                    for (int j = 0;
+                         j < row->extra->
+                             underline_ranges.count;
+                         j++)
+                    {
+                        const struct row_range *range =
+                            &row->extra->
+                                underline_ranges.v[j];
+
+                        if (range->start > col)
+                            break;
+
+                        if (range->start <= col &&
+                            col <= range->end)
+                        {
+                            switch (
+                                range->underline
+                                    .color_src)
+                            {
+                            case COLOR_BASE256:
+                                ul_color =
+                                    color_hex_to_pixman(
+                                        term->colors
+                                            .table[
+                                                range->
+                                                    underline
+                                                    .color],
+                                        gamma_correct);
+                                break;
+
+                            case COLOR_RGB:
+                                ul_color =
+                                    color_hex_to_pixman(
+                                        range->underline
+                                            .color,
+                                        gamma_correct);
+                                break;
+
+                            case COLOR_DEFAULT:
+                                break;
+
+                            case COLOR_BASE16:
+                                BUG("underline color "
+                                    "can't be base-16");
+                                break;
+                            }
+
+                            ul_style =
+                                range->underline.style;
+                            break;
+                        }
+                    }
+                }
+
+                draw_styled_underline(
+                    term, pix, font, &ul_color,
+                    ul_style, cx, y, 1);
+            }
+
+            if (cell->attrs.strikethrough) {
+                draw_strikeout(
+                    term, pix, font, &fg,
+                    cx, y, 1);
+            }
+
+            if (unlikely(cell->attrs.url &&
+                         term->conf->url.style !=
+                             UNDERLINE_NONE))
+            {
+                pixman_color_t url_color =
+                    color_hex_to_pixman(
+                        term->conf->colors_dark
+                                .use_custom.url
+                            ? term->conf->colors_dark
+                                  .url
+                            : term->colors.table[3],
+                        gamma_correct);
+                draw_styled_underline(
+                    term, pix, font, &url_color,
+                    term->conf->url.style,
+                    cx, y, 1);
+            }
+        }
+    }
+
+cursor_overlay:
+    /* Non-block cursors: draw overlay on top */
+    if (has_cursor &&
+        (term->cursor_style != CURSOR_BLOCK ||
+         !term->kbd_focus))
+    {
+        struct cell *cursor_cell =
+            &row->cells[cursor_col];
+        pixman_color_t fg_pix =
+            color_hex_to_pixman(_fg, gamma_correct);
+        const pixman_color_t bg_pix =
+            color_hex_to_pixman(_bg, gamma_correct);
+        int cx = term->margins.left +
+            cursor_col * width;
+        draw_cursor(
+            term, cursor_cell, font, pix,
+            &fg_pix, &bg_pix, cx, y, 1);
+    }
+
+    pixman_image_set_clip_region32(pix, NULL);
+}
+
+static void
+render_row_ligatures(struct terminal *term,
+                     pixman_image_t *pix,
+                     pixman_region32_t *damage,
+                     struct row *row, int row_no,
+                     int cursor_col)
+{
+    /*
+     * Dirty-propagate spacer cells: if a spacer (right
+     * half of a wide char) is dirty, the wide char cell
+     * must be re-rendered too — left-to-right rendering
+     * can't rely on overpainting like right-to-left does.
+     */
+    for (int c = 1; c < term->cols; c++) {
+        if (!row->cells[c].attrs.clean &&
+            row->cells[c].wc >= CELL_SPACER &&
+            row->cells[c - 1].attrs.clean)
+        {
+            row->cells[c - 1].attrs.clean = 0;
+        }
+    }
+
+    /*
+     * Dirty-propagate ligature breakage: if a dirty cell
+     * is adjacent to a clean, ligature-eligible cell, that
+     * neighbor must be re-rendered — its pixel area may
+     * still show a stale ligature glyph from the previous
+     * frame.  Dirtying one cell per neighboring run is
+     * enough: the run loop below re-renders the entire run
+     * when any member is dirty.
+     */
+    for (int c = 0; c < term->cols; c++) {
+        if (row->cells[c].attrs.clean)
+            continue;
+
+        if (c > 0
+            && row->cells[c - 1].attrs.clean
+            && cell_eligible_for_ligature(
+                   &row->cells[c - 1],
+                   &row->cells[c]))
+        {
+            row->cells[c - 1].attrs.clean = 0;
+        }
+
+        if (c + 1 < term->cols
+            && row->cells[c + 1].attrs.clean
+            && cell_eligible_for_ligature(
+                   &row->cells[c + 1],
+                   c + 2 < term->cols
+                       ? &row->cells[c + 2] : NULL))
+        {
+            row->cells[c + 1].attrs.clean = 0;
+            c++;  /* skip to prevent rightward cascade */
+        }
+    }
+
+    /*
+     * Ligature runs are identified and rendered left-to-right (pass 1).
+     * Individual cells — those ineligible for ligature shaping and
+     * single-cell runs — are collected and rendered right-to-left
+     * (pass 2), matching the non-ligature render_row path so that an
+     * overflowing glyph is composited last and not overwritten by the
+     * background fill of the following cell.
+     */
+
+    /* VLA bounded by term->cols; collect individual cell columns. */
+    int singles[term->cols];
+    int n_singles = 0;
+
+    int col = 0;
+    while (col < term->cols) {
+        struct cell *cell = &row->cells[col];
+
+        const struct cell *next =
+            col + 1 < term->cols
+            ? &row->cells[col + 1] : NULL;
+
+        if (!cell_eligible_for_ligature(cell, next)) {
+            singles[n_singles++] = col;
+            col++;
+            continue;
+        }
+
+        int run_start = col;
+        col++;
+
+        while (col < term->cols &&
+               cell_eligible_for_ligature(
+                   &row->cells[col],
+                   col + 1 < term->cols
+                   ? &row->cells[col + 1] : NULL) &&
+               attrs_run_compatible(
+                   &row->cells[run_start].attrs,
+                   &row->cells[col].attrs))
+        {
+            col++;
+        }
+
+        int run_len = col - run_start;
+        if (run_len == 1) {
+            singles[n_singles++] = run_start;
+        } else {
+            /* Check if any cell in the run is dirty */
+            bool any_dirty = false;
+            for (int i = 0; i < run_len; i++) {
+                if (!row->cells[run_start + i]
+                         .attrs.clean)
+                {
+                    any_dirty = true;
+                    break;
+                }
+            }
+
+            if (any_dirty) {
+                render_ligature_run(
+                    term, pix, damage, row,
+                    row_no, run_start, run_len,
+                    cursor_col);
+            }
+        }
+    }
+
+    /* Pass 2: individual cells, right-to-left */
+    for (int i = n_singles - 1; i >= 0; i--)
+        render_cell(term, pix, damage, row, row_no,
+                    singles[i], singles[i] == cursor_col);
 }
 
 static void
@@ -1207,8 +1756,14 @@ render_row(struct terminal *term, pixman_image_t *pix,
            pixman_region32_t *damage, struct row *row,
            int row_no, int cursor_col)
 {
-    for (int col = term->cols - 1; col >= 0; col--)
-        render_cell(term, pix, damage, row, row_no, col, cursor_col == col);
+    if (term->conf->tweak.ligatures) {
+        render_row_ligatures(
+            term, pix, damage, row,
+            row_no, cursor_col);
+    } else {
+        for (int col = term->cols - 1; col >= 0; col--)
+            render_cell(term, pix, damage, row, row_no, col, cursor_col == col);
+    }
 }
 
 static void
