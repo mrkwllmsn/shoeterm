@@ -445,7 +445,7 @@ draw_styled_underline(const struct terminal *term, pixman_image_t *pix,
     case UNDERLINE_DOUBLE:
     case UNDERLINE_CURLY:
         y_ofs = min(underline_offset(term, font),
-                    term->cell_height - thickness * 3);
+                    term->cell_height - thickness * term->conf->curly_underline_height_multiplier);
         break;
 
     case UNDERLINE_DASHED:
@@ -525,7 +525,7 @@ draw_styled_underline(const struct terminal *term, pixman_image_t *pix,
 
     case UNDERLINE_CURLY: {
         const int top = y + y_ofs;
-        const int bot = top + thickness * 3;
+        const int bot = top + thickness * term->conf->curly_underline_height_multiplier;
         const int half_x = x + ceil_w / 2.0, full_x = x + ceil_w;
 
         const double bt_2 = (bot - top) * (bot - top);

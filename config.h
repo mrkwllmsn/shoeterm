@@ -267,6 +267,7 @@ struct config {
     bool use_custom_underline_offset;
     struct pt_or_px underline_offset;
     struct pt_or_px underline_thickness;
+    float curly_underline_height_multiplier;
 
     struct pt_or_px strikeout_thickness;
 
