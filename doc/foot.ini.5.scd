@@ -186,6 +186,19 @@ empty string to be set, but it must be quoted: *KEY=""*)
 
 	Default: _unset_
 
+*curly-underline-height*
+	Height multiplier for curly underlines (undercurl). This is a unitless
+	multiplier applied to the underline thickness to determine the vertical
+	amplitude of the curly wave.
+
+	For example, a value of *3.0* means the curly underline will extend
+	3 times the underline thickness vertically. Higher values make taller
+	waves, lower values make flatter waves.
+
+	Valid range: *0.5* to *5.0*. Values outside this range will be clamped.
+
+	Default: *3.0*
+
 *strikeout-thickness*
 	Use a custom thickness (height) for strikeouts. The thickness is, by
 	default, in _points_.

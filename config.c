@@ -1075,6 +1075,21 @@ parse_section_main(struct context *ctx)
     else if (streq(key, "underline-thickness"))
         return value_to_pt_or_px(ctx, &conf->underline_thickness);
 
+    else if (streq(key, "curly-underline-height")) {
+        float value;
+        if (!value_to_float(ctx, &value))
+            return false;
+
+        if (value < 0.5 || value > 5.0) {
+            LOG_CONTEXTUAL_WARN(
+                "curly-underline-height should be between 0.5 and 5.0, clamping");
+            value = value < 0.5 ? 0.5 : 5.0;
+        }
+
+        conf->curly_underline_height_multiplier = value;
+        return true;
+    }
+
     else if (streq(key, "strikeout-thickness"))
         return value_to_pt_or_px(ctx, &conf->strikeout_thickness);
 
@@ -3481,6 +3496,7 @@ config_load(struct config *conf, const char *conf_path,
         .use_custom_underline_offset = false,
         .box_drawings_uses_font_glyphs = false,
         .underline_thickness = {.pt = 0., .px = -1},
+        .curly_underline_height_multiplier = 3.0,
         .strikeout_thickness = {.pt = 0., .px = -1},
         .overline_thickness = {.pt = 0., .px = -1},
         .overline_offset = {.pt = 0., .px = -1},
