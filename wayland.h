@@ -256,6 +256,7 @@ struct seat {
         } surrounding;
 
         uint32_t serial;
+        bool rearm_pending;
     } ime;
 #endif
 };

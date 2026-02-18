@@ -29,6 +29,7 @@
 #include "keymap.h"
 #include "kitty-keymap.h"
 #include "macros.h"
+#include "ime.h"
 #include "quirks.h"
 #include "render.h"
 #include "search.h"
@@ -717,6 +718,10 @@ keyboard_enter(void *data, struct wl_keyboard *wl_keyboard, uint32_t serial,
     term_kbd_focus_in(term);
     seat->kbd_focus = term;
     seat->kbd.serial = serial;
+
+#if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
+    seat->ime.rearm_pending = true;
+#endif
 }
 
 static bool
@@ -780,6 +785,11 @@ keyboard_leave(void *data, struct wl_keyboard *wl_keyboard, uint32_t serial,
         );
 
     struct terminal *old_focused = seat->kbd_focus;
+
+#if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
+    seat->ime.rearm_pending = false;
+#endif
+
     seat->kbd_focus = NULL;
 
     stop_repeater(seat, -1);
@@ -1860,6 +1870,8 @@ keyboard_modifiers(void *data, struct wl_keyboard *wl_keyboard, uint32_t serial,
                    uint32_t mods_locked, uint32_t group)
 {
     struct seat *seat = data;
+    (void)wl_keyboard;
+    (void)serial;
 
     mods_depressed &= ~seat->kbd.virtual_modifiers;
     mods_latched &= ~seat->kbd.virtual_modifiers;
@@ -1903,6 +1915,22 @@ keyboard_modifiers(void *data, struct wl_keyboard *wl_keyboard, uint32_t serial,
                 seat->kbd.xkb_state, seat->kbd.mod_super, XKB_STATE_MODS_EFFECTIVE)
             : false;
     }
+
+#if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
+    /*
+     * KWin can leave text-input in a non-committing state after focus switches.
+     * Rearm IME once on the first post-focus modifiers event.
+     */
+    if (seat->ime.rearm_pending &&
+        seat->kbd_focus != NULL &&
+        seat->ime_focus == seat->kbd_focus &&
+        seat->ime_focus->ime_enabled)
+    {
+        seat->ime.rearm_pending = false;
+        ime_disable(seat);
+        ime_enable(seat);
+    }
+#endif
 
     if (seat->kbd_focus && seat->kbd_focus->active_surface == TERM_SURF_GRID)
         term_xcursor_update_for_seat(seat->kbd_focus, seat);
