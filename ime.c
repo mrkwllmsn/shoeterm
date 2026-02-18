@@ -156,10 +156,16 @@ done(void *data, struct zwp_text_input_v3 *zwp_text_input_v3,
     struct seat *seat = data;
     struct terminal *term = seat->ime_focus;
 
-    if (seat->ime.serial != serial) {
+    const bool serial_matches = seat->ime.serial == serial;
+    if (!serial_matches) {
         LOG_DBG("IME serial mismatch: expected=0x%08x, got 0x%08x",
                 seat->ime.serial, serial);
-        return;
+
+        /*
+         * A serial mismatch is explicitly allowed by the protocol;
+         * we must still apply preedit/commit updates from this done()
+         * event.
+         */
     }
 
     if (term == NULL) {
