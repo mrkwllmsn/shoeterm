@@ -28,6 +28,7 @@
 #include "tokenize.h"
 #include "util.h"
 #include "xmalloc.h"
+#include "lab.h"
 #include "xsnprintf.h"
 
 static const uint32_t default_foreground = 0xffffff;
@@ -1156,6 +1157,9 @@ parse_section_main(struct context *ctx)
         return true;
     }
 
+    else if (streq(key, "generate-256-palette"))
+        return value_to_bool(ctx, &conf->generate_256_palette);
+
     else if (streq(key, "uppercase-regex-insert"))
         return value_to_bool(ctx, &conf->uppercase_regex_insert);
 
@@ -1410,6 +1414,7 @@ parse_color_theme(struct context *ctx, struct color_theme *theme)
     size_t key_len = strlen(key);
     uint8_t last_digit = (unsigned char)key[key_len - 1] - '0';
     uint32_t *color = NULL;
+    int table_index = -1;
 
     if (isdigit(key[0])) {
         unsigned long index;
@@ -1420,13 +1425,18 @@ parse_color_theme(struct context *ctx, struct color_theme *theme)
             return false;
         }
         color = &theme->table[index];
+        table_index = (int)index;
     }
 
-    else if (key_len == 8 && str_has_prefix(key, "regular") && last_digit < 8)
+    else if (key_len == 8 && str_has_prefix(key, "regular") && last_digit < 8) {
         color = &theme->table[last_digit];
+        table_index = last_digit;
+    }
 
-    else if (key_len == 7 && str_has_prefix(key, "bright") && last_digit < 8)
+    else if (key_len == 7 && str_has_prefix(key, "bright") && last_digit < 8) {
         color = &theme->table[8 + last_digit];
+        table_index = 8 + last_digit;
+    }
 
     else if (key_len == 4 && str_has_prefix(key, "dim") && last_digit < 8) {
         if (!value_to_color(ctx, &theme->dim[last_digit], false))
@@ -1586,6 +1596,10 @@ parse_color_theme(struct context *ctx, struct color_theme *theme)
         return false;
 
     *color = color_value;
+
+    if (table_index >= 0)
+        theme->table_mask[table_index / 32] |= 1u << (table_index % 32);
+
     return true;
 }
 
@@ -3432,6 +3446,75 @@ config_font_list_clone(struct config_font_list *dst,
     }
 }
 
+static bool
+table_mask_is_set(const uint32_t *mask, unsigned idx)
+{
+    return (mask[idx / 32] >> (idx % 32)) & 1;
+}
+
+static void
+generate_256_palette(uint32_t *table, const uint32_t *mask,
+                     uint32_t bg, uint32_t fg)
+{
+    /*
+     * Generate colors 16-255 by interpolating in CIELAB space.
+     *
+     * Corner mapping for trilinear interpolation:
+     *   bg         -> (r=0, g=0, b=0)
+     *   palette[1] -> (r=1, g=0, b=0)  red
+     *   palette[2] -> (r=0, g=1, b=0)  green
+     *   palette[3] -> (r=1, g=1, b=0)  yellow
+     *   palette[4] -> (r=0, g=0, b=1)  blue
+     *   palette[5] -> (r=1, g=0, b=1)  magenta
+     *   palette[6] -> (r=0, g=1, b=1)  cyan
+     *   fg         -> (r=1, g=1, b=1)
+     */
+    struct lab base8_lab[8];
+    for (int i = 0; i < 8; i++)
+        base8_lab[i] = lab_from_rgb(table[i]);
+
+    struct lab bg_lab = lab_from_rgb(bg);
+    struct lab fg_lab = lab_from_rgb(fg);
+
+    /* Colors 16-231: 6x6x6 color cube via trilinear interpolation */
+    unsigned idx = 16;
+    for (unsigned ri = 0; ri < 6; ri++) {
+        float tr = (float)ri / 5.0f;
+
+        /* Interpolate along R axis (4 edges) */
+        struct lab c0 = lab_lerp(tr, bg_lab, base8_lab[1]);
+        struct lab c1 = lab_lerp(tr, base8_lab[2], base8_lab[3]);
+        struct lab c2 = lab_lerp(tr, base8_lab[4], base8_lab[5]);
+        struct lab c3 = lab_lerp(tr, base8_lab[6], fg_lab);
+
+        for (unsigned gi = 0; gi < 6; gi++) {
+            float tg = (float)gi / 5.0f;
+
+            /* Interpolate along G axis (2 edges) */
+            struct lab c4 = lab_lerp(tg, c0, c1);
+            struct lab c5 = lab_lerp(tg, c2, c3);
+
+            for (unsigned bi = 0; bi < 6; bi++) {
+                if (!table_mask_is_set(mask, idx)) {
+                    /* Interpolate along B axis */
+                    struct lab c6 = lab_lerp((float)bi / 5.0f, c4, c5);
+                    table[idx] = lab_to_rgb(c6);
+                }
+                idx++;
+            }
+        }
+    }
+
+    /* Colors 232-255: grayscale ramp from bg to fg */
+    for (unsigned i = 0; i < 24; i++) {
+        if (!table_mask_is_set(mask, idx)) {
+            float t = (float)(i + 1) / 25.0f;
+            table[idx] = lab_to_rgb(lab_lerp(t, bg_lab, fg_lab));
+        }
+        idx++;
+    }
+}
+
 bool
 config_load(struct config *conf, const char *conf_path,
             user_notifications_t *initial_user_notifications,
@@ -3528,6 +3611,7 @@ config_load(struct config *conf, const char *conf_path,
             },
         },
         .initial_color_theme = COLOR_THEME_DARK,
+        .generate_256_palette = true,
         .cursor = {
             .style = CURSOR_BLOCK,
             .unfocused_style = CURSOR_UNFOCUSED_HOLLOW,
@@ -3714,6 +3798,15 @@ config_load(struct config *conf, const char *conf_path,
 
     if (!config_override_apply(conf, overrides, errors_are_fatal))
         ret = !errors_are_fatal;
+
+    if (conf->generate_256_palette) {
+        generate_256_palette(
+            conf->colors_dark.table, conf->colors_dark.table_mask,
+            conf->colors_dark.bg, conf->colors_dark.fg);
+        generate_256_palette(
+            conf->colors_light.table, conf->colors_light.table_mask,
+            conf->colors_light.bg, conf->colors_light.fg);
+    }
 
     if (ret && conf->fonts[0].count == 0) {
         struct config_font font;

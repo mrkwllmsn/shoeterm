@@ -137,6 +137,7 @@ struct color_theme {
     uint32_t flash;
     uint32_t flash_alpha;
     uint32_t table[256];
+    uint32_t table_mask[8]; /* 256-bit mask tracking user-set palette entries */
     uint16_t alpha;
     uint32_t selection_fg;
     uint32_t selection_bg;
@@ -332,6 +333,7 @@ struct config {
     struct color_theme colors_dark;
     struct color_theme colors_light;
     enum which_color_theme initial_color_theme;
+    bool generate_256_palette;
 
     struct {
         enum cursor_style style;

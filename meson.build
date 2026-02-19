@@ -250,6 +250,7 @@ common = static_library(
 misc = static_library(
   'misc',
   'hsl.c', 'hsl.h',
+  'lab.c', 'lab.h',
   'macros.h',
   'misc.c', 'misc.h',
   'uri.c', 'uri.h',
