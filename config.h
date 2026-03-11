@@ -333,7 +333,8 @@ struct config {
     struct color_theme colors_dark;
     struct color_theme colors_light;
     enum which_color_theme initial_color_theme;
-    bool generate_256_palette;
+    bool palette_generate;
+    bool palette_harmonious;
 
     struct {
         enum cursor_style style;

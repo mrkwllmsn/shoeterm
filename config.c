@@ -1157,8 +1157,11 @@ parse_section_main(struct context *ctx)
         return true;
     }
 
-    else if (streq(key, "generate-256-palette"))
-        return value_to_bool(ctx, &conf->generate_256_palette);
+    else if (streq(key, "palette-generate"))
+        return value_to_bool(ctx, &conf->palette_generate);
+
+    else if (streq(key, "palette-harmonious"))
+        return value_to_bool(ctx, &conf->palette_harmonious);
 
     else if (streq(key, "uppercase-regex-insert"))
         return value_to_bool(ctx, &conf->uppercase_regex_insert);
@@ -3453,28 +3456,33 @@ table_mask_is_set(const uint32_t *mask, unsigned idx)
 }
 
 static void
-generate_256_palette(uint32_t *table, const uint32_t *mask,
-                     uint32_t bg, uint32_t fg)
+generate_palette(uint32_t *table, const uint32_t *mask,
+                        uint32_t bg, uint32_t fg, bool harmonious)
 {
     /*
      * Generate colors 16-255 by interpolating in CIELAB space.
      *
      * Corner mapping for trilinear interpolation:
-     *   bg         -> (r=0, g=0, b=0)
+     *   corner0    -> (r=0, g=0, b=0)
      *   palette[1] -> (r=1, g=0, b=0)  red
      *   palette[2] -> (r=0, g=1, b=0)  green
      *   palette[3] -> (r=1, g=1, b=0)  yellow
      *   palette[4] -> (r=0, g=0, b=1)  blue
      *   palette[5] -> (r=1, g=0, b=1)  magenta
      *   palette[6] -> (r=0, g=1, b=1)  cyan
-     *   fg         -> (r=1, g=1, b=1)
+     *   corner7    -> (r=1, g=1, b=1)
      */
-    struct lab base8_lab[8];
-    for (int i = 0; i < 8; i++)
-        base8_lab[i] = lab_from_rgb(table[i]);
-
     struct lab bg_lab = lab_from_rgb(bg);
     struct lab fg_lab = lab_from_rgb(fg);
+
+    bool is_light_theme = fg_lab.l < bg_lab.l;
+    bool invert = is_light_theme && !harmonious;
+
+    struct lab base8_lab[8];
+    base8_lab[0] = invert ? fg_lab : bg_lab;
+    for (int i = 1; i < 7; i++)
+        base8_lab[i] = lab_from_rgb(table[i]);
+    base8_lab[7] = invert ? bg_lab : fg_lab;
 
     /* Colors 16-231: 6x6x6 color cube via trilinear interpolation */
     unsigned idx = 16;
@@ -3482,10 +3490,10 @@ generate_256_palette(uint32_t *table, const uint32_t *mask,
         float tr = (float)ri / 5.0f;
 
         /* Interpolate along R axis (4 edges) */
-        struct lab c0 = lab_lerp(tr, bg_lab, base8_lab[1]);
+        struct lab c0 = lab_lerp(tr, base8_lab[0], base8_lab[1]);
         struct lab c1 = lab_lerp(tr, base8_lab[2], base8_lab[3]);
         struct lab c2 = lab_lerp(tr, base8_lab[4], base8_lab[5]);
-        struct lab c3 = lab_lerp(tr, base8_lab[6], fg_lab);
+        struct lab c3 = lab_lerp(tr, base8_lab[6], base8_lab[7]);
 
         for (unsigned gi = 0; gi < 6; gi++) {
             float tg = (float)gi / 5.0f;
@@ -3505,11 +3513,11 @@ generate_256_palette(uint32_t *table, const uint32_t *mask,
         }
     }
 
-    /* Colors 232-255: grayscale ramp from bg to fg */
+    /* Colors 232-255: grayscale ramp */
     for (unsigned i = 0; i < 24; i++) {
         if (!table_mask_is_set(mask, idx)) {
             float t = (float)(i + 1) / 25.0f;
-            table[idx] = lab_to_rgb(lab_lerp(t, bg_lab, fg_lab));
+            table[idx] = lab_to_rgb(lab_lerp(t, base8_lab[0], base8_lab[7]));
         }
         idx++;
     }
@@ -3611,7 +3619,8 @@ config_load(struct config *conf, const char *conf_path,
             },
         },
         .initial_color_theme = COLOR_THEME_DARK,
-        .generate_256_palette = true,
+        .palette_generate = false,
+        .palette_harmonious = false,
         .cursor = {
             .style = CURSOR_BLOCK,
             .unfocused_style = CURSOR_UNFOCUSED_HOLLOW,
@@ -3799,13 +3808,15 @@ config_load(struct config *conf, const char *conf_path,
     if (!config_override_apply(conf, overrides, errors_are_fatal))
         ret = !errors_are_fatal;
 
-    if (conf->generate_256_palette) {
-        generate_256_palette(
+    if (conf->palette_generate) {
+        generate_palette(
             conf->colors_dark.table, conf->colors_dark.table_mask,
-            conf->colors_dark.bg, conf->colors_dark.fg);
-        generate_256_palette(
+            conf->colors_dark.bg, conf->colors_dark.fg,
+            conf->palette_harmonious);
+        generate_palette(
             conf->colors_light.table, conf->colors_light.table_mask,
-            conf->colors_light.bg, conf->colors_light.fg);
+            conf->colors_light.bg, conf->colors_light.fg,
+            conf->palette_harmonious);
     }
 
     if (ret && conf->fonts[0].count == 0) {
