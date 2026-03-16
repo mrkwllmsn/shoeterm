@@ -1,6 +1,8 @@
 # Changelog
 
 * [Unreleased](#unreleased)
+* [1.26.1](#1-26-1)
+* [1.26.0](#1-26-0)
 * [1.25.0](#1-25-0)
 * [1.24.0](#1-24-0)
 * [1.23.1](#1-23-1)
@@ -69,6 +71,36 @@
 
 ## Unreleased
 ### Added
+### Changed
+### Deprecated
+### Removed
+### Fixed
+### Security
+### Contributors
+
+
+## 1.26.1
+
+### Fixed
+
+* Wrong documented default value for `initial-color-theme` in
+  `foot.ini(5)` ([#2292][2292]).
+* Occasional crashes when closing a window and
+  `tweak.pre-apply-damage=yes` (the default) ([#2288][2288]).
+
+[2292]: https://codeberg.org/dnkl/foot/issues/2292
+[2288]: https://codeberg.org/dnkl/foot/issues/2288
+
+
+### Contributors
+
+* Roshless
+* vlkrs
+
+
+## 1.26.0
+
+### Added
 
 * `toplevel-tag` option (and `--toplevel-tag` command line options to
   `foot` and `footclient`), allowing you to set a custom toplevel
@@ -78,9 +110,20 @@
 * `[colors-light]` section to `foot.ini`. Replaces `[colors2]`.
 * `XTGETTCAP`: added `query-os-name`, returning the OS foot is
   compiled for (e.g. _'Linux'_) ([#2209][2209]).
+* `pad` option now supports 4-directional padding format:
+  `LEFTxTOPxRIGHTxBOTTOM` (e.g., `20x10x20x10`).
+* `--config=PATH` option is now automatically passed to new
+  terminals spawned via `spawn-terminal` action ([#2259][2259]).
+* Preliminary (untested) support for background blur via the new
+  `ext-background-effect-v1` protocol. Enable by setting
+  `colors-{dark,light}.blur=yes`. Foot needs to have been **built**
+  against `wayland-protocols >= 1.45`, and the compositor **must**
+  implement the `ext-background-effect-v1` protocol, **and** the
+  `blur` effect.
 
 [2212]: https://codeberg.org/dnkl/foot/issues/2212
 [2209]: https://codeberg.org/dnkl/foot/issues/2209
+[2259]: https://codeberg.org/dnkl/foot/pulls/2259
 
 
 ### Changed
@@ -135,8 +178,19 @@
 [2263]: https://codeberg.org/dnkl/foot/issues/2263
 
 
-### Security
 ### Contributors
+
+* Andrei
+* Barinderpreet Singh
+* c4llv07e
+* Johannes Altmanninger
+* nariby
+* pi66
+* Ronan Pigott
+* Stéphane Klein
+* valoq
+* Whyme Lyu
+* Yaakov Selkowitz
 
 
 ## 1.25.0

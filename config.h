@@ -193,6 +193,8 @@ struct color_theme {
         bool search_box_match:1;
         uint8_t dim;
     } use_custom;
+
+    bool blur;
 };
 
 enum which_color_theme {
@@ -218,6 +220,7 @@ enum center_when {
 };
 
 struct config {
+    char *conf_path;
     char *term;
     char *shell;
     char *title;
@@ -233,8 +236,10 @@ struct config {
         uint32_t height;
     } size;
 
-    unsigned pad_x;
-    unsigned pad_y;
+    unsigned pad_left;
+    unsigned pad_top;
+    unsigned pad_right;
+    unsigned pad_bottom;
     enum center_when center_when;
 
     bool resize_by_cells;

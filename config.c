@@ -946,13 +946,12 @@ parse_section_main(struct context *ctx)
     }
 
     else if (streq(key, "pad")) {
-        unsigned x, y;
+        unsigned x, y, left, top, right, bottom;
         char mode[64] = {0};
-        int ret = sscanf(value, "%ux%u %63s", &x, &y, mode);
-
+        int ret = sscanf(value, "%ux%ux%ux%u %63s", &left, &top, &right, &bottom, mode);
         enum center_when center = CENTER_NEVER;
 
-        if (ret == 3) {
+        if (ret == 5) {
             if (strcasecmp(mode, "center") == 0)
                 center = CENTER_ALWAYS;
             else if (strcasecmp(mode, "center-when-fullscreen") == 0)
@@ -961,20 +960,38 @@ parse_section_main(struct context *ctx)
                 center = CENTER_MAXIMIZED_AND_FULLSCREEN;
             else
                 center = CENTER_INVALID;
+        } else if (ret < 4) {
+            ret = sscanf(value, "%ux%u %63s", &x, &y, mode);
+            if (ret >= 2) {
+                left = right = x;
+                top = bottom = y;
+                if (ret == 3) {
+                    if (strcasecmp(mode, "center") == 0)
+                        center = CENTER_ALWAYS;
+                    else if (strcasecmp(mode, "center-when-fullscreen") == 0)
+                        center = CENTER_FULLSCREEN;
+                    else if (strcasecmp(mode, "center-when-maximized-and-fullscreen") == 0)
+                        center = CENTER_MAXIMIZED_AND_FULLSCREEN;
+                    else
+                        center = CENTER_INVALID;
+                }
+            }
         }
 
-        if ((ret != 2 && ret != 3) || center == CENTER_INVALID) {
+        if ((ret < 2 || ret > 5) || center == CENTER_INVALID) {
             LOG_CONTEXTUAL_ERR(
-                "invalid padding (must be in the form PAD_XxPAD_Y "
+                "invalid padding (must be in the form RIGHTxTOPxLEFTxBOTTOM or XxY "
                 "[center|"
                 "center-when-fullscreen|"
                 "center-when-maximized-and-fullscreen])");
             return false;
         }
 
-        conf->pad_x = x;
-        conf->pad_y = y;
-        conf->center_when = ret == 2 ? CENTER_NEVER : center;
+        conf->pad_left   = left;
+        conf->pad_top    = top;
+        conf->pad_right  = right;
+        conf->pad_bottom = bottom;
+        conf->center_when = (ret == 4 || ret == 2) ? CENTER_NEVER : center;
         return true;
     }
 
@@ -1588,6 +1605,9 @@ parse_color_theme(struct context *ctx, struct color_theme *theme)
             (const char *[]){"black", "white", NULL},
             (int *)&theme->dim_blend_towards);
     }
+
+    else if (streq(key, "blur"))
+        return value_to_bool(ctx, &theme->blur);
 
     else {
         LOG_CONTEXTUAL_ERR("not valid option");
@@ -3533,6 +3553,7 @@ config_load(struct config *conf, const char *conf_path,
     enum fcft_capabilities fcft_caps = fcft_capabilities();
 
     *conf = (struct config) {
+        .conf_path = (conf_path ? xstrdup(conf_path) : NULL),
         .term = xstrdup(FOOT_DEFAULT_TERM),
         .shell = get_shell(),
         .title = xstrdup("foot"),
@@ -3544,8 +3565,10 @@ config_load(struct config *conf, const char *conf_path,
             .width = 700,
             .height = 500,
         },
-        .pad_x = 0,
-        .pad_y = 0,
+        .pad_left = 0,
+        .pad_top = 0,
+        .pad_right = 0,
+        .pad_bottom = 0,
         .center_when = CENTER_MAXIMIZED_AND_FULLSCREEN,
         .resize_by_cells = true,
         .resize_keep_grid = true,
@@ -3617,6 +3640,7 @@ config_load(struct config *conf, const char *conf_path,
                 .scrollback_indicator = false,
                 .url = false,
             },
+            .blur = false,
         },
         .initial_color_theme = COLOR_THEME_DARK,
         .palette_generate = false,
@@ -3999,6 +4023,7 @@ config_clone(const struct config *old)
     struct config *conf = xmalloc(sizeof(*conf));
     *conf = *old;
 
+    conf->conf_path = (old->conf_path ? xstrdup(old->conf_path) : NULL);
     conf->term = xstrdup(old->term);
     conf->shell = xstrdup(old->shell);
     conf->title = xstrdup(old->title);
@@ -4099,6 +4124,7 @@ UNITTEST
 void
 config_free(struct config *conf)
 {
+    free(conf->conf_path);
     free(conf->term);
     free(conf->shell);
     free(conf->title);
