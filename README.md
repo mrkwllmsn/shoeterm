@@ -702,3 +702,5 @@ Every now and then I post foot related updates on
 # License
 
 Foot is released under the [MIT license](LICENSE).
+
+Documentation improved by ilker1 for Exercise 2.
