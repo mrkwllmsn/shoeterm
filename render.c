@@ -682,6 +682,76 @@ draw_cursor(const struct terminal *term, const struct cell *cell,
     }
 }
 
+static void
+cell_effective_bg(const struct terminal *term, const struct cell *cell,
+                  uint32_t *out_bg, uint16_t *out_alpha)
+{
+    uint32_t _fg;
+    uint32_t _bg;
+    uint16_t alpha = 0xffff;
+
+    switch (cell->attrs.fg_src) {
+    case COLOR_RGB:    _fg = cell->attrs.fg; break;
+    case COLOR_BASE16:
+    case COLOR_BASE256: _fg = term->colors.table[cell->attrs.fg]; break;
+    case COLOR_DEFAULT: _fg = term->reverse ? term->colors.bg : term->colors.fg; break;
+    }
+
+    switch (cell->attrs.bg_src) {
+    case COLOR_RGB:    _bg = cell->attrs.bg; break;
+    case COLOR_BASE16:
+    case COLOR_BASE256: _bg = term->colors.table[cell->attrs.bg]; break;
+    case COLOR_DEFAULT: _bg = term->reverse ? term->colors.fg : term->colors.bg; break;
+    }
+
+    if (unlikely(cell->attrs.selected)) {
+        const uint32_t cell_fg = _fg;
+        const uint32_t cell_bg = _bg;
+
+        const bool custom_fg = term->colors.selection_fg >> 24 == 0;
+        const bool custom_bg = term->colors.selection_bg >> 24 == 0;
+        const bool custom_both = custom_fg && custom_bg;
+
+        if (custom_both) {
+            _bg = term->colors.selection_bg;
+        } else if (custom_bg) {
+            _bg = term->colors.selection_bg;
+        } else if (custom_fg) {
+            _bg = cell->attrs.reverse ? cell_fg : cell_bg;
+        } else {
+            _bg = cell_fg;
+        }
+    } else {
+        if (unlikely(cell->attrs.reverse)) {
+            _bg = _fg;
+        } else if (!term->window->is_fullscreen && term->colors.alpha != 0xffff) {
+            switch (term->conf->colors_dark.alpha_mode) {
+            case ALPHA_MODE_DEFAULT:
+                if (cell->attrs.bg_src == COLOR_DEFAULT)
+                    alpha = term->colors.alpha;
+                break;
+            case ALPHA_MODE_MATCHING:
+                if (cell->attrs.bg_src == COLOR_DEFAULT ||
+                    ((cell->attrs.bg_src == COLOR_BASE16 ||
+                      cell->attrs.bg_src == COLOR_BASE256) &&
+                     term->colors.table[cell->attrs.bg] == term->colors.bg) ||
+                    (cell->attrs.bg_src == COLOR_RGB &&
+                     cell->attrs.bg == term->colors.bg))
+                {
+                    alpha = term->colors.alpha;
+                }
+                break;
+            case ALPHA_MODE_ALL:
+                alpha = term->colors.alpha;
+                break;
+            }
+        }
+    }
+
+    *out_bg = _bg;
+    *out_alpha = alpha;
+}
+
 static int
 render_cell(struct terminal *term, pixman_image_t *pix,
             pixman_region32_t *damage, struct row *row, int row_no, int col,
@@ -1303,6 +1373,149 @@ render_margin(struct terminal *term, struct buffer *buf,
 }
 
 static void
+render_margin_bleed(struct terminal *term, struct buffer *buf,
+                    int start_line, int end_line, bool apply_damage)
+{
+    LOG_WARN("render_margin_bleed: start_line=%d, end_line=%d, apply_damage=%d",
+             start_line, end_line, apply_damage);
+
+    const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
+    struct grid *grid = term->grid;
+    const int width = term->cell_width;
+    const int height = term->cell_height;
+    const int rmargin = term->width - term->margins.right;
+    const int bmargin = term->height - term->margins.bottom;
+    const int line_count = end_line - start_line;
+
+    /* Left and right margin strips (per row) */
+    for (int r = start_line; r < end_line; r++) {
+        struct row *row = grid_row_in_view(grid, r);
+        int y = term->margins.top + r * height;
+
+        if (term->margins.left > 0) {
+            const struct cell *cell = &row->cells[0];
+            uint32_t bg; uint16_t alpha;
+            cell_effective_bg(term, cell, &bg, &alpha);
+            pixman_color_t c = color_hex_to_pixman_with_alpha(bg, alpha, gamma_correct);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                &(pixman_rectangle16_t){0, y, term->margins.left, height});
+        }
+
+        if (term->margins.right > 0) {
+            const struct cell *cell = &row->cells[term->cols - 1];
+            uint32_t bg; uint16_t alpha;
+            cell_effective_bg(term, cell, &bg, &alpha);
+            pixman_color_t c = color_hex_to_pixman_with_alpha(bg, alpha, gamma_correct);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                &(pixman_rectangle16_t){rmargin, y, term->margins.right, height});
+        }
+    }
+
+    /* Top margin (per column + corners) */
+    if (term->margins.top > 0) {
+        struct row *row0 = grid_row_in_view(grid, 0);
+
+        /* Top-left corner */
+        if (term->margins.left > 0) {
+            uint32_t bg; uint16_t alpha;
+            cell_effective_bg(term, &row0->cells[0], &bg, &alpha);
+            pixman_color_t c = color_hex_to_pixman_with_alpha(bg, alpha, gamma_correct);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                &(pixman_rectangle16_t){0, 0, term->margins.left, term->margins.top});
+        }
+
+        for (int col = 0; col < term->cols; col++) {
+            const struct cell *cell = &row0->cells[col];
+            uint32_t bg; uint16_t alpha;
+            cell_effective_bg(term, cell, &bg, &alpha);
+            pixman_color_t c = color_hex_to_pixman_with_alpha(bg, alpha, gamma_correct);
+            int x = term->margins.left + col * width;
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                &(pixman_rectangle16_t){x, 0, width, term->margins.top});
+        }
+
+        /* Top-right corner */
+        if (term->margins.right > 0) {
+            uint32_t bg; uint16_t alpha;
+            cell_effective_bg(term, &row0->cells[term->cols - 1], &bg, &alpha);
+            pixman_color_t c = color_hex_to_pixman_with_alpha(bg, alpha, gamma_correct);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                &(pixman_rectangle16_t){rmargin, 0, term->margins.right, term->margins.top});
+        }
+    }
+
+    /* Bottom margin (per column + corners) */
+    if (term->margins.bottom > 0) {
+        struct row *rowN = grid_row_in_view(grid, term->rows - 1);
+
+        /* Bottom-left corner */
+        if (term->margins.left > 0) {
+            uint32_t bg; uint16_t alpha;
+            cell_effective_bg(term, &rowN->cells[0], &bg, &alpha);
+            pixman_color_t c = color_hex_to_pixman_with_alpha(bg, alpha, gamma_correct);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                &(pixman_rectangle16_t){0, bmargin, term->margins.left, term->margins.bottom});
+        }
+
+        for (int col = 0; col < term->cols; col++) {
+            const struct cell *cell = &rowN->cells[col];
+            uint32_t bg; uint16_t alpha;
+            cell_effective_bg(term, cell, &bg, &alpha);
+            pixman_color_t c = color_hex_to_pixman_with_alpha(bg, alpha, gamma_correct);
+            int x = term->margins.left + col * width;
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                &(pixman_rectangle16_t){x, bmargin, width, term->margins.bottom});
+        }
+
+        /* Bottom-right corner */
+        if (term->margins.right > 0) {
+            uint32_t bg; uint16_t alpha;
+            cell_effective_bg(term, &rowN->cells[term->cols - 1], &bg, &alpha);
+            pixman_color_t c = color_hex_to_pixman_with_alpha(bg, alpha, gamma_correct);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_SRC, buf->pix[0], &c, 1,
+                &(pixman_rectangle16_t){rmargin, bmargin, term->margins.right, term->margins.bottom});
+        }
+    }
+
+    if (term->render.urgency)
+        render_urgency(term, buf);
+
+    /* Dirty tracking */
+    pixman_region32_union_rect(
+        &buf->dirty[0], &buf->dirty[0], 0, 0, term->width, term->margins.top);
+    pixman_region32_union_rect(
+        &buf->dirty[0], &buf->dirty[0], 0, bmargin, term->width, term->margins.bottom);
+    pixman_region32_union_rect(
+        &buf->dirty[0], &buf->dirty[0], 0, 0, term->margins.left, term->height);
+    pixman_region32_union_rect(
+        &buf->dirty[0], &buf->dirty[0],
+        rmargin, 0, term->margins.right, term->height);
+
+    if (apply_damage) {
+        wl_surface_damage_buffer(
+            term->window->surface.surf, 0, 0, term->width, term->margins.top);
+        wl_surface_damage_buffer(
+            term->window->surface.surf, 0, bmargin, term->width, term->margins.bottom);
+        wl_surface_damage_buffer(
+            term->window->surface.surf,
+            0, term->margins.top + start_line * term->cell_height,
+            term->margins.left, line_count * term->cell_height);
+        wl_surface_damage_buffer(
+            term->window->surface.surf,
+            rmargin, term->margins.top + start_line * term->cell_height,
+            term->margins.right, line_count * term->cell_height);
+    }
+}
+
+static void
 grid_render_scroll(struct terminal *term, struct buffer *buf,
                    const struct damage *dmg)
 {
@@ -1381,8 +1594,10 @@ grid_render_scroll(struct terminal *term, struct buffer *buf,
 
     if (did_shm_scroll) {
         /* Restore margins */
-        render_margin(
-            term, buf, dmg->region.end - dmg->lines, term->rows, false);
+        if (term->conf->tweak.edge_bg_bleed)
+            render_margin_bleed(term, buf, dmg->region.end - dmg->lines, term->rows, false);
+        else
+            render_margin(term, buf, dmg->region.end - dmg->lines, term->rows, false);
     } else {
         /* Fallback for when we either cannot do SHM scrolling, or it failed */
         uint8_t *raw = buf->data;
@@ -1458,8 +1673,10 @@ grid_render_scroll_reverse(struct terminal *term, struct buffer *buf,
 
     if (did_shm_scroll) {
         /* Restore margins */
-        render_margin(
-            term, buf, dmg->region.start, dmg->region.start + dmg->lines, false);
+        if (term->conf->tweak.edge_bg_bleed)
+            render_margin_bleed(term, buf, dmg->region.start, dmg->region.start + dmg->lines, false);
+        else
+            render_margin(term, buf, dmg->region.start, dmg->region.start + dmg->lines, false);
     } else {
         /* Fallback for when we either cannot do SHM scrolling, or it failed */
         uint8_t *raw = buf->data;
@@ -3177,7 +3394,10 @@ static void
 force_full_repaint(struct terminal *term, struct buffer *buf)
 {
     tll_free(term->grid->scroll_damage);
-    render_margin(term, buf, 0, term->rows, true);
+    if (term->conf->tweak.edge_bg_bleed)
+        render_margin_bleed(term, buf, 0, term->rows, true);
+    else
+        render_margin(term, buf, 0, term->rows, true);
     term_damage_view(term);
 }
 

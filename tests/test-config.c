@@ -1464,6 +1464,9 @@ test_section_tweak(void)
     test_boolean(&ctx, &parse_section_tweak, "overflowing-glyphs",
                  &conf.tweak.overflowing_glyphs);
 
+    test_boolean(&ctx, &parse_section_tweak, "edge-bg-bleed",
+                 &conf.tweak.edge_bg_bleed);
+
     test_enum(
         &ctx, &parse_section_tweak, "render-timer",
         4,

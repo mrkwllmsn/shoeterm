@@ -1859,6 +1859,17 @@ any of these options.
 	
 	Default: _yes_.
 
+*edge-bg-bleed*
+	Boolean. When enabled, the background color of edge cells (cells at
+	the borders of the grid) is extended into the padding/margin area,
+	instead of using the default background color.
+
+	This makes colored backgrounds (e.g. status bars, syntax
+	highlighting) extend to the window edge rather than stopping at the
+	grid boundary with a visible gap.
+
+	Default: _no_.
+
 *render-timer*
 	Enables a frame rendering timer, that prints the time it takes to
 	render each frame, in microseconds, either on-screen, to stderr,

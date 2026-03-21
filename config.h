@@ -427,6 +427,7 @@ struct config {
     struct {
         enum fcft_scaling_filter fcft_filter;
         bool overflowing_glyphs;
+        bool edge_bg_bleed;
         bool grapheme_shaping;
         enum {
             GRAPHEME_WIDTH_WCSWIDTH,

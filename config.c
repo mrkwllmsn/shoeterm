@@ -2826,6 +2826,12 @@ parse_section_tweak(struct context *ctx)
     else if (streq(key, "overflowing-glyphs"))
         return value_to_bool(ctx, &conf->tweak.overflowing_glyphs);
 
+    else if (streq(key, "edge-bg-bleed")) {
+        bool ret = value_to_bool(ctx, &conf->tweak.edge_bg_bleed);
+        LOG_WARN("edge-bg-bleed: %s", conf->tweak.edge_bg_bleed ? "yes" : "no");
+        return ret;
+    }
+
     else if (streq(key, "damage-whole-window"))
         return value_to_bool(ctx, &conf->tweak.damage_whole_window);
 
@@ -3599,6 +3605,7 @@ config_load(struct config *conf, const char *conf_path,
         .tweak = {
             .fcft_filter = FCFT_SCALING_FILTER_LANCZOS3,
             .overflowing_glyphs = true,
+            .edge_bg_bleed = false,
 #if defined(FOOT_GRAPHEME_CLUSTERING) && FOOT_GRAPHEME_CLUSTERING
             .grapheme_shaping = fcft_caps & FCFT_CAPABILITY_GRAPHEME_SHAPING,
 #endif
