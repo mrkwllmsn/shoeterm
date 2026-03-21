@@ -1376,9 +1376,6 @@ static void
 render_margin_bleed(struct terminal *term, struct buffer *buf,
                     int start_line, int end_line, bool apply_damage)
 {
-    LOG_WARN("render_margin_bleed: start_line=%d, end_line=%d, apply_damage=%d",
-             start_line, end_line, apply_damage);
-
     const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
     struct grid *grid = term->grid;
     const int width = term->cell_width;
@@ -3803,6 +3800,10 @@ grid_render(struct terminal *term)
         pixman_region32_union(&damage, &damage, &buf->dirty[i + 1]);
 
     pixman_region32_union(&buf->dirty[0], &buf->dirty[0], &damage);
+
+    /* Re-render margins with edge cell backgrounds after row rendering */
+    if (term->conf->tweak.edge_bg_bleed)
+        render_margin_bleed(term, buf, 0, term->rows, true);
 
     {
         int box_count = 0;

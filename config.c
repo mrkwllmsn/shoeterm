@@ -2826,11 +2826,8 @@ parse_section_tweak(struct context *ctx)
     else if (streq(key, "overflowing-glyphs"))
         return value_to_bool(ctx, &conf->tweak.overflowing_glyphs);
 
-    else if (streq(key, "edge-bg-bleed")) {
-        bool ret = value_to_bool(ctx, &conf->tweak.edge_bg_bleed);
-        LOG_WARN("edge-bg-bleed: %s", conf->tweak.edge_bg_bleed ? "yes" : "no");
-        return ret;
-    }
+    else if (streq(key, "edge-bg-bleed"))
+        return value_to_bool(ctx, &conf->tweak.edge_bg_bleed);
 
     else if (streq(key, "damage-whole-window"))
         return value_to_bool(ctx, &conf->tweak.damage_whole_window);
