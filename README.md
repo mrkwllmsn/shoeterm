@@ -702,3 +702,7 @@ Every now and then I post foot related updates on
 # License
 
 Foot is released under the [MIT license](LICENSE).
+
+-Additional Notes
+
+This section was added as part of a Git exercise.
