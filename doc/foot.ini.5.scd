@@ -91,7 +91,7 @@ empty string to be set, but it must be quoted: *KEY=""*
 	sizes are unaffected by DPI aware rendering (see *dpi-aware*), but
 	are affected by desktop scaling.
 	
-	Default: _monospace:size=8_ (*font*), _not set_ (*font-bold*,
+	Default: _monospace:size=12_ (*font*), _not set_ (*font-bold*,
 	*font-italic*, *font-bold-italic*).
 
 *font-size-adjustment*

@@ -4108,7 +4108,7 @@ config_font_parse(const char *pattern, struct config_font *font)
         FcConfigDestroy(fc_conf);
 
         if (have_pt_size != FcResultMatch && have_px_size != FcResultMatch)
-            pt_size = 8.0;
+            pt_size = 12.0;
     }
 
     FcPatternRemove(pat, FC_SIZE, 0);
@@ -4148,7 +4148,7 @@ check_if_font_is_monospaced(const char *pattern,
                             user_notifications_t *notifications)
 {
     struct fcft_font *f = fcft_from_name(
-        1, (const char *[]){pattern}, ":size=8");
+        1, (const char *[]){pattern}, ":size=12");
 
     if (f == NULL)
         return true;
