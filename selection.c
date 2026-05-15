@@ -1549,7 +1549,9 @@ selection_finalize(struct seat *seat, struct terminal *term, uint32_t serial)
 
     LOG_DBG("selection finalize");
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     selection_stop_scroll_timer(term);
+#endif
     term->selection.ongoing = false;
 
     if (term->selection.coords.start.row < 0 || term->selection.coords.end.row < 0)
@@ -1599,7 +1601,9 @@ selection_cancel(struct terminal *term)
             term->selection.coords.start.row, term->selection.coords.start.col,
             term->selection.coords.end.row, term->selection.coords.end.col);
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     selection_stop_scroll_timer(term);
+#endif
 
     if (term->selection.coords.start.row >= 0 && term->selection.coords.end.row >= 0) {
         foreach_selected(
@@ -1616,7 +1620,9 @@ selection_cancel(struct terminal *term)
     term->selection.direction = SELECTION_UNDIR;
     term->selection.ongoing = false;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     search_selection_cancelled(term);
+#endif
 }
 
 bool
@@ -1671,6 +1677,7 @@ selection_primary_unset(struct seat *seat)
     primary->text = NULL;
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static bool
 fdm_scroll_timer(struct fdm *fdm, int fd, int events, void *data)
 {
@@ -1773,6 +1780,7 @@ selection_stop_scroll_timer(struct terminal *term)
     term->selection.auto_scroll.fd = -1;
     term->selection.auto_scroll.direction = SELECTION_SCROLL_NOT;
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 static void
 target(void *data, struct wl_data_source *wl_data_source, const char *mime_type)

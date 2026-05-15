@@ -7,6 +7,9 @@ option('themes', type: 'boolean', value: true,
 option('ime', type: 'boolean', value: true,
        description: 'IME (Input Method Editor) support')
 
+option('scrollback', type: 'boolean', value: true,
+       description: 'Enable scrollback history. When disabled, the [scrollback] section in foot.ini and the corresponding key bindings become no-ops.')
+
 option('grapheme-clustering', type: 'feature',
        description: 'Enables grapheme clustering using libutf8proc. Requires fcft with harfbuzz support to be useful.')
 

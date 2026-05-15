@@ -72,6 +72,14 @@
 
 ## Unreleased
 ### Added
+
+* New `scrollback` Meson build option (enabled by default). When
+  disabled, scrollback history, in-terminal search, the scrollback
+  indicator, the "pipe scrollback" action, and selection auto-scroll
+  are excluded from the build, producing a smaller binary. `foot
+  --version` reports `+scrollback` or `-scrollback`.
+
+
 ### Changed
 ### Deprecated
 ### Removed

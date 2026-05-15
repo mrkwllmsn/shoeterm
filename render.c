@@ -1732,8 +1732,10 @@ render_ime_preedit_for_seat(struct terminal *term, struct seat *seat,
     if (likely(seat->ime.preedit.cells == NULL))
         return;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     if (unlikely(term->is_searching))
         return;
+#endif
 
     const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
 
@@ -1975,7 +1977,9 @@ render_overlay(struct terminal *term)
     const bool unicode_mode_active = term->unicode_mode.active;
 
     const enum overlay_style style =
+#if defined(FOOT_HAVE_SCROLLBACK)
         term->is_searching ? OVERLAY_SEARCH :
+#endif
         term->flash.active ? OVERLAY_FLASH :
         unicode_mode_active ? OVERLAY_UNICODE_MODE :
         OVERLAY_NONE;
@@ -1994,7 +1998,9 @@ render_overlay(struct terminal *term)
     pixman_color_t color;
 
     switch (style) {
+#if defined(FOOT_HAVE_SCROLLBACK)
     case OVERLAY_SEARCH:
+#endif
     case OVERLAY_UNICODE_MODE:
         color = (pixman_color_t){0, 0, 0, 0x7fff};
         break;
@@ -2028,6 +2034,7 @@ render_overlay(struct terminal *term)
     /* Bounding rectangle of damaged areas - for wl_surface_damage_buffer() */
     pixman_box32_t damage_bounds;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     if (style == OVERLAY_SEARCH) {
         /*
          * When possible, we only update the areas that have *changed*
@@ -2143,9 +2150,10 @@ render_overlay(struct terminal *term)
         pixman_region32_fini(&new_dimmed);
         pixman_region32_fini(&damage);
     }
-
-    else if (buf == term->render.last_overlay_buf &&
-             style == term->render.last_overlay_style)
+    else
+#endif /* FOOT_HAVE_SCROLLBACK */
+    if (buf == term->render.last_overlay_buf &&
+        style == term->render.last_overlay_style)
     {
         xassert(style == OVERLAY_FLASH || style == OVERLAY_UNICODE_MODE);
         shm_did_not_use_buf(buf);
@@ -2989,6 +2997,7 @@ render_csd(struct terminal *term)
     render_csd_title(term, &infos[CSD_SURF_TITLE], bufs[CSD_SURF_TITLE]);
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static void
 render_scrollback_position(struct terminal *term)
 {
@@ -3139,6 +3148,7 @@ render_scrollback_position(struct terminal *term)
         fg, 0xffu << 24 | bg,
         width - margin - c32len(text) * term->cell_width);
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 static void
 render_render_timer(struct terminal *term, struct timespec render_time)
@@ -3612,7 +3622,9 @@ grid_render(struct terminal *term)
 
     render_overlay(term);
     render_ime_preedit(term, buf);
+#if defined(FOOT_HAVE_SCROLLBACK)
     render_scrollback_position(term);
+#endif
 
     if (term->conf->tweak.render_timer != RENDER_TIMER_NONE) {
         struct timespec end_time;
@@ -3716,6 +3728,7 @@ grid_render(struct terminal *term)
     wl_surface_commit(term->window->surface.surf);
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static void
 render_search_box(struct terminal *term)
 {
@@ -4061,6 +4074,7 @@ render_search_box(struct terminal *term)
 #undef WINDOW_X
 #undef WINDOW_Y
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 static void
 render_urls(struct terminal *term)
@@ -4319,12 +4333,18 @@ frame_callback(void *data, struct wl_callback *wl_callback, uint32_t callback_da
 
     bool grid = term->render.pending.grid;
     bool csd = term->render.pending.csd;
+#if defined(FOOT_HAVE_SCROLLBACK)
     bool search = term->is_searching && term->render.pending.search;
+#else
+    bool search = false;
+#endif
     bool urls = urls_mode_is_active(term) > 0 && term->render.pending.urls;
 
     term->render.pending.grid = false;
     term->render.pending.csd = false;
+#if defined(FOOT_HAVE_SCROLLBACK)
     term->render.pending.search = false;
+#endif
     term->render.pending.urls = false;
 
     struct grid *original_grid = term->grid;
@@ -4339,8 +4359,10 @@ frame_callback(void *data, struct wl_callback *wl_callback, uint32_t callback_da
         quirk_weston_csd_off(term);
     }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     if (search)
         render_search_box(term);
+#endif
 
     if (urls)
         render_urls(term);
@@ -4689,8 +4711,13 @@ render_resize(struct terminal *term, int width, int height, uint8_t opts)
      * the grid array.
      */
     const unsigned max_scrollback = (INT_MAX >> 1) + 1;
+#if defined(FOOT_HAVE_SCROLLBACK)
+    const uint64_t scrollback_lines = term->render.scrollback_lines;
+#else
+    const uint64_t scrollback_lines = 0;
+#endif
     const unsigned scrollback_lines_not_yet_power_of_two =
-        min((uint64_t)term->render.scrollback_lines + new_rows - 1, max_scrollback);
+        min(scrollback_lines + new_rows - 1, max_scrollback);
 
     /* Grid rows/cols after resize */
     const int new_normal_grid_rows =
@@ -4997,7 +5024,9 @@ damage_view:
     term->render.last_buf = NULL;
     term_damage_view(term);
     render_refresh_csd(term);
+#if defined(FOOT_HAVE_SCROLLBACK)
     render_refresh_search(term);
+#endif
     render_refresh(term);
 
     return true;
@@ -5144,7 +5173,11 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
 
         bool grid = term->render.refresh.grid;
         bool csd = term->render.refresh.csd;
+#if defined(FOOT_HAVE_SCROLLBACK)
         bool search = term->is_searching && term->render.refresh.search;
+#else
+        bool search = false;
+#endif
         bool urls = urls_mode_is_active(term) && term->render.refresh.urls;
 
         if (!(grid | csd | search | urls))
@@ -5155,7 +5188,9 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
 
         term->render.refresh.grid = false;
         term->render.refresh.csd = false;
+#if defined(FOOT_HAVE_SCROLLBACK)
         term->render.refresh.search = false;
+#endif
         term->render.refresh.urls = false;
 
         if (term->window->frame_callback == NULL) {
@@ -5170,8 +5205,10 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
                 render_csd(term);
                 quirk_weston_csd_off(term);
             }
+#if defined(FOOT_HAVE_SCROLLBACK)
             if (search)
                 render_search_box(term);
+#endif
             if (urls)
                 render_urls(term);
             if (grid | csd | search | urls)
@@ -5187,7 +5224,9 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
             /* Tells the frame callback to render again */
             term->render.pending.grid |= grid;
             term->render.pending.csd |= csd;
+#if defined(FOOT_HAVE_SCROLLBACK)
             term->render.pending.search |= search;
+#endif
             term->render.pending.urls |= urls;
         }
     }
@@ -5305,12 +5344,14 @@ render_refresh_csd(struct terminal *term)
         term->render.refresh.csd = true;
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 void
 render_refresh_search(struct terminal *term)
 {
     if (term->is_searching)
         term->render.refresh.search = true;
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 void
 render_refresh_urls(struct terminal *term)

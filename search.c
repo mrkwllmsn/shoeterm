@@ -1,5 +1,7 @@
 #include "search.h"
 
+#if defined(FOOT_HAVE_SCROLLBACK)
+
 #include <string.h>
 
 #include <wayland-client.h>
@@ -1510,3 +1512,5 @@ update_search:
     if (redraw)
         render_refresh_search(term);
 }
+
+#endif /* FOOT_HAVE_SCROLLBACK */

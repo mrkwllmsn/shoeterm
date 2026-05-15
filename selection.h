@@ -72,10 +72,12 @@ void text_from_primary(
     void (*cb)(char *data, size_t size, void *user),
     void (*dont)(void *user), void *user);
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 void selection_start_scroll_timer(
     struct terminal *term, int interval_ns,
     enum selection_scroll_direction direction, int col);
 void selection_stop_scroll_timer(struct terminal *term);
+#endif
 
 void selection_find_word_boundary_left(
     const struct terminal *term, struct coord *pos, bool spaces_only);

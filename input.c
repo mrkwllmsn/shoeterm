@@ -82,7 +82,9 @@ pipe_closed:
     return true;
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static void alternate_scroll(struct seat *seat, int amount, int button);
+#endif
 
 static bool
 execute_binding(struct seat *seat, struct terminal *term,
@@ -97,6 +99,7 @@ execute_binding(struct seat *seat, struct terminal *term,
     case BIND_ACTION_NOOP:
         return true;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     case BIND_ACTION_SCROLLBACK_UP_PAGE:
         if (term->grid == &term->normal) {
             cmd_scrollback_up(term, term->rows);
@@ -176,6 +179,7 @@ execute_binding(struct seat *seat, struct terminal *term,
             return true;
         }
         break;
+#endif /* FOOT_HAVE_SCROLLBACK */
 
     case BIND_ACTION_CLIPBOARD_COPY:
         selection_to_clipboard(seat, term, serial);
@@ -191,9 +195,11 @@ execute_binding(struct seat *seat, struct terminal *term,
         term_reset_view(term);
         return true;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     case BIND_ACTION_SEARCH_START:
         search_begin(term);
         return true;
+#endif /* FOOT_HAVE_SCROLLBACK */
 
     case BIND_ACTION_FONT_SIZE_UP:
         term_font_size_increase(term);
@@ -231,10 +237,12 @@ execute_binding(struct seat *seat, struct terminal *term,
             xdg_toplevel_set_fullscreen(term->window->xdg_toplevel, NULL);
         return true;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     case BIND_ACTION_PIPE_SCROLLBACK:
         if (term->grid == &term->alt)
             break;
         /* FALLTHROUGH */
+#endif /* FOOT_HAVE_SCROLLBACK */
     case BIND_ACTION_PIPE_VIEW:
     case BIND_ACTION_PIPE_SELECTED:
     case BIND_ACTION_PIPE_COMMAND_OUTPUT: {
@@ -265,9 +273,11 @@ execute_binding(struct seat *seat, struct terminal *term,
 
         bool success;
         switch (action) {
+#if defined(FOOT_HAVE_SCROLLBACK)
         case BIND_ACTION_PIPE_SCROLLBACK:
             success = term_scrollback_to_text(term, &text, &len);
             break;
+#endif /* FOOT_HAVE_SCROLLBACK */
 
         case BIND_ACTION_PIPE_VIEW:
             success = term_view_to_text(term, &text, &len);
@@ -1649,6 +1659,7 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
         return;
     }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     else if (term->is_searching) {
         if (pressed) {
             if (should_repeat)
@@ -1660,6 +1671,7 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
         }
         return;
     }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
     else  if (urls_mode_is_active(term)) {
         if (pressed) {
@@ -1931,9 +1943,11 @@ UNITTEST
                 .start = {-1, -1},
                 .end = {-1, -1},
             },
+#if defined(FOOT_HAVE_SCROLLBACK)
             .auto_scroll = {
                 .fd = -1,
              },
+#endif
         },
     };
 
@@ -2768,6 +2782,7 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
         /* Cursor is inside the grid, i.e. *not* in the margins */
         const bool cursor_is_on_grid = seat->mouse.col >= 0 && seat->mouse.row >= 0;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
         enum selection_scroll_direction auto_scroll_direction
             = term->selection.coords.end.row < 0
                 ? SELECTION_SCROLL_NOT
@@ -2779,9 +2794,14 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
 
         if (auto_scroll_direction == SELECTION_SCROLL_NOT)
             selection_stop_scroll_timer(term);
+#endif /* FOOT_HAVE_SCROLLBACK */
 
         /* Update selection */
-        if (!term->is_searching) {
+#if defined(FOOT_HAVE_SCROLLBACK)
+        if (!term->is_searching)
+#endif
+        {
+#if defined(FOOT_HAVE_SCROLLBACK)
             if (auto_scroll_direction != SELECTION_SCROLL_NOT) {
                 /*
                  * Start 'selection auto-scrolling'
@@ -2809,6 +2829,7 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
                     term, 400000000 / (divisor > 0 ? divisor : 1),
                     auto_scroll_direction, seat->mouse.col);
             }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
             if (term->selection.ongoing &&
                 (cursor_is_on_new_cell ||
@@ -3244,7 +3265,9 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
         break;
 
     case TERM_SURF_GRID: {
+#if defined(FOOT_HAVE_SCROLLBACK)
         search_cancel(term);
+#endif
         urls_reset(term);
 
         bool cursor_is_on_grid = seat->mouse.col >= 0 && seat->mouse.row >= 0;
@@ -3301,6 +3324,7 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
     }
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static void
 alternate_scroll(struct seat *seat, int amount, int button)
 {
@@ -3320,6 +3344,7 @@ alternate_scroll(struct seat *seat, int amount, int button)
         key_press_release(seat, term, seat->kbd.serial, key, XKB_KEY_DOWN);
     key_press_release(seat, term, seat->kbd.serial, key, XKB_KEY_UP);
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 static void
 mouse_scroll(struct seat *seat, int amount, enum wl_pointer_axis axis)
@@ -3367,10 +3392,15 @@ mouse_scroll(struct seat *seat, int amount, enum wl_pointer_axis axis)
 static double
 mouse_scroll_multiplier(const struct terminal *term, const struct seat *seat)
 {
+#if defined(FOOT_HAVE_SCROLLBACK)
     return (term->grid == &term->normal ||
             (term_mouse_grabbed(term, seat) && term->alt_scrolling))
         ? term->conf->scrollback.multiplier
         : 1.0;
+#else
+    (void)term; (void)seat;
+    return 1.0;
+#endif /* FOOT_HAVE_SCROLLBACK */
 }
 
 static void

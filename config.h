@@ -166,11 +166,14 @@ struct color_theme {
         uint32_t bg;
     } jump_label;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     struct {
         uint32_t fg;
         uint32_t bg;
     } scrollback_indicator;
+#endif /* FOOT_HAVE_SCROLLBACK */
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     struct {
         struct {
             uint32_t fg;
@@ -182,14 +185,17 @@ struct color_theme {
             uint32_t bg;
         } match;
     } search_box;
+#endif /* FOOT_HAVE_SCROLLBACK */
 
     struct {
         bool cursor:1;
         bool jump_label:1;
-        bool scrollback_indicator:1;
         bool url:1;
+#if defined(FOOT_HAVE_SCROLLBACK)
+        bool scrollback_indicator:1;
         bool search_box_no_match:1;
         bool search_box_match:1;
+#endif /* FOOT_HAVE_SCROLLBACK */
         uint8_t dim;
     } use_custom;
 
@@ -308,6 +314,7 @@ struct config {
         bool command_focused;
     } bell;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     struct {
         uint32_t lines;
 
@@ -328,6 +335,7 @@ struct config {
         } indicator;
         float multiplier;
     } scrollback;
+#endif /* FOOT_HAVE_SCROLLBACK */
 
     struct {
         char32_t *label_letters;
@@ -375,9 +383,11 @@ struct config {
          * Special modes
          */
 
+#if defined(FOOT_HAVE_SCROLLBACK)
         /* While searching (not - action to *start* a search is in the
          * 'key' bindings above */
         struct config_key_binding_list search;
+#endif /* FOOT_HAVE_SCROLLBACK */
 
         /* While showing URL jump labels */
         struct config_key_binding_list url;

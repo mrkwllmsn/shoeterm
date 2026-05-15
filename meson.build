@@ -90,6 +90,9 @@ add_project_arguments(
   (get_option('ime')
     ? ['-DFOOT_IME_ENABLED=1']
     : []) +
+  (get_option('scrollback')
+    ? ['-DFOOT_HAVE_SCROLLBACK']
+    : []) +
   (get_option('b_pgo') == 'use'
     ? ['-DFOOT_PGO_ENABLED=1']
     : []) +
@@ -443,6 +446,7 @@ summary(
     'Documentation': scdoc.found(),
     'Themes': get_option('themes'),
     'IME': get_option('ime'),
+    'Scrollback': get_option('scrollback'),
     'Grapheme clustering': utf8proc.found(),
     'utmp backend': utmp_backend,
     'utmp helper default path': utmp_default_helper_path,

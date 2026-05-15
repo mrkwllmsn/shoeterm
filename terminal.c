@@ -1344,9 +1344,11 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
                 .start = {-1, -1},
                 .end = {-1, -1},
             },
+#if defined(FOOT_HAVE_SCROLLBACK)
             .auto_scroll = {
                 .fd = -1,
             },
+#endif
         },
         .normal = {.scroll_damage = tll_init(), .sixel_images = tll_init()},
         .alt = {.scroll_damage = tll_init(), .sixel_images = tll_init()},
@@ -1365,14 +1367,18 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
             .chains = {
                 .grid = shm_chain_new(wayl, true, 1 + conf->render_worker_count,
                                       desired_bit_depth, &render_buffer_release_callback, term),
+#if defined(FOOT_HAVE_SCROLLBACK)
                 .search = shm_chain_new(wayl, false, 1 ,desired_bit_depth, NULL, NULL),
                 .scrollback_indicator = shm_chain_new(wayl, false, 1, desired_bit_depth, NULL, NULL),
+#endif
                 .render_timer = shm_chain_new(wayl, false, 1, desired_bit_depth, NULL, NULL),
                 .url = shm_chain_new(wayl, false, 1, desired_bit_depth, NULL, NULL),
                 .csd = shm_chain_new(wayl, false, 1, desired_bit_depth, NULL, NULL),
                 .overlay = shm_chain_new(wayl, false, 1, desired_bit_depth, NULL, NULL),
             },
+#if defined(FOOT_HAVE_SCROLLBACK)
             .scrollback_lines = conf->scrollback.lines,
+#endif
             .app_sync_updates.timer_fd = app_sync_updates_fd,
             .title = {
                 .timer_fd = title_update_fd,
@@ -1718,7 +1724,9 @@ term_shutdown(struct terminal *term)
     term_cursor_blink_update(term);
     xassert(term->cursor_blink.fd < 0);
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     fdm_del(term->fdm, term->selection.auto_scroll.fd);
+#endif
     fdm_del(term->fdm, term->render.app_sync_updates.timer_fd);
     fdm_del(term->fdm, term->render.app_id.timer_fd);
     fdm_del(term->fdm, term->render.icon.timer_fd);
@@ -1770,7 +1778,9 @@ term_shutdown(struct terminal *term)
         }
     }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     term->selection.auto_scroll.fd = -1;
+#endif
     term->render.app_sync_updates.timer_fd = -1;
     term->render.app_id.timer_fd = -1;
     term->render.icon.timer_fd = -1;
@@ -1825,7 +1835,9 @@ term_destroy(struct terminal *term)
 
     del_utmp_record(term->conf, term->reaper, term->ptmx);
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     fdm_del(term->fdm, term->selection.auto_scroll.fd);
+#endif
     fdm_del(term->fdm, term->render.app_sync_updates.timer_fd);
     fdm_del(term->fdm, term->render.app_id.timer_fd);
     fdm_del(term->fdm, term->render.icon.timer_fd);
@@ -1891,8 +1903,10 @@ term_destroy(struct terminal *term)
     free_custom_glyphs(
         &term->custom_glyphs.octants, GLYPH_OCTANTS_COUNT);
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     free(term->search.buf);
     free(term->search.last.buf);
+#endif
 
     if (term->render.workers.threads != NULL) {
         for (size_t i = 0; i < term->render.workers.count; i++) {
@@ -1911,8 +1925,10 @@ term_destroy(struct terminal *term)
 
     shm_unref(term->render.last_buf);
     shm_chain_free(term->render.chains.grid);
+#if defined(FOOT_HAVE_SCROLLBACK)
     shm_chain_free(term->render.chains.search);
     shm_chain_free(term->render.chains.scrollback_indicator);
+#endif
     shm_chain_free(term->render.chains.render_timer);
     shm_chain_free(term->render.chains.url);
     shm_chain_free(term->render.chains.csd);
@@ -2680,6 +2696,7 @@ term_erase(struct terminal *term, int start_row, int start_col,
     sixel_overwrite_by_row(term, end_row, 0, end_col + 1);
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 void
 term_erase_scrollback(struct terminal *term)
 {
@@ -2766,7 +2783,6 @@ term_erase_scrollback(struct terminal *term)
 
     term_damage_view(term);
 }
-
 UNITTEST
 {
     const int scrollback_rows = 16;
@@ -2893,6 +2909,7 @@ UNITTEST
     free(term.normal.rows);
     fdm_destroy(fdm);
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 int
 term_row_rel_to_abs(const struct terminal *term, int row)
@@ -3086,9 +3103,11 @@ term_scroll_partial(struct terminal *term, struct scroll_region region, int rows
 
     sixel_scroll_up(term, rows);
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     /* How many lines from the scrollback start is the current viewport? */
     int view_sb_start_distance = grid_row_abs_to_sb(
         term->grid, term->rows, term->grid->view);
+#endif
 
     bool view_follows = term->grid->view == term->grid->offset;
     term->grid->offset += rows;
@@ -3098,12 +3117,15 @@ term_scroll_partial(struct terminal *term, struct scroll_region region, int rows
         term_damage_scroll(term, DAMAGE_SCROLL, region, rows);
         selection_view_down(term, term->grid->offset);
         term->grid->view = term->grid->offset;
-    } else if (unlikely(rows > view_sb_start_distance)) {
+    }
+#if defined(FOOT_HAVE_SCROLLBACK)
+    else if (unlikely(rows > view_sb_start_distance)) {
         /* Part of current view is being scrolled out */
         int new_view = grid_row_sb_to_abs(term->grid, term->rows, 0);
         selection_view_down(term, new_view);
         cmd_scrollback_down(term, rows - view_sb_start_distance);
     }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
     /* Top non-scrolling region. */
     for (int i = region.start - 1; i >= 0; i--)
@@ -3834,8 +3856,11 @@ term_enable_app_sync_updates(struct terminal *term)
 
     /* Disable pending refresh *iff* the grid is the *only* thing
      * scheduled to be re-rendered */
-    if (!term->render.refresh.csd && !term->render.refresh.search &&
-        !term->render.pending.csd && !term->render.pending.search)
+    if (!term->render.refresh.csd &&
+#if defined(FOOT_HAVE_SCROLLBACK)
+        !term->render.refresh.search && !term->render.pending.search &&
+#endif
+        !term->render.pending.csd)
     {
         term->render.refresh.grid = false;
         term->render.pending.grid = false;
@@ -4487,6 +4512,7 @@ out:
     return extract_finish(ctx, text, len);
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 bool
 term_scrollback_to_text(const struct terminal *term, char **text, size_t *len)
 {
@@ -4514,6 +4540,7 @@ term_scrollback_to_text(const struct terminal *term, char **text, size_t *len)
 
     return rows_to_text(term, start, end, 0, term->cols, text, len);
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 bool
 term_view_to_text(const struct terminal *term, char **text, size_t *len)

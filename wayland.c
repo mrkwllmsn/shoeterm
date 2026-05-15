@@ -2210,6 +2210,7 @@ wayl_win_destroy(struct wl_window *win)
         wl_surface_commit(win->render_timer.surface.surf);
     }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     if (win->scrollback_indicator.surface.surf != NULL) {
         wl_surface_attach(win->scrollback_indicator.surface.surf, NULL, 0, 0);
         wl_surface_commit(win->scrollback_indicator.surface.surf);
@@ -2220,6 +2221,7 @@ wayl_win_destroy(struct wl_window *win)
         wl_surface_attach(win->search.surface.surf, NULL, 0, 0);
         wl_surface_commit(win->search.surface.surf);
     }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
     /* URLs */
     tll_foreach(win->urls, it) {
@@ -2253,13 +2255,17 @@ wayl_win_destroy(struct wl_window *win)
     render_wait_for_preapply_damage(term);
 
     csd_destroy(win);
+#if defined(FOOT_HAVE_SCROLLBACK)
     wayl_win_subsurface_destroy(&win->search);
     wayl_win_subsurface_destroy(&win->scrollback_indicator);
+#endif
     wayl_win_subsurface_destroy(&win->render_timer);
     wayl_win_subsurface_destroy(&win->overlay);
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     shm_purge(term->render.chains.search);
     shm_purge(term->render.chains.scrollback_indicator);
+#endif
     shm_purge(term->render.chains.render_timer);
     shm_purge(term->render.chains.grid);
     shm_purge(term->render.chains.url);

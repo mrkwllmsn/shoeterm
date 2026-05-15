@@ -5,6 +5,7 @@
 #include "key-binding.h"
 #include "terminal.h"
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 void search_begin(struct terminal *term);
 void search_cancel(struct terminal *term);
 void search_input(
@@ -24,3 +25,4 @@ struct search_match_iterator {
 
 struct search_match_iterator search_matches_new_iter(struct terminal *term);
 struct range search_matches_next(struct search_match_iterator *iter);
+#endif /* FOOT_HAVE_SCROLLBACK */

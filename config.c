@@ -109,6 +109,7 @@ static const uint32_t default_sixel_colors[16] = {
 static const char *const binding_action_map[] = {
     [BIND_ACTION_NONE] = NULL,
     [BIND_ACTION_NOOP] = "noop",
+#if defined(FOOT_HAVE_SCROLLBACK)
     [BIND_ACTION_SCROLLBACK_UP_PAGE] = "scrollback-up-page",
     [BIND_ACTION_SCROLLBACK_UP_HALF_PAGE] = "scrollback-up-half-page",
     [BIND_ACTION_SCROLLBACK_UP_LINE] = "scrollback-up-line",
@@ -117,10 +118,13 @@ static const char *const binding_action_map[] = {
     [BIND_ACTION_SCROLLBACK_DOWN_LINE] = "scrollback-down-line",
     [BIND_ACTION_SCROLLBACK_HOME] = "scrollback-home",
     [BIND_ACTION_SCROLLBACK_END] = "scrollback-end",
+#endif /* FOOT_HAVE_SCROLLBACK */
     [BIND_ACTION_CLIPBOARD_COPY] = "clipboard-copy",
     [BIND_ACTION_CLIPBOARD_PASTE] = "clipboard-paste",
     [BIND_ACTION_PRIMARY_PASTE] = "primary-paste",
+#if defined(FOOT_HAVE_SCROLLBACK)
     [BIND_ACTION_SEARCH_START] = "search-start",
+#endif
     [BIND_ACTION_FONT_SIZE_UP] = "font-increase",
     [BIND_ACTION_FONT_SIZE_DOWN] = "font-decrease",
     [BIND_ACTION_FONT_SIZE_RESET] = "font-reset",
@@ -128,7 +132,9 @@ static const char *const binding_action_map[] = {
     [BIND_ACTION_MINIMIZE] = "minimize",
     [BIND_ACTION_MAXIMIZE] = "maximize",
     [BIND_ACTION_FULLSCREEN] = "fullscreen",
+#if defined(FOOT_HAVE_SCROLLBACK)
     [BIND_ACTION_PIPE_SCROLLBACK] = "pipe-scrollback",
+#endif
     [BIND_ACTION_PIPE_VIEW] = "pipe-visible",
     [BIND_ACTION_PIPE_SELECTED] = "pipe-selected",
     [BIND_ACTION_PIPE_COMMAND_OUTPUT] = "pipe-command-output",
@@ -149,8 +155,10 @@ static const char *const binding_action_map[] = {
     [BIND_ACTION_THEME_TOGGLE] = "color-theme-toggle",
 
     /* Mouse-specific actions */
+#if defined(FOOT_HAVE_SCROLLBACK)
     [BIND_ACTION_SCROLLBACK_UP_MOUSE] = "scrollback-up-mouse",
     [BIND_ACTION_SCROLLBACK_DOWN_MOUSE] = "scrollback-down-mouse",
+#endif /* FOOT_HAVE_SCROLLBACK */
     [BIND_ACTION_SELECT_BEGIN] = "select-begin",
     [BIND_ACTION_SELECT_BEGIN_BLOCK] = "select-begin-block",
     [BIND_ACTION_SELECT_EXTEND] = "select-extend",
@@ -161,6 +169,7 @@ static const char *const binding_action_map[] = {
     [BIND_ACTION_SELECT_ROW] = "select-row",
 };
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static const char *const search_binding_action_map[] = {
     [BIND_ACTION_SEARCH_NONE] = NULL,
     [BIND_ACTION_SEARCH_SCROLLBACK_UP_PAGE] = "scrollback-up-page",
@@ -199,6 +208,7 @@ static const char *const search_binding_action_map[] = {
     [BIND_ACTION_SEARCH_PRIMARY_PASTE] = "primary-paste",
     [BIND_ACTION_SEARCH_UNICODE_INPUT] = "unicode-input",
 };
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 static const char *const url_binding_action_map[] = {
     [BIND_ACTION_URL_NONE] = NULL,
@@ -208,8 +218,10 @@ static const char *const url_binding_action_map[] = {
 
 static_assert(ALEN(binding_action_map) == BIND_ACTION_COUNT,
               "binding action map size mismatch");
+#if defined(FOOT_HAVE_SCROLLBACK)
 static_assert(ALEN(search_binding_action_map) == BIND_ACTION_SEARCH_COUNT,
               "search binding action map size mismatch");
+#endif
 static_assert(ALEN(url_binding_action_map) == BIND_ACTION_URL_COUNT,
               "URL binding action map size mismatch");
 
@@ -1249,6 +1261,7 @@ parse_section_desktop_notifications(struct context *ctx)
     }
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static bool
 parse_section_scrollback(struct context *ctx)
 {
@@ -1291,6 +1304,7 @@ parse_section_scrollback(struct context *ctx)
         return false;
     }
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 static bool
 parse_section_url(struct context *ctx)
@@ -1489,6 +1503,7 @@ parse_color_theme(struct context *ctx, struct color_theme *theme)
         return true;
     }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     else if (streq(key, "scrollback-indicator")) {
         if (!value_to_two_colors(
                 ctx,
@@ -1530,6 +1545,7 @@ parse_color_theme(struct context *ctx, struct color_theme *theme)
         theme->use_custom.search_box_match = true;
         return true;
     }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
     else if (streq(key, "cursor")) {
         if (!value_to_two_colors(
@@ -2313,8 +2329,8 @@ parse_key_binding_section(struct context *ctx,
 
         /* TODO: this is ugly... */
         if (action_map == binding_action_map &&
-            action >= BIND_ACTION_PIPE_SCROLLBACK &&
-            action <= BIND_ACTION_PIPE_COMMAND_OUTPUT)
+            action >= BIND_ACTION_PIPE_FIRST &&
+            action <= BIND_ACTION_PIPE_LAST)
         {
             ssize_t pipe_remove_len = pipe_argv_from_value(ctx, &aux.pipe);
             if (pipe_remove_len <= 0)
@@ -2478,6 +2494,7 @@ parse_section_key_bindings(struct context *ctx)
         &ctx->conf->bindings.key);
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static bool
 parse_section_search_bindings(struct context *ctx)
 {
@@ -2486,6 +2503,7 @@ parse_section_search_bindings(struct context *ctx)
         BIND_ACTION_SEARCH_COUNT, search_binding_action_map,
         &ctx->conf->bindings.search);
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 static bool
 parse_section_url_bindings(struct context *ctx)
@@ -3046,7 +3064,9 @@ enum section {
     SECTION_SECURITY,
     SECTION_BELL,
     SECTION_DESKTOP_NOTIFICATIONS,
+#if defined(FOOT_HAVE_SCROLLBACK)
     SECTION_SCROLLBACK,
+#endif
     SECTION_URL,
     SECTION_REGEX,
     SECTION_COLORS_DARK,
@@ -3055,7 +3075,9 @@ enum section {
     SECTION_MOUSE,
     SECTION_CSD,
     SECTION_KEY_BINDINGS,
+#if defined(FOOT_HAVE_SCROLLBACK)
     SECTION_SEARCH_BINDINGS,
+#endif
     SECTION_URL_BINDINGS,
     SECTION_MOUSE_BINDINGS,
     SECTION_TEXT_BINDINGS,
@@ -3082,7 +3104,9 @@ static const struct {
     [SECTION_SECURITY] =        {&parse_section_security, "security"},
     [SECTION_BELL] =            {&parse_section_bell, "bell"},
     [SECTION_DESKTOP_NOTIFICATIONS] = {&parse_section_desktop_notifications, "desktop-notifications"},
+#if defined(FOOT_HAVE_SCROLLBACK)
     [SECTION_SCROLLBACK] =      {&parse_section_scrollback, "scrollback"},
+#endif
     [SECTION_URL] =             {&parse_section_url, "url"},
     [SECTION_REGEX] =           {&parse_section_regex, "regex", true},
     [SECTION_COLORS_DARK] =     {&parse_section_colors_dark, "colors-dark"},
@@ -3091,7 +3115,9 @@ static const struct {
     [SECTION_MOUSE] =           {&parse_section_mouse, "mouse"},
     [SECTION_CSD] =             {&parse_section_csd, "csd"},
     [SECTION_KEY_BINDINGS] =    {&parse_section_key_bindings, "key-bindings"},
+#if defined(FOOT_HAVE_SCROLLBACK)
     [SECTION_SEARCH_BINDINGS] = {&parse_section_search_bindings, "search-bindings"},
+#endif
     [SECTION_URL_BINDINGS] =    {&parse_section_url_bindings, "url-bindings"},
     [SECTION_MOUSE_BINDINGS] =  {&parse_section_mouse_bindings, "mouse-bindings"},
     [SECTION_TEXT_BINDINGS] =   {&parse_section_text_bindings, "text-bindings"},
@@ -3325,16 +3351,20 @@ static void
 add_default_key_bindings(struct config *conf)
 {
     const struct config_key_binding bindings[] = {
+#if defined(FOOT_HAVE_SCROLLBACK)
         {BIND_ACTION_SCROLLBACK_UP_PAGE, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Prior}}},
         {BIND_ACTION_SCROLLBACK_UP_PAGE, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_KP_Prior}}},
         {BIND_ACTION_SCROLLBACK_DOWN_PAGE, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Next}}},
         {BIND_ACTION_SCROLLBACK_DOWN_PAGE, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_KP_Next}}},
+#endif /* FOOT_HAVE_SCROLLBACK */
         {BIND_ACTION_CLIPBOARD_COPY, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_c}}},
         {BIND_ACTION_CLIPBOARD_COPY, m("none"), {{XKB_KEY_XF86Copy}}},
         {BIND_ACTION_CLIPBOARD_PASTE, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_v}}},
         {BIND_ACTION_CLIPBOARD_PASTE, m("none"), {{XKB_KEY_XF86Paste}}},
         {BIND_ACTION_PRIMARY_PASTE, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Insert}}},
+#if defined(FOOT_HAVE_SCROLLBACK)
         {BIND_ACTION_SEARCH_START, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_r}}},
+#endif
         {BIND_ACTION_FONT_SIZE_UP, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_plus}}},
         {BIND_ACTION_FONT_SIZE_UP, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_equal}}},
         {BIND_ACTION_FONT_SIZE_UP, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_KP_Add}}},
@@ -3354,6 +3384,7 @@ add_default_key_bindings(struct config *conf)
 }
 
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static void
 add_default_search_bindings(struct config *conf)
 {
@@ -3407,6 +3438,7 @@ add_default_search_bindings(struct config *conf)
     conf->bindings.search.count = ALEN(bindings);
     conf->bindings.search.arr = xmemdup(bindings, sizeof(bindings));
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 static void
 add_default_url_bindings(struct config *conf)
@@ -3427,8 +3459,10 @@ static void
 add_default_mouse_bindings(struct config *conf)
 {
     const struct config_key_binding bindings[] = {
+#if defined(FOOT_HAVE_SCROLLBACK)
         {BIND_ACTION_SCROLLBACK_UP_MOUSE, m("none"), {.m = {BTN_WHEEL_BACK, 1}}},
         {BIND_ACTION_SCROLLBACK_DOWN_MOUSE, m("none"), {.m = {BTN_WHEEL_FORWARD, 1}}},
+#endif /* FOOT_HAVE_SCROLLBACK */
         {BIND_ACTION_PRIMARY_PASTE, m("none"), {.m = {BTN_MIDDLE, 1}}},
         {BIND_ACTION_SELECT_BEGIN, m("none"), {.m = {BTN_LEFT, 1}}},
         {BIND_ACTION_SELECT_BEGIN_BLOCK, m(XKB_MOD_NAME_CTRL), {.m = {BTN_LEFT, 1}}},
@@ -3530,6 +3564,7 @@ config_load(struct config *conf, const char *conf_path,
         },
         .custom_regexes = tll_init(),
         .can_shape_grapheme = fcft_caps & FCFT_CAPABILITY_GRAPHEME_SHAPING,
+#if defined(FOOT_HAVE_SCROLLBACK)
         .scrollback = {
             .lines = 1000,
             .indicator = {
@@ -3539,6 +3574,7 @@ config_load(struct config *conf, const char *conf_path,
             },
             .multiplier = 3.,
         },
+#endif /* FOOT_HAVE_SCROLLBACK */
         .colors_dark = {
             .fg = default_foreground,
             .bg = default_background,
@@ -3555,7 +3591,9 @@ config_load(struct config *conf, const char *conf_path,
             },
             .use_custom = {
                 .jump_label = false,
+#if defined(FOOT_HAVE_SCROLLBACK)
                 .scrollback_indicator = false,
+#endif
                 .url = false,
             },
             .blur = false,
@@ -3707,7 +3745,9 @@ config_load(struct config *conf, const char *conf_path,
     }
 
     add_default_key_bindings(conf);
+#if defined(FOOT_HAVE_SCROLLBACK)
     add_default_search_bindings(conf);
+#endif
     add_default_url_bindings(conf);
     add_default_mouse_bindings(conf);
 
@@ -3766,8 +3806,10 @@ config_load(struct config *conf, const char *conf_path,
 #if defined(_DEBUG)
     for (size_t i = 0; i < conf->bindings.key.count; i++)
         xassert(conf->bindings.key.arr[i].action != BIND_ACTION_NONE);
+#if defined(FOOT_HAVE_SCROLLBACK)
     for (size_t i = 0; i < conf->bindings.search.count; i++)
         xassert(conf->bindings.search.arr[i].action != BIND_ACTION_SEARCH_NONE);
+#endif /* FOOT_HAVE_SCROLLBACK */
     for (size_t i = 0; i < conf->bindings.url.count; i++)
         xassert(conf->bindings.url.arr[i].action != BIND_ACTION_URL_NONE);
 #endif
@@ -3842,9 +3884,11 @@ config_override_apply(struct config *conf, config_override_t *overrides,
         resolve_key_binding_collisions(
             conf, section_info[SECTION_KEY_BINDINGS].name,
             binding_action_map, &conf->bindings.key, KEY_BINDING) &&
+#if defined(FOOT_HAVE_SCROLLBACK)
         resolve_key_binding_collisions(
             conf, section_info[SECTION_SEARCH_BINDINGS].name,
             search_binding_action_map, &conf->bindings.search, KEY_BINDING) &&
+#endif /* FOOT_HAVE_SCROLLBACK */
         resolve_key_binding_collisions(
             conf, section_info[SECTION_URL_BINDINGS].name,
             url_binding_action_map, &conf->bindings.url, KEY_BINDING) &&
@@ -3935,7 +3979,9 @@ config_clone(const struct config *old)
     conf->app_id = xstrdup(old->app_id);
     conf->toplevel_tag = xstrdup(old->toplevel_tag);
     conf->word_delimiters = xc32dup(old->word_delimiters);
+#if defined(FOOT_HAVE_SCROLLBACK)
     conf->scrollback.indicator.text = xc32dup(old->scrollback.indicator.text);
+#endif
     conf->server_socket_path = xstrdup(old->server_socket_path);
     spawn_template_clone(&conf->bell.command, &old->bell.command);
     spawn_template_clone(&conf->desktop_notifications.command,
@@ -3969,7 +4015,9 @@ config_clone(const struct config *old)
     }
 
     key_binding_list_clone(&conf->bindings.key, &old->bindings.key);
+#if defined(FOOT_HAVE_SCROLLBACK)
     key_binding_list_clone(&conf->bindings.search, &old->bindings.search);
+#endif
     key_binding_list_clone(&conf->bindings.url, &old->bindings.url);
     key_binding_list_clone(&conf->bindings.mouse, &old->bindings.mouse);
 
@@ -4037,7 +4085,9 @@ config_free(struct config *conf)
     free(conf->toplevel_tag);
     free(conf->word_delimiters);
     spawn_template_free(&conf->bell.command);
+#if defined(FOOT_HAVE_SCROLLBACK)
     free(conf->scrollback.indicator.text);
+#endif
     spawn_template_free(&conf->desktop_notifications.command);
     spawn_template_free(&conf->desktop_notifications.command_action_arg);
     spawn_template_free(&conf->desktop_notifications.close);
@@ -4062,7 +4112,9 @@ config_free(struct config *conf)
     }
 
     free_key_binding_list(&conf->bindings.key);
+#if defined(FOOT_HAVE_SCROLLBACK)
     free_key_binding_list(&conf->bindings.search);
+#endif
     free_key_binding_list(&conf->bindings.url);
     free_key_binding_list(&conf->bindings.mouse);
     tll_free_and_free(conf->mouse.selection_override_modifiers, free);

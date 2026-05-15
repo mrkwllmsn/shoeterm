@@ -177,10 +177,14 @@ done(void *data, struct zwp_text_input_v3 *zwp_text_input_v3,
         ime_reset_preedit(seat);
 
         if (term != NULL) {
-            if (term->is_searching)
+#if defined(FOOT_HAVE_SCROLLBACK)
+            if (term->is_searching) {
                 render_refresh_search(term);
-            else
+            } else
+#endif
+            {
                 render_refresh(term);
+            }
         }
     }
 
@@ -198,11 +202,15 @@ done(void *data, struct zwp_text_input_v3 *zwp_text_input_v3,
         size_t len = strlen(text);
 
         if (term != NULL) {
+#if defined(FOOT_HAVE_SCROLLBACK)
             if (term->is_searching) {
                 search_add_chars(term, text, len);
                 render_refresh_search(term);
             } else
+#endif
+            {
                 term_to_slave(term, text, len);
+            }
         }
         ime_reset_pending_commit(seat);
     }
@@ -367,10 +375,14 @@ done(void *data, struct zwp_text_input_v3 *zwp_text_input_v3,
     ime_reset_pending_preedit(seat);
 
     if (term != NULL) {
-        if (term->is_searching)
+#if defined(FOOT_HAVE_SCROLLBACK)
+        if (term->is_searching) {
             render_refresh_search(term);
-        else
+        } else
+#endif
+        {
             render_refresh(term);
+        }
     }
 }
 
@@ -473,9 +485,11 @@ ime_update_cursor_rect(struct seat *seat)
     if (seat->ime.preedit.cells != NULL)
         goto update;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     /* Set in render_search_box() */
     if (term->is_searching)
         goto update;
+#endif
 
     int x, y, width, height;
     int col = term->grid->cursor.point.col;

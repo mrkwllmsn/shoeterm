@@ -10,6 +10,7 @@
 #include "url-mode.h"
 #include "util.h"
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 void
 cmd_scrollback_up(struct terminal *term, int rows)
 {
@@ -113,3 +114,4 @@ cmd_scrollback_down(struct terminal *term, int rows)
     render_refresh_urls(term);
     render_refresh(term);
 }
+#endif /* FOOT_HAVE_SCROLLBACK */

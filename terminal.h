@@ -341,8 +341,10 @@ enum selection_kind {
     SELECTION_BLOCK
 };
 enum selection_direction {SELECTION_UNDIR, SELECTION_LEFT, SELECTION_RIGHT};
+#if defined(FOOT_HAVE_SCROLLBACK)
 enum selection_scroll_direction {SELECTION_SCROLL_NOT, SELECTION_SCROLL_UP, SELECTION_SCROLL_DOWN};
 enum search_direction { SEARCH_BACKWARD_SAME_POSITION, SEARCH_BACKWARD, SEARCH_FORWARD };
+#endif
 
 struct ptmx_buffer {
     void *data;
@@ -365,7 +367,9 @@ enum term_surface {
 
 enum overlay_style {
     OVERLAY_NONE,
+#if defined(FOOT_HAVE_SCROLLBACK)
     OVERLAY_SEARCH,
+#endif
     OVERLAY_FLASH,
     OVERLAY_UNICODE_MODE,
 };
@@ -605,13 +609,16 @@ struct terminal {
 
         struct range pivot;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
         struct {
             int fd;
             int col;
             enum selection_scroll_direction direction;
         } auto_scroll;
+#endif
     } selection;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     bool is_searching;
     struct {
         char32_t *buf;
@@ -629,6 +636,7 @@ struct terminal {
             size_t len;
         } last;
     } search;
+#endif /* FOOT_HAVE_SCROLLBACK */
 
     struct wayland *wl;
     struct wl_window *window;
@@ -639,8 +647,10 @@ struct terminal {
     struct {
         struct {
             struct buffer_chain *grid;
+#if defined(FOOT_HAVE_SCROLLBACK)
             struct buffer_chain *search;
             struct buffer_chain *scrollback_indicator;
+#endif
             struct buffer_chain *render_timer;
             struct buffer_chain *url;
             struct buffer_chain *csd;
@@ -651,7 +661,9 @@ struct terminal {
         struct {
             bool grid;
             bool csd;
+#if defined(FOOT_HAVE_SCROLLBACK)
             bool search;
+#endif
             bool urls;
         } refresh;
 
@@ -659,7 +671,9 @@ struct terminal {
         struct {
             bool grid;
             bool csd;
+#if defined(FOOT_HAVE_SCROLLBACK)
             bool search;
+#endif
             bool urls;
         } pending;
 
@@ -681,7 +695,9 @@ struct terminal {
             int timer_fd;
         } app_id;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
         uint32_t scrollback_lines; /* Number of scrollback lines, from conf (TODO: move out from render struct?) */
+#endif
 
         struct {
             bool enabled;
@@ -722,7 +738,9 @@ struct terminal {
         struct buffer *last_overlay_buf;
         pixman_region32_t last_overlay_clip;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
         size_t search_glyph_offset;
+#endif
 
         struct timespec input_time;
     } render;
@@ -889,7 +907,9 @@ void term_erase(
     struct terminal *term,
     int start_row, int start_col,
     int end_row, int end_col);
+#if defined(FOOT_HAVE_SCROLLBACK)
 void term_erase_scrollback(struct terminal *term);
+#endif
 
 int term_row_rel_to_abs(const struct terminal *term, int row);
 void term_cursor_home(struct terminal *term);
@@ -958,8 +978,10 @@ void term_disable_app_sync_updates(struct terminal *term);
 enum term_surface term_surface_kind(
     const struct terminal *term, const struct wl_surface *surface);
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 bool term_scrollback_to_text(
     const struct terminal *term, char **text, size_t *len);
+#endif
 bool term_view_to_text(
     const struct terminal *term, char **text, size_t *len);
 bool term_command_output_to_text(

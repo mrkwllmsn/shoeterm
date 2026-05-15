@@ -397,8 +397,10 @@ struct wl_window {
         bool minimize:1;
     } wm_capabilities;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
     struct wayl_sub_surface search;
     struct wayl_sub_surface scrollback_indicator;
+#endif
     struct wayl_sub_surface render_timer;
     struct wayl_sub_surface overlay;
 

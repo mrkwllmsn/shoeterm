@@ -111,7 +111,9 @@ key_binding_new_for_seat(struct key_binding_manager *mgr,
         struct key_set set = {
             .public = {
                 .key = tll_init(),
+#if defined(FOOT_HAVE_SCROLLBACK)
                 .search = tll_init(),
+#endif
                 .url = tll_init(),
                 .mouse = tll_init(),
             },
@@ -152,7 +154,9 @@ key_binding_new_for_conf(struct key_binding_manager *mgr,
         struct key_set set = {
             .public = {
                 .key = tll_init(),
+#if defined(FOOT_HAVE_SCROLLBACK)
                 .search = tll_init(),
+#endif
                 .url = tll_init(),
                 .mouse = tll_init(),
             },
@@ -531,6 +535,7 @@ convert_key_bindings(struct key_set *set)
     }
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static void
 convert_search_bindings(struct key_set *set)
 {
@@ -541,6 +546,7 @@ convert_search_bindings(struct key_set *set)
         convert_key_binding(set, binding, &set->public.search);
     }
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 static void
 convert_url_bindings(struct key_set *set)
@@ -597,7 +603,9 @@ load_keymap(struct key_set *set)
     }
 
     convert_key_bindings(set);
+#if defined(FOOT_HAVE_SCROLLBACK)
     convert_search_bindings(set);
+#endif
     convert_url_bindings(set);
     convert_mouse_bindings(set);
 
@@ -638,7 +646,9 @@ static void NOINLINE
 unload_keymap(struct key_set *set)
 {
     key_bindings_destroy(&set->public.key);
+#if defined(FOOT_HAVE_SCROLLBACK)
     key_bindings_destroy(&set->public.search);
+#endif
     key_bindings_destroy(&set->public.url);
     key_bindings_destroy(&set->public.mouse);
     set->public.selection_overrides = 0;

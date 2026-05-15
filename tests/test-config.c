@@ -590,6 +590,7 @@ test_section_desktop_notifications(void)
     config_free(&conf);
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static void
 test_section_scrollback(void)
 {
@@ -616,6 +617,7 @@ test_section_scrollback(void)
 
     config_free(&conf);
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 static void
 test_section_url(void)
@@ -747,6 +749,7 @@ test_section_colors_dark(void)
     test_two_colors(&ctx, &parse_section_colors_dark, "jump-labels", false,
                     &conf.colors_dark.jump_label.fg,
                     &conf.colors_dark.jump_label.bg);
+#if defined(FOOT_HAVE_SCROLLBACK)
     test_two_colors(&ctx, &parse_section_colors_dark, "scrollback-indicator", false,
                     &conf.colors_dark.scrollback_indicator.fg,
                     &conf.colors_dark.scrollback_indicator.bg);
@@ -756,6 +759,7 @@ test_section_colors_dark(void)
     test_two_colors(&ctx, &parse_section_colors_dark, "search-box-match", false,
                     &conf.colors_dark.search_box.match.fg,
                     &conf.colors_dark.search_box.match.bg);
+#endif /* FOOT_HAVE_SCROLLBACK */
 
     test_two_colors(&ctx, &parse_section_colors_dark, "cursor", false,
                     &conf.colors_dark.cursor.text,
@@ -828,6 +832,7 @@ test_section_colors_light(void)
     test_two_colors(&ctx, &parse_section_colors_light, "jump-labels", false,
                     &conf.colors_light.jump_label.fg,
                     &conf.colors_light.jump_label.bg);
+#if defined(FOOT_HAVE_SCROLLBACK)
     test_two_colors(&ctx, &parse_section_colors_light, "scrollback-indicator", false,
                     &conf.colors_light.scrollback_indicator.fg,
                     &conf.colors_light.scrollback_indicator.bg);
@@ -837,6 +842,7 @@ test_section_colors_light(void)
     test_two_colors(&ctx, &parse_section_colors_light, "search-box-match", false,
                     &conf.colors_light.search_box.match.fg,
                     &conf.colors_light.search_box.match.bg);
+#endif /* FOOT_HAVE_SCROLLBACK */
 
     test_two_colors(&ctx, &parse_section_colors_light, "cursor", false,
                     &conf.colors_light.cursor.text,
@@ -1239,7 +1245,7 @@ test_section_key_bindings(void)
             &ctx, &parse_section_key_bindings,
             action, BIND_ACTION_KEY_COUNT - 1,
             binding_action_map, &conf.bindings.key, KEY_BINDING,
-            action >= BIND_ACTION_PIPE_SCROLLBACK && action <= BIND_ACTION_PIPE_COMMAND_OUTPUT,
+            action >= BIND_ACTION_PIPE_FIRST && action <= BIND_ACTION_PIPE_LAST,
             action >= BIND_ACTION_REGEX_LAUNCH && action <= BIND_ACTION_REGEX_COPY);
     }
 
@@ -1259,6 +1265,7 @@ test_section_key_bindings_collisions(void)
     config_free(&conf);
 }
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 static void
 test_section_search_bindings(void)
 {
@@ -1295,6 +1302,7 @@ test_section_search_bindings_collisions(void)
 
     config_free(&conf);
 }
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 static void
 test_section_url_bindings(void)
@@ -1534,7 +1542,9 @@ main(int argc, const char *const *argv)
     test_section_security();
     test_section_bell();
     test_section_desktop_notifications();
+#if defined(FOOT_HAVE_SCROLLBACK)
     test_section_scrollback();
+#endif
     test_section_url();
     test_section_cursor();
     test_section_mouse();
@@ -1544,8 +1554,10 @@ main(int argc, const char *const *argv)
     test_section_csd();
     test_section_key_bindings();
     test_section_key_bindings_collisions();
+#if defined(FOOT_HAVE_SCROLLBACK)
     test_section_search_bindings();
     test_section_search_bindings_collisions();
+#endif
     test_section_url_bindings();
     test_section_url_bindings_collisions();
     test_section_mouse_bindings();

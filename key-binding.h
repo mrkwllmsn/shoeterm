@@ -10,6 +10,7 @@
 enum bind_action_normal {
     BIND_ACTION_NONE,
     BIND_ACTION_NOOP,
+#if defined(FOOT_HAVE_SCROLLBACK)
     BIND_ACTION_SCROLLBACK_UP_PAGE,
     BIND_ACTION_SCROLLBACK_UP_HALF_PAGE,
     BIND_ACTION_SCROLLBACK_UP_LINE,
@@ -18,10 +19,13 @@ enum bind_action_normal {
     BIND_ACTION_SCROLLBACK_DOWN_LINE,
     BIND_ACTION_SCROLLBACK_HOME,
     BIND_ACTION_SCROLLBACK_END,
+#endif /* FOOT_HAVE_SCROLLBACK */
     BIND_ACTION_CLIPBOARD_COPY,
     BIND_ACTION_CLIPBOARD_PASTE,
     BIND_ACTION_PRIMARY_PASTE,
+#if defined(FOOT_HAVE_SCROLLBACK)
     BIND_ACTION_SEARCH_START,
+#endif
     BIND_ACTION_FONT_SIZE_UP,
     BIND_ACTION_FONT_SIZE_DOWN,
     BIND_ACTION_FONT_SIZE_RESET,
@@ -29,8 +33,10 @@ enum bind_action_normal {
     BIND_ACTION_MINIMIZE,
     BIND_ACTION_MAXIMIZE,
     BIND_ACTION_FULLSCREEN,
-    BIND_ACTION_PIPE_SCROLLBACK,
     BIND_ACTION_PIPE_VIEW,
+#if defined(FOOT_HAVE_SCROLLBACK)
+    BIND_ACTION_PIPE_SCROLLBACK,
+#endif
     BIND_ACTION_PIPE_SELECTED,
     BIND_ACTION_PIPE_COMMAND_OUTPUT,
     BIND_ACTION_SHOW_URLS_COPY,
@@ -50,8 +56,10 @@ enum bind_action_normal {
     BIND_ACTION_THEME_TOGGLE,
 
     /* Mouse specific actions - i.e. they require a mouse coordinate */
+#if defined(FOOT_HAVE_SCROLLBACK)
     BIND_ACTION_SCROLLBACK_UP_MOUSE,
     BIND_ACTION_SCROLLBACK_DOWN_MOUSE,
+#endif /* FOOT_HAVE_SCROLLBACK */
     BIND_ACTION_SELECT_BEGIN,
     BIND_ACTION_SELECT_BEGIN_BLOCK,
     BIND_ACTION_SELECT_EXTEND,
@@ -63,8 +71,13 @@ enum bind_action_normal {
 
     BIND_ACTION_KEY_COUNT = BIND_ACTION_THEME_TOGGLE + 1,
     BIND_ACTION_COUNT = BIND_ACTION_SELECT_ROW + 1,
+
+    /* Range markers (aliases) - stable regardless of FOOT_HAVE_SCROLLBACK */
+    BIND_ACTION_PIPE_FIRST = BIND_ACTION_PIPE_VIEW,
+    BIND_ACTION_PIPE_LAST = BIND_ACTION_PIPE_COMMAND_OUTPUT,
 };
 
+#if defined(FOOT_HAVE_SCROLLBACK)
 enum bind_action_search {
     BIND_ACTION_SEARCH_NONE,
     BIND_ACTION_SEARCH_SCROLLBACK_UP_PAGE,
@@ -104,6 +117,7 @@ enum bind_action_search {
     BIND_ACTION_SEARCH_UNICODE_INPUT,
     BIND_ACTION_SEARCH_COUNT,
 };
+#endif /* FOOT_HAVE_SCROLLBACK */
 
 enum bind_action_url {
     BIND_ACTION_URL_NONE,
@@ -142,7 +156,9 @@ struct wayland;
 
 struct key_binding_set {
     key_binding_list_t key;
+#if defined(FOOT_HAVE_SCROLLBACK)
     key_binding_list_t search;
+#endif
     key_binding_list_t url;
     key_binding_list_t mouse;
     xkb_mod_mask_t selection_overrides;

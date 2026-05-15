@@ -34,10 +34,14 @@ unicode_mode_updated(struct terminal *term)
     if (term == NULL)
         return;
 
-    if (term->is_searching)
+#if defined(FOOT_HAVE_SCROLLBACK)
+    if (term->is_searching) {
         render_refresh_search(term);
-    else
+    } else
+#endif
+    {
         render_refresh(term);
+    }
 }
 
 void
@@ -57,10 +61,14 @@ unicode_mode_input(struct seat *seat, struct terminal *term,
                 term->unicode_mode.character, (int)chars, utf8);
 
         if (chars != (size_t)-1) {
-            if (term->is_searching)
+#if defined(FOOT_HAVE_SCROLLBACK)
+            if (term->is_searching) {
                 search_add_chars(term, utf8, chars);
-            else
+            } else
+#endif
+            {
                 term_to_slave(term, utf8, chars);
+            }
         }
 
         seat->kbd.last_shortcut_sym = sym;

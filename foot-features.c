@@ -16,6 +16,12 @@ const char version_and_features[] =
     " -ime"
 #endif
 
+#if defined(FOOT_HAVE_SCROLLBACK)
+    " +scrollback"
+#else
+    " -scrollback"
+#endif
+
 #if defined(FOOT_GRAPHEME_CLUSTERING) && FOOT_GRAPHEME_CLUSTERING
     " +graphemes"
 #else

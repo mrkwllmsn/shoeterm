@@ -991,11 +991,13 @@ csi_dispatch(struct terminal *term, uint8_t final)
                 term->grid->cursor.lcf = false;
                 break;
 
+#if defined(FOOT_HAVE_SCROLLBACK)
             case 3: {
                 /* Erase scrollback */
                 term_erase_scrollback(term);
                 break;
             }
+#endif
 
             default:
                 UNHANDLED();
