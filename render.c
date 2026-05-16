@@ -12,6 +12,7 @@
 #include <pthread.h>
 
 #include "macros.h"
+#include "pixman.h"
 #if HAS_INCLUDE(<pthread_np.h>)
  #include <pthread_np.h>
  #define pthread_setname_np(thread, name) (pthread_set_name_np(thread, name), 0)
@@ -1202,13 +1203,82 @@ draw_cursor:
     return cell_cols;
 }
 
+#define MAX_REASONABLE_DAMAGE_PER_WORKER 32
+
+static pixman_box32_t encompass_boxes(const pixman_box32_t* restrict b1, const pixman_box32_t* restrict b2) {
+    return (pixman_box32_t){min(b1->x1, b2->x1), min(b1->y1, b2->y1), max(b1->x2, b2->x2), max(b1->y2, b2->y2)};
+}
+
+
+/*
+ * Needs tuning. This is the number of damage rectangles
+ * that each worker should be able to attach that then get merged
+ * into the final damage region. If too many damage rectangles
+ * are attached to the surface's pending buffer, performance starts to degrade,
+ * or even worse, you reach an internal Wayland limit and Wayland errors
+ */
+
+static void greedily_fix_damage(pixman_region32_t* damage) {
+    int n_rects = 0;
+    pixman_box32_t* boxes = pixman_region32_rectangles(damage, &n_rects);
+
+    if (likely(n_rects < MAX_REASONABLE_DAMAGE_PER_WORKER))
+        return;
+
+    pixman_region32_t new_region;
+    int num_out = 0;
+    /*
+     * Greedily merge damage rectangles with their right neighbor
+     * if there is one.
+     */
+    int i;
+    for (i = 0; (i + 1) < n_rects; i += 2)
+        boxes[num_out++] = encompass_boxes(&boxes[i], &boxes[i + 1]);
+
+    if (i < n_rects)
+        boxes[num_out++] = boxes[i];
+
+    pixman_region32_init_rects(&new_region, boxes, num_out);
+    pixman_region32_fini(damage);
+    *damage = new_region;
+}
+/*
+ * The maximum number of damage rectangles that any given row's
+ * damage should be split into. Needs proper tuning.
+ */
+#define MAX_DAMAGE_RECTS_PER_ROW 8
 static void
 render_row(struct terminal *term, pixman_image_t *pix,
            pixman_region32_t *damage, struct row *row,
            int row_no, int cursor_col)
 {
-    for (int col = term->cols - 1; col >= 0; col--)
-        render_cell(term, pix, damage, row, row_no, col, cursor_col == col);
+    pixman_region32_t row_damage;
+    pixman_region32_init(&row_damage);
+    for (int col = term->cols - 1; col >= 0; col--) {
+        render_cell(term, pix, &row_damage, row, row_no, col, cursor_col == col);
+    }
+    int n_boxes = 0;
+    pixman_box32_t* boxes = pixman_region32_rectangles(&row_damage, &n_boxes);
+
+    /*
+     * Split the row's damage into at most MAX_DAMAGE_RECTS_PER_ROW
+     * rectangles to fuse "islands" of stray cells. These stray cells
+     * end up causing unnecessary remerging and less accurate damage rects.
+     *
+     * What makes this possible is the fact that pixman stores the rectangles
+     * as a sorted array.
+     */
+    int rect_count_per_rect = (n_boxes + MAX_DAMAGE_RECTS_PER_ROW - 1) / MAX_DAMAGE_RECTS_PER_ROW;
+
+    for (int p = 0, i = 0; p < MAX_DAMAGE_RECTS_PER_ROW; p++) {
+        pixman_box32_t box = {0, 0, 0, 0};
+        for (; i < min((p + 1) * rect_count_per_rect, n_boxes); i++) {
+            box = encompass_boxes(&box, &boxes[i]);
+        }
+        pixman_region32_union_rect(damage, damage, box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
+        greedily_fix_damage(damage);
+    }
+    pixman_region32_fini(&row_damage);
 }
 
 static void
@@ -3599,7 +3669,6 @@ grid_render(struct terminal *term)
     {
         int box_count = 0;
         pixman_box32_t *boxes = pixman_region32_rectangles(&damage, &box_count);
-
         for (size_t i = 0; i < box_count; i++) {
             wl_surface_damage_buffer(
                 term->window->surface.surf,
