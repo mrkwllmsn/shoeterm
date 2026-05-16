@@ -1203,12 +1203,10 @@ draw_cursor:
     return cell_cols;
 }
 
-#define MAX_REASONABLE_DAMAGE_PER_WORKER 32
 
 static pixman_box32_t encompass_boxes(const pixman_box32_t* restrict b1, const pixman_box32_t* restrict b2) {
     return (pixman_box32_t){min(b1->x1, b2->x1), min(b1->y1, b2->y1), max(b1->x2, b2->x2), max(b1->y2, b2->y2)};
 }
-
 
 /*
  * Needs tuning. This is the number of damage rectangles
@@ -1217,6 +1215,7 @@ static pixman_box32_t encompass_boxes(const pixman_box32_t* restrict b1, const p
  * are attached to the surface's pending buffer, performance starts to degrade,
  * or even worse, you reach an internal Wayland limit and Wayland errors
  */
+#define MAX_REASONABLE_DAMAGE_PER_WORKER 32
 
 static void greedily_fix_damage(pixman_region32_t* damage) {
     int n_rects = 0;
@@ -1227,6 +1226,7 @@ static void greedily_fix_damage(pixman_region32_t* damage) {
 
     pixman_region32_t new_region;
     int num_out = 0;
+    
     /*
      * Greedily merge damage rectangles with their right neighbor
      * if there is one.
@@ -1242,12 +1242,14 @@ static void greedily_fix_damage(pixman_region32_t* damage) {
     pixman_region32_fini(damage);
     *damage = new_region;
 }
+
 /*
  * The maximum number of damage rectangles that any given row's
  * damage should be split into. Needs proper tuning.
  */
 #define MAX_DAMAGE_RECTS_PER_ROW 8
-static void
+
+static void 
 render_row(struct terminal *term, pixman_image_t *pix,
            pixman_region32_t *damage, struct row *row,
            int row_no, int cursor_col)
