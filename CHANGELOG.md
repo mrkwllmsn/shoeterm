@@ -73,6 +73,12 @@
 ## Unreleased
 ### Added
 ### Changed
+
+* No longer copies empty text after selection ([#2327][2327]).
+
+[2327]: https://codeberg.org/dnkl/foot/issues/2327
+
+
 ### Deprecated
 ### Removed
 ### Fixed
