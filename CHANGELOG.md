@@ -82,6 +82,8 @@
 * DECCRA not clamping or verifying the destination rectangle
   ([#2352][2352]).
 * Empty selection clearing the clipboard ([#2327][2327]).
+* Block selection area incorrectly updated when selecting back
+  across the starting column.
 
 [2353]: https://codeberg.org/dnkl/foot/issues/2353
 [2352]: https://codeberg.org/dnkl/foot/issues/2352
