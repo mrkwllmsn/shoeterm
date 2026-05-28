@@ -43,6 +43,14 @@ empty string to be set, but it must be quoted: *KEY=""*
 	Boolean. If enabled, the shell will be launched as a login shell,
 	by prepending a '-' to argv[0]. Default: _no_.
 
+*wait-for-mapped*
+	Boolean. If enabled, defer spawning the client application until
+	the window has been mapped and the first frame has been
+	displayed. The client's first *TIOCGWINSZ* will then return the
+	final window size, working around startup issues in TUI
+	applications that mishandle early *SIGWINCH* signals.
+	Default: _no_.
+
 *term*
 	Value to set the environment variable *TERM* to. Default:
 	_@default_terminfo@_

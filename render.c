@@ -4317,6 +4317,9 @@ frame_callback(void *data, struct wl_callback *wl_callback, uint32_t callback_da
     wl_callback_destroy(wl_callback);
     term->window->frame_callback = NULL;
 
+    /* --wait-for-mapped: first frame done, on-screen size is final */
+    term_spawn_pending(term);
+
     bool grid = term->render.pending.grid;
     bool csd = term->render.pending.csd;
     bool search = term->is_searching && term->render.pending.search;

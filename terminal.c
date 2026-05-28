@@ -294,6 +294,7 @@ fdm_ptmx(struct fdm *fdm, int fd, int events, void *data)
         }
 
         xassert(term->interactive_resizing.grid == NULL);
+
         vt_from_slave(term, buf, count);
     }
 
@@ -1435,16 +1436,38 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
     add_utmp_record(conf, reaper, ptmx);
 
     if (!pty_path) {
-        /* Start the slave/client */
-        if ((term->slave = slave_spawn(
-                 term->ptmx, argc, term->cwd, argv, envp, &conf->env_vars,
-                 conf->term, conf->shell, conf->login_shell,
-                 &conf->notifications)) == -1)
-        {
-            goto err;
-        }
+        if (conf->wait_for_mapped) {
+            /* Deep-copy: server.c frees argv/envp after term_init() returns */
+            char **argv_copy = xcalloc(argc + 1, sizeof(char *));
+            for (int i = 0; i < argc; i++)
+                argv_copy[i] = xstrdup(argv[i]);
 
-        reaper_add(term->reaper, term->slave, &fdm_client_terminated, term);
+            char **envp_copy = NULL;
+            if (envp != NULL) {
+                size_t n = 0;
+                while (envp[n] != NULL) n++;
+                envp_copy = xcalloc(n + 1, sizeof(char *));
+                for (size_t i = 0; i < n; i++)
+                    envp_copy[i] = xstrdup(envp[i]);
+            }
+
+            term->pending_spawn.armed = true;
+            term->pending_spawn.argc  = argc;
+            term->pending_spawn.argv  = argv_copy;
+            term->pending_spawn.envp  = envp_copy;
+            term->pending_spawn.cwd   = cwd != NULL ? xstrdup(cwd) : NULL;
+        } else {
+            /* Start the slave/client */
+            if ((term->slave = slave_spawn(
+                     term->ptmx, argc, term->cwd, argv, envp, &conf->env_vars,
+                     conf->term, conf->shell, conf->login_shell,
+                     &conf->notifications)) == -1)
+            {
+                goto err;
+            }
+
+            reaper_add(term->reaper, term->slave, &fdm_client_terminated, term);
+        }
     }
 
     /* Guess scale; we're not mapped yet, so we don't know on which
@@ -1515,6 +1538,54 @@ term_window_configured(struct terminal *term)
         const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
         LOG_INFO("gamma-correct blending: %s", gamma_correct ? "enabled" : "disabled");
     }
+}
+
+/* free deferred spawn args in --wait-for-mapped */
+static void
+pending_spawn_free(struct terminal *term)
+{
+    for (int i = 0; i < term->pending_spawn.argc; i++)
+        free(term->pending_spawn.argv[i]);
+    free(term->pending_spawn.argv);
+    if (term->pending_spawn.envp != NULL) {
+        for (char **e = term->pending_spawn.envp; *e != NULL; e++)
+            free(*e);
+        free(term->pending_spawn.envp);
+    }
+    free(term->pending_spawn.cwd);
+
+    term->pending_spawn.argc = 0;
+    term->pending_spawn.argv = NULL;
+    term->pending_spawn.envp = NULL;
+    term->pending_spawn.cwd = NULL;
+}
+
+/* --wait-for-mapped: spawn the deferred client. Idempotent. */
+void
+term_spawn_pending(struct terminal *term)
+{
+    if (!term->pending_spawn.armed || term->shutdown.in_progress)
+        return;
+
+    term->pending_spawn.armed = false;
+
+    term->slave = slave_spawn(
+        term->ptmx, term->pending_spawn.argc, term->pending_spawn.cwd,
+        term->pending_spawn.argv,
+        (const char *const *)term->pending_spawn.envp,
+        &term->conf->env_vars, term->conf->term, term->conf->shell,
+        term->conf->login_shell, &term->conf->notifications);
+
+    pending_spawn_free(term);
+
+    if (term->slave == -1) {
+        LOG_ERR("deferred slave_spawn() failed");
+        if (!term->conf->hold_at_exit)
+            term_shutdown(term);
+        return;
+    }
+
+    reaper_add(term->reaper, term->slave, &fdm_client_terminated, term);
 }
 
 /*
@@ -1824,6 +1895,9 @@ term_destroy(struct terminal *term)
     }
 
     del_utmp_record(term->conf, term->reaper, term->ptmx);
+
+    /* Frees deferred spawn args if --wait-for-mapped never spawned; else no-op */
+    pending_spawn_free(term);
 
     fdm_del(term->fdm, term->selection.auto_scroll.fd);
     fdm_del(term->fdm, term->render.app_sync_updates.timer_fd);

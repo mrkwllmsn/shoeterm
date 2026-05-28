@@ -237,6 +237,7 @@ struct config {
     char32_t *word_delimiters;
     bool login_shell;
     bool locked_title;
+    bool wait_for_mapped;
 
     struct {
         enum conf_size_type type;

@@ -86,6 +86,10 @@ the foot command line
 *-L*,*--login-shell*
 	Start a login shell, by prepending a '-' to argv[0].
 
+*--wait-for-mapped*
+	Defer spawning the client application until the window has been
+	mapped. See *wait-for-mapped* in *foot.ini*(5).
+
 *--pty*
 	Display an existing pty instead of creating one. This is useful
 	for interacting with VM consoles.

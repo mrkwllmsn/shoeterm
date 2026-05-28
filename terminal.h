@@ -419,6 +419,15 @@ struct terminal {
     pid_t slave;
     int ptmx;
 
+    /* --wait-for-mapped: deferred slave_spawn() args (#453) */
+    struct {
+        bool armed;
+        int argc;
+        char **argv;
+        char **envp;
+        char *cwd;
+    } pending_spawn;
+
     struct vt vt;
     struct grid *grid;
     struct grid normal;
@@ -868,6 +877,7 @@ int term_pt_or_px_as_pixels(
 
 
 void term_window_configured(struct terminal *term);
+void term_spawn_pending(struct terminal *term);
 
 void term_damage_rows(struct terminal *term, int start, int end);
 void term_damage_rows_in_view(struct terminal *term, int start, int end);

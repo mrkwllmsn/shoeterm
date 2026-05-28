@@ -88,6 +88,7 @@ print_usage(const char *prog_name)
         "  -m,--maximized                           start in maximized mode\n"
         "  -F,--fullscreen                          start in fullscreen mode\n"
         "  -L,--login-shell                         start shell as a login shell\n"
+        "     --wait-for-mapped                     defer client spawn until window is mapped\n"
         "  --pty=PATH                               display an existing PTY instead of creating one\n"
         "  -D,--working-directory=DIR               directory to start in (CWD)\n"
         "  -w,--window-size-pixels=WIDTHxHEIGHT     initial width and height, in pixels\n"
@@ -187,6 +188,7 @@ sanitize_signals(void)
 enum {
     PTY_OPTION = CHAR_MAX + 1,
     TOPLEVEL_TAG_OPTION = CHAR_MAX + 2,
+    WAIT_FOR_MAPPED_OPTION = CHAR_MAX + 3,
 };
 
 int
@@ -218,6 +220,7 @@ main(int argc, char *const *argv)
         {"app-id",                 required_argument, NULL, 'a'},
         {"toplevel-tag",           required_argument, NULL, TOPLEVEL_TAG_OPTION},
         {"login-shell",            no_argument,       NULL, 'L'},
+        {"wait-for-mapped",        no_argument,       NULL, WAIT_FOR_MAPPED_OPTION},
         {"working-directory",      required_argument, NULL, 'D'},
         {"font",                   required_argument, NULL, 'f'},
         {"window-size-pixels",     required_argument, NULL, 'w'},
@@ -278,6 +281,10 @@ main(int argc, char *const *argv)
 
         case 'L':
             tll_push_back(overrides, xstrdup("login-shell=yes"));
+            break;
+
+        case WAIT_FOR_MAPPED_OPTION:
+            tll_push_back(overrides, xstrdup("wait-for-mapped=yes"));
             break;
 
         case 'T':

@@ -916,6 +916,9 @@ parse_section_main(struct context *ctx)
     else if (streq(key, "login-shell"))
         return value_to_bool(ctx, &conf->login_shell);
 
+    else if (streq(key, "wait-for-mapped"))
+        return value_to_bool(ctx, &conf->wait_for_mapped);
+
     else if (streq(key, "title"))
         return value_to_str(ctx, &conf->title);
 
@@ -3592,6 +3595,7 @@ config_load(struct config *conf, const char *conf_path,
         .presentation_timings = false,
         .selection_target = SELECTION_TARGET_PRIMARY,
         .hold_at_exit = false,
+        .wait_for_mapped = false,
         .desktop_notifications = {
             .command = {
                 .argv = {.args = NULL},
