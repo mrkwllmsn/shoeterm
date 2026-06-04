@@ -23,7 +23,7 @@ graphics_ok() {
     [ -n "$SHOETABLE_FORCE" ] && return 0
     [ -n "$SHOELACE_FORCE"  ] && return 0
     [ -t 1 ] || return 1
-    case "$TERM" in foot | foot-* | *-foot | *foot*) return 0 ;; esac
+    case "$TERM" in foot | foot-* | *-foot | *foot* | *ghostty*) return 0 ;; esac
     return 1
 }
 

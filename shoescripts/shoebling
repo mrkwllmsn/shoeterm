@@ -104,7 +104,7 @@ graphics_ok() {
     [ -n "$SHOEBLING_FORCE" ] && return 0
     [ -t 1 ] || return 1                 # not a terminal (file/pipe) -> plain
     case "$TERM" in
-        foot | foot-* | *-foot | *foot*) return 0 ;;
+        foot | foot-* | *-foot | *foot* | *ghostty*) return 0 ;;
     esac
     return 1                             # unknown terminal -> plain
 }

@@ -24,7 +24,7 @@ __pb_graphics_ok() {
     [ -n "$PROMPT_BANNER_FORCE" ] && return 0
     [ -t 1 ] || return 1                 # not a tty (redirected) -> no banner
     case "$TERM" in
-        foot | foot-* | *-foot | *foot*) return 0 ;;
+        foot | foot-* | *-foot | *foot* | *ghostty*) return 0 ;;
     esac
     return 1
 }

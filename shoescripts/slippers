@@ -105,7 +105,7 @@ def graphics_ok():
     if not sys.stdout.isatty():
         return False
     term = os.environ.get("TERM", "")
-    return "foot" in term
+    return "foot" in term or "ghostty" in term
 
 
 # --------------------------------------------------------------------------- #
