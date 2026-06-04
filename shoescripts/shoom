@@ -1,0 +1,929 @@
+#!/usr/bin/env python3
+# shoom - a tiny DOOM-style first-person shooter drawn entirely with foot's
+# vector-graphics protocol. The first *real-time game* shoescript.
+#
+#   Run it:  ./bld/debug/foot sh -c 'python3 shoescripts/shoom'
+#   or, installed on PATH inside foot:   shoom
+#
+# It is a software raycaster: for every vertical screen column we cast one ray
+# into a 2D grid map, find the nearest wall, and draw a single distance-shaded
+# vertical `rectf`. A 3D view is therefore just a row of filled rectangles, sent
+# as one comma-delimited DCS drawing program redrawn over itself at the home
+# position every frame - exactly like slippers / memtop refresh their cards.
+# Enemies are billboard sprites built from vector shapes, depth-tested against
+# the per-column wall distances (a z-buffer).
+#
+# Controls:
+#   W / Up     forward            S / Down   back
+#   A          strafe left        D          strafe right
+#   Left/Right turn               Mouse      look (move to turn)
+#   Space / left-click            fire        Q / Esc    quit
+#
+# Goal: clear every imp. Walk over green crosses (health) and amber boxes (ammo)
+# to top up. A small minimap sits top-left.
+#
+# Env:  SHOOM_FORCE=1  draw even if $TERM isn't foot-like
+#       SHOOM_PLAIN=1  never draw (print a notice and exit)
+#       SHOOM_SELFTEST=1  build one frame headless, print its size, exit (CI/smoke)
+#
+# Stdlib only; no dependencies.
+
+import math
+import os
+import re
+import select
+import signal
+import sys
+import time
+
+ESC = "\033"
+
+# --------------------------------------------------------------------------- #
+#  colours
+# --------------------------------------------------------------------------- #
+SKY0, SKY1 = "#11131c", "#272b3a"          # ceiling gradient (top -> horizon)
+FLR0, FLR1 = "#2a2118", "#0d0a07"          # floor gradient (horizon -> bottom)
+FOG = "#0a0b10"                            # walls fade toward this with distance
+WALLCOL = {                                # base wall colour by map char
+    "#": "#6c6f7a",
+    "1": "#7a5a3a",
+    "2": "#3a5a7a",
+}
+FOG_DIST = 11.0                            # map units at which a wall is full fog
+
+
+def _rgb(c):
+    c = c.lstrip("#")
+    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+
+
+def mix(a, b, t):
+    t = 0.0 if t < 0 else 1.0 if t > 1 else t
+    ra, ga, ba = _rgb(a)
+    rb, gb, bb = _rgb(b)
+    return "#%02x%02x%02x" % (int(ra + (rb - ra) * t),
+                              int(ga + (gb - ga) * t),
+                              int(ba + (bb - ba) * t))
+
+
+def lighten(c, t):
+    return mix(c, "#ffffff", t)
+
+
+def darken(c, t):
+    return mix(c, "#000000", t)
+
+
+# --------------------------------------------------------------------------- #
+#  graphics-capable terminal detection (same contract as the other shoe tools)
+# --------------------------------------------------------------------------- #
+def graphics_ok():
+    if os.environ.get("SHOOM_PLAIN"):
+        return False
+    if os.environ.get("SHOOM_FORCE"):
+        return True
+    if not sys.stdout.isatty():
+        return False
+    return "foot" in os.environ.get("TERM", "")
+
+
+# --------------------------------------------------------------------------- #
+#  drawing-command buffer (lifted from slippers; coords are int-cast so callers
+#  can pass floats freely, and `text` always lands on its own physical line)
+# --------------------------------------------------------------------------- #
+def sanitize(s):
+    return "".join(ch for ch in s if ch >= " " and ch != "," and ch != "\x7f")
+
+
+class Canvas:
+    def __init__(self):
+        self.lines = []
+        self.geo = []
+
+    def _flush(self):
+        if self.geo:
+            self.lines.append(",".join(self.geo))
+            self.geo = []
+
+    def pen(self, color):
+        self.geo.append("pen " + color)
+
+    def thickness(self, n):
+        self.geo.append("thickness %d" % int(n))
+
+    def rectf(self, x, y, w, h):
+        self.geo.append("rectf %d %d %d %d" % (int(x), int(y), int(w), int(h)))
+
+    def rect(self, x, y, w, h):
+        self.geo.append("rect %d %d %d %d" % (int(x), int(y), int(w), int(h)))
+
+    def rrectf(self, x, y, w, h, r):
+        self.geo.append("rrectf %d %d %d %d %d" % (int(x), int(y), int(w), int(h), int(r)))
+
+    def line(self, x0, y0, x1, y1):
+        self.geo.append("line %d %d %d %d" % (int(x0), int(y0), int(x1), int(y1)))
+
+    def trif(self, x0, y0, x1, y1, x2, y2):
+        self.geo.append("trif %d %d %d %d %d %d" % (
+            int(x0), int(y0), int(x1), int(y1), int(x2), int(y2)))
+
+    def circf(self, cx, cy, r):
+        self.geo.append("circf %d %d %d" % (int(cx), int(cy), int(r)))
+
+    def circ(self, cx, cy, r):
+        self.geo.append("circ %d %d %d" % (int(cx), int(cy), int(r)))
+
+    def polyf(self, *pts):
+        self.geo.append("polyf " + " ".join("%d" % int(p) for p in pts))
+
+    def vgrad(self, x, y, w, h, c0, c1, steps=16):
+        if w <= 0 or h <= 0:
+            return
+        steps = max(1, min(steps, int(h)))
+        for i in range(steps):
+            y0 = y + h * i // steps
+            y1 = y + h * (i + 1) // steps
+            if y1 <= y0:
+                continue
+            self.pen(mix(c0, c1, i / max(1, steps - 1)))
+            self.rectf(x, y0, w, y1 - y0)
+
+    def text(self, x, y, s):
+        self._flush()
+        self.lines.append("text %d %d %s" % (int(x), int(y), sanitize(s)))
+
+    def dcs(self, cols, rows, bg="#000000"):
+        self._flush()
+        body = "\n".join(self.lines)
+        return "%s[H%sP>g\nsize %d %d\nbg %s\n%s\n%s\\" % (
+            ESC, ESC, cols, rows, bg, body, ESC)
+
+
+# --------------------------------------------------------------------------- #
+#  the level
+# --------------------------------------------------------------------------- #
+#  '#' '1' '2' = wall variants   '.' ' ' = floor   'S' = spawn
+#  'e' = imp    'a' = ammo pack  'h' = health pack
+MAP_SRC = [
+    "########################",
+    "#S....#........#.......#",
+    "#.....#....e...#...a...#",
+    "#..22.#........#.......#",
+    "#..22......1111.......e#",
+    "#..22......1..1...e....#",
+    "#..........1..1........#",
+    "####.##....1..1..#######",
+    "#......h...1..1...#....#",
+    "#..22......1111...#.e..#",
+    "#..22.#..........#.....#",
+    "#.....#....e.....#.....#",
+    "#..a..#.........##.....#",
+    "#.....######.##...##...#",
+    "#.........#.....h......#",
+    "#...e.....#......e.....#",
+    "#.........#...........a#",
+    "########################",
+]
+
+
+class World:
+    def __init__(self, src):
+        self.rows = list(src)
+        self.H = len(self.rows)
+        self.W = max(len(r) for r in self.rows)
+
+    def cell(self, x, y):
+        if x < 0 or y < 0 or x >= self.W or y >= self.H:
+            return "#"                       # closed arena
+        if x == 0 or y == 0 or x == self.W - 1 or y == self.H - 1:
+            return "#"
+        row = self.rows[y]
+        return row[x] if x < len(row) else " "
+
+    def is_wall(self, x, y):
+        return self.cell(int(x), int(y)) in WALLCOL
+
+    def spawns(self):
+        out = []
+        for y, row in enumerate(self.rows):
+            for x, ch in enumerate(row):
+                if ch in "Seah":
+                    out.append((ch, x + 0.5, y + 0.5))
+        return out
+
+
+class Sprite:
+    __slots__ = ("kind", "x", "y", "alive", "phase", "scr_x", "depth", "vis")
+
+    def __init__(self, kind, x, y):
+        self.kind = kind            # 'imp' | 'ammo' | 'health'
+        self.x = x
+        self.y = y
+        self.alive = True
+        self.phase = (x * 7.0 + y * 3.0)
+        self.scr_x = 0
+        self.depth = 0.0
+        self.vis = False
+
+
+# --------------------------------------------------------------------------- #
+#  sprite artwork (built from vector primitives, scaled to a screen size `s`)
+# --------------------------------------------------------------------------- #
+def draw_imp(cv, cx, cy, s):
+    h = max(8, int(s))
+    w = int(h * 0.62)
+    top = cy - h // 2
+    # legs
+    cv.pen("#5a0e0e")
+    cv.rectf(cx - w // 3, cy + h // 8, max(3, w // 5), h // 3)
+    cv.rectf(cx + w // 8, cy + h // 8, max(3, w // 5), h // 3)
+    # torso
+    cv.pen("#8b1a1a")
+    cv.rrectf(cx - w // 2, top + h // 3, w, h // 2, max(2, w // 6))
+    cv.pen("#a83232")
+    cv.rrectf(cx - w // 4, top + h // 3 + h // 12, max(2, w // 2), h // 3, max(1, w // 8))
+    # head
+    hr = max(4, w // 3)
+    hy = top + h // 4
+    cv.pen("#7a1616")
+    cv.circf(cx, hy, hr)
+    # horns
+    cv.pen("#e8e8e8")
+    cv.trif(cx - hr, hy - hr // 3, cx - hr - hr // 2, hy - hr - hr // 2, cx - hr // 3, hy - hr)
+    cv.trif(cx + hr, hy - hr // 3, cx + hr + hr // 2, hy - hr - hr // 2, cx + hr // 3, hy - hr)
+    # eyes
+    er = max(1, hr // 4)
+    cv.pen("#ffd23f")
+    cv.circf(cx - hr // 2, hy, er)
+    cv.circf(cx + hr // 2, hy, er)
+    cv.pen("#ff3b3b")
+    cv.circf(cx - hr // 2, hy, max(1, er // 2))
+    cv.circf(cx + hr // 2, hy, max(1, er // 2))
+
+
+def draw_pickup(cv, cx, cy, s, kind):
+    sz = max(7, int(s * 0.42))
+    x = cx - sz // 2
+    y = cy - sz // 2
+    if kind == "health":
+        cv.pen("#0f5a22")
+        cv.rrectf(x, y, sz, sz, 3)
+        cv.pen("#39d353")
+        cv.rectf(cx - max(1, sz // 8), y + sz // 5, max(2, sz // 4), sz - 2 * (sz // 5))
+        cv.rectf(x + sz // 5, cy - max(1, sz // 8), sz - 2 * (sz // 5), max(2, sz // 4))
+    else:  # ammo
+        cv.pen("#6b5a1f")
+        cv.rrectf(x, y, sz, sz, 2)
+        cv.pen("#e8c84a")
+        for k in range(3):
+            cv.rectf(x + 3 + k * (sz // 4), y + 3, max(2, sz // 7), sz - 6)
+
+
+def draw_gun(cv, W, base_y, bob, firing):
+    cx = W // 2
+    base = base_y + bob
+    u = max(5, base_y // 60)
+    # grip
+    cv.pen("#16181d")
+    cv.polyf(cx - 2 * u, base - 3 * u, cx + 2 * u, base - 3 * u,
+             cx + 4 * u, base + 3 * u, cx - 4 * u, base + 3 * u)
+    # slide / barrel
+    cv.pen("#2a2e37")
+    cv.rectf(cx - u, base - 9 * u, 2 * u, 7 * u)
+    cv.pen("#3a404c")
+    cv.rectf(cx - 2 * u, base - 10 * u, 4 * u, 2 * u)
+    cv.pen("#52596a")
+    cv.rectf(cx - u // 2, base - 9 * u, max(1, u), 6 * u)
+    if firing:
+        cv.pen("#fff2a8")
+        cv.circf(cx, base - 11 * u, int(2.4 * u))
+        cv.pen("#ffcf40")
+        cv.circf(cx, base - 11 * u, int(1.5 * u))
+        cv.pen("#ff8a3b")
+        cv.circf(cx, base - 11 * u, max(1, u))
+
+
+# --------------------------------------------------------------------------- #
+#  the game
+# --------------------------------------------------------------------------- #
+FOV = math.radians(66.0)
+PLANE = math.tan(FOV / 2.0)
+MOVE = 3.1                 # units / sec
+STRAFE = 2.4
+TURN = 2.6                 # rad / sec (keyboard)
+MOUSE_SENS = 0.0032        # rad / pixel
+HOLD = 0.22               # seconds a key counts as "held" after its last byte
+FIRE_COOL = 0.22
+COLW = 6                   # px per cast column (renderer step)
+
+
+class Game:
+    def __init__(self, cw, ch, cols, rows):
+        self.world = World(MAP_SRC)
+        self.cw, self.ch = cw, ch
+        self.relayout(cols, rows)
+        self.reset()
+
+    def relayout(self, cols, rows):
+        self.cols, self.rows = cols, rows
+        self.Wpx = cols * self.cw
+        self.Hpx = rows * self.ch
+        self.hud_h = max(self.ch * 2, 34)
+        self.worldH = self.Hpx - self.hud_h
+        self.horizon0 = self.worldH // 2
+
+    def reset(self):
+        self.px = self.py = 1.5
+        self.ang = 0.0
+        self.health = 100.0
+        self.ammo = 40
+        self.kills = 0
+        self.pitch = 0
+        self.flash = 0.0
+        self.walkphase = 0.0
+        self.last_fire = -1.0
+        self.held = {}
+        self.last_mx = None
+        self.last_my = None
+        self.sprites = []
+        self.total_imps = 0
+        for kind, x, y in self.world.spawns():
+            if kind == "S":
+                self.px, self.py = x, y
+            elif kind == "e":
+                self.sprites.append(Sprite("imp", x, y))
+                self.total_imps += 1
+            elif kind == "a":
+                self.sprites.append(Sprite("ammo", x, y))
+            elif kind == "h":
+                self.sprites.append(Sprite("health", x, y))
+        self.mode = "title"      # title | play | dead | win
+
+    # ---- input bookkeeping ------------------------------------------------ #
+    def press(self, token, now):
+        self.held[token] = now
+
+    def is_held(self, token, now):
+        return now - self.held.get(token, -9.0) < HOLD
+
+    def look(self, x, y):
+        if self.last_mx is not None:
+            dx = x - self.last_mx
+            if dx < -200:
+                dx = -200
+            elif dx > 200:
+                dx = 200
+            self.ang += dx * MOUSE_SENS
+            dy = y - self.last_my
+            self.pitch -= dy
+            lim = self.worldH // 3
+            self.pitch = max(-lim, min(lim, self.pitch))
+        self.last_mx = x
+        self.last_my = y
+
+    # ---- collision-aware translation -------------------------------------- #
+    def _move(self, dx, dy):
+        mx = 0.18 if dx > 0 else -0.18
+        my = 0.18 if dy > 0 else -0.18
+        if not self.world.is_wall(self.px + dx + mx, self.py):
+            self.px += dx
+        if not self.world.is_wall(self.px, self.py + dy + my):
+            self.py += dy
+
+    def fire(self, now):
+        if self.mode != "play":
+            return
+        if now - self.last_fire < FIRE_COOL or self.ammo <= 0:
+            return
+        self.last_fire = now
+        self.ammo -= 1
+        self.flash = 0.08
+        # hitscan: nearest visible imp closest to screen-centre, within a cone
+        target = None
+        best = 1e9
+        cx = self.Wpx / 2.0
+        for s in self.sprites:
+            if s.kind != "imp" or not s.alive or not s.vis:
+                continue
+            off = abs(s.scr_x - cx)
+            if off < self.Wpx * 0.16 and off < best:
+                best = off
+                target = s
+        if target is not None:
+            target.alive = False
+            self.kills += 1
+            if all(not s.alive for s in self.sprites if s.kind == "imp"):
+                self.mode = "win"
+
+    # ---- simulation ------------------------------------------------------- #
+    def update(self, dt, now):
+        if self.mode != "play":
+            return
+        dirx, diry = math.cos(self.ang), math.sin(self.ang)
+        moving = False
+        vx = vy = 0.0
+        spd = MOVE * dt
+        st = STRAFE * dt
+        if self.is_held("fwd", now):
+            vx += dirx * spd; vy += diry * spd; moving = True
+        if self.is_held("back", now):
+            vx -= dirx * spd; vy -= diry * spd; moving = True
+        if self.is_held("sl", now):
+            vx += diry * st; vy -= dirx * st; moving = True
+        if self.is_held("sr", now):
+            vx -= diry * st; vy += dirx * st; moving = True
+        if self.is_held("tl", now):
+            self.ang -= TURN * dt
+        if self.is_held("tr", now):
+            self.ang += TURN * dt
+        if vx or vy:
+            self._move(vx, vy)
+        if moving:
+            self.walkphase += dt * 9.0
+        if self.flash > 0:
+            self.flash = max(0.0, self.flash - dt)
+
+        # enemies + pickups
+        alive_player = True
+        for s in self.sprites:
+            if not s.alive:
+                continue
+            s.phase += dt
+            dx = self.px - s.x
+            dy = self.py - s.y
+            d2 = dx * dx + dy * dy
+            if s.kind == "imp":
+                if d2 < 36.0 and d2 > 0.36:        # chase within ~6 units
+                    step = 1.05 * dt / math.sqrt(d2)
+                    nx, ny = s.x + dx * step, s.y + dy * step
+                    if not self.world.is_wall(nx, s.y):
+                        s.x = nx
+                    if not self.world.is_wall(s.x, ny):
+                        s.y = ny
+                if d2 < 0.45:                       # contact damage
+                    self.health -= 22.0 * dt
+            else:                                   # pickup
+                if d2 < 0.30:
+                    if s.kind == "ammo":
+                        self.ammo += 12
+                    else:
+                        self.health = min(100.0, self.health + 25.0)
+                    s.alive = False
+        if self.health <= 0:
+            self.health = 0
+            self.mode = "dead"
+
+    # ---- raycast renderer ------------------------------------------------- #
+    def _cast(self, rdx, rdy):
+        px, py = self.px, self.py
+        mapx, mapy = int(px), int(py)
+        ddx = abs(1.0 / rdx) if rdx else 1e30
+        ddy = abs(1.0 / rdy) if rdy else 1e30
+        if rdx < 0:
+            stepx = -1; sdx = (px - mapx) * ddx
+        else:
+            stepx = 1; sdx = (mapx + 1 - px) * ddx
+        if rdy < 0:
+            stepy = -1; sdy = (py - mapy) * ddy
+        else:
+            stepy = 1; sdy = (mapy + 1 - py) * ddy
+        side = 0
+        for _ in range(128):
+            if sdx < sdy:
+                sdx += ddx; mapx += stepx; side = 0
+            else:
+                sdy += ddy; mapy += stepy; side = 1
+            if self.world.is_wall(mapx, mapy):
+                break
+        perp = (sdx - ddx) if side == 0 else (sdy - ddy)
+        if perp < 1e-4:
+            perp = 1e-4
+        return perp, side, self.world.cell(mapx, mapy)
+
+    def render(self):
+        cv = Canvas()
+        W, worldH = self.Wpx, self.worldH
+        horizon = self.horizon0 + self.pitch
+        dirx, diry = math.cos(self.ang), math.sin(self.ang)
+        planex, planey = -diry * PLANE, dirx * PLANE
+
+        # ceiling + floor
+        if horizon > 0:
+            cv.vgrad(0, 0, W, horizon, SKY0, SKY1, 14)
+        if horizon < worldH:
+            cv.vgrad(0, horizon, W, worldH - horizon, FLR1, FLR0, 14)
+
+        # walls (one rectf per cast column) + z-buffer
+        ncols = max(1, W // COLW)
+        zbuf = [1e9] * ncols
+        for i in range(ncols):
+            camx = 2.0 * i / max(1, ncols - 1) - 1.0
+            rdx = dirx + planex * camx
+            rdy = diry + planey * camx
+            perp, side, cell = self._cast(rdx, rdy)
+            zbuf[i] = perp
+            lineH = int(worldH / perp)
+            y0 = horizon - lineH // 2
+            base = WALLCOL.get(cell, "#6c6f7a")
+            col = mix(base, FOG, perp / FOG_DIST)
+            if side == 1:
+                col = darken(col, 0.30)
+            cv.pen(col)
+            cv.rectf(i * COLW, y0, COLW + 1, lineH)
+
+        # sprites (project, depth-sort far->near, occlude via z-buffer)
+        self._project_sprites(dirx, diry, planex, planey)
+        drawn = [s for s in self.sprites if s.alive and s.vis]
+        drawn.sort(key=lambda s: -s.depth)
+        for s in drawn:
+            col = int(s.scr_x // COLW)
+            if 0 <= col < ncols and s.depth >= zbuf[col]:
+                continue                      # hidden behind a nearer wall
+            size = int(worldH / s.depth)
+            cy = horizon
+            if s.kind == "imp":
+                draw_imp(cv, s.scr_x, cy, size * 0.85)
+            else:
+                draw_pickup(cv, s.scr_x, cy + size // 5, size, s.kind)
+
+        # weapon + muzzle flash
+        bob = int(math.sin(self.walkphase) * (self.ch * 0.4))
+        draw_gun(cv, W, worldH, bob + 4, self.flash > 0)
+
+        self._render_minimap(cv)
+        self._render_hud(cv)
+        if self.mode != "play":
+            self._render_overlay(cv)
+        return cv.dcs(self.cols, self.rows, bg="#000000")
+
+    def _project_sprites(self, dirx, diry, planex, planey):
+        det = planex * diry - dirx * planey
+        invdet = (1.0 / det) if det else 0.0
+        for s in self.sprites:
+            s.vis = False
+            if not s.alive:
+                continue
+            rx = s.x - self.px
+            ry = s.y - self.py
+            tx = invdet * (diry * rx - dirx * ry)
+            ty = invdet * (-planey * rx + planex * ry)   # depth (forward)
+            if ty <= 0.05:
+                continue
+            s.scr_x = (self.Wpx / 2.0) * (1.0 + tx / ty)
+            s.depth = ty
+            s.vis = -self.Wpx < s.scr_x < 2 * self.Wpx
+
+    # ---- minimap ---------------------------------------------------------- #
+    def _render_minimap(self, cv):
+        ms = max(3, self.ch // 5)
+        ox, oy = 8, 8
+        w = self.world
+        cv.pen("#000000aa")
+        cv.rectf(ox - 2, oy - 2, w.W * ms + 4, w.H * ms + 4)
+        for y in range(w.H):
+            for x in range(w.W):
+                if w.cell(x, y) in WALLCOL:
+                    c = WALLCOL[w.cell(x, y)]
+                    cv.pen(darken(c, 0.15))
+                    cv.rectf(ox + x * ms, oy + y * ms, ms, ms)
+        for s in self.sprites:
+            if not s.alive:
+                continue
+            cv.pen("#ff3b3b" if s.kind == "imp"
+                   else "#39d353" if s.kind == "health" else "#e8c84a")
+            cv.rectf(int(ox + s.x * ms - 1), int(oy + s.y * ms - 1), ms, ms)
+        # player + facing
+        pxm = ox + self.px * ms
+        pym = oy + self.py * ms
+        cv.pen("#46d6ff")
+        cv.circf(pxm, pym, max(2, ms // 2))
+        cv.thickness(1)
+        cv.line(pxm, pym, pxm + math.cos(self.ang) * ms * 2,
+                pym + math.sin(self.ang) * ms * 2)
+
+    # ---- HUD -------------------------------------------------------------- #
+    def _render_hud(self, cv):
+        W = self.Wpx
+        charw = max(5, self.cw)
+        hy = self.worldH
+        hh = self.hud_h
+        midy = hy + hh // 2
+        ty = midy + 5
+        cv.pen("#0c0e13")
+        cv.rectf(0, hy, W, hh)
+        cv.pen("#1b1f2a")
+        cv.rectf(0, hy, W, 2)
+        pad = 10
+        # health
+        cv.pen("#7f8a9c")
+        cv.text(pad, ty, "HP")
+        bx = pad + 3 * charw
+        bw = max(60, W // 6)
+        cv.pen("#33141a")
+        cv.rectf(bx, midy - 6, bw, 12)
+        hp = max(0, min(100, self.health))
+        cv.pen(mix("#ff3b3b", "#39d353", hp / 100.0))
+        cv.rectf(bx, midy - 6, int(bw * hp / 100.0), 12)
+        cv.pen("#e6ebf2")
+        cv.text(bx + bw + 8, ty, "%d" % int(hp))
+        # ammo
+        ax = W // 2 - 4 * charw
+        cv.pen("#7f8a9c")
+        cv.text(ax, ty, "AMMO")
+        cv.pen("#ffd23f")
+        cv.text(ax + 5 * charw, ty, "%d" % self.ammo)
+        # kills
+        kx = W - 16 * charw
+        cv.pen("#7f8a9c")
+        cv.text(kx, ty, "IMPS")
+        left = sum(1 for s in self.sprites if s.kind == "imp" and s.alive)
+        cv.pen("#e6ebf2")
+        cv.text(kx + 5 * charw, ty, "%d/%d" % (self.kills, self.total_imps))
+        # tiny face whose look tracks health
+        fx = W - 6 * charw
+        fy = midy
+        skin = mix("#7a1616", "#e8b07a", hp / 100.0)
+        cv.pen(skin)
+        cv.circf(fx, fy, 9)
+        cv.pen("#10131a")
+        cv.circf(fx - 3, fy - 2, 2)
+        cv.circf(fx + 3, fy - 2, 2)
+        cv.pen("#10131a")
+        if hp > 30:
+            cv.rectf(fx - 3, fy + 4, 7, 2)
+        else:
+            cv.rectf(fx - 3, fy + 5, 7, 2)
+
+    # ---- overlays (title / dead / win) ------------------------------------ #
+    def _render_overlay(self, cv):
+        W, H = self.Wpx, self.Hpx
+        charw = max(5, self.cw)
+        cv.pen("#04060bcc")
+        cv.rectf(0, 0, W, self.worldH)
+        if self.mode == "title":
+            title, sub, col = "S H O O M", "move or click to begin", "#46d6ff"
+        elif self.mode == "win":
+            title, sub, col = "LEVEL CLEAR", "press R to play again", "#39d353"
+        else:
+            title, sub, col = "YOU DIED", "press R to respawn", "#ff3b3b"
+        ty = self.worldH // 2
+        cv.pen(col)
+        cv.text((W - len(title) * charw) // 2, ty - 6, title)
+        cv.pen("#b9c2d4")
+        cv.text((W - len(sub) * charw) // 2, ty + self.ch + 4, sub)
+        if self.mode == "title":
+            hint = "WASD move  mouse look  space fire  Q quit"
+            cv.pen("#6c789a")
+            cv.text((W - len(hint) * charw) // 2, ty + 2 * self.ch + 10, hint)
+
+
+# --------------------------------------------------------------------------- #
+#  input parsing (byte stream -> semantic events) - adapted from slippers
+# --------------------------------------------------------------------------- #
+MOUSE_RE = re.compile(rb"\[<(\d+);(\d+);(\d+)([Mm])")
+CSI_FINAL = {b"A": "up", b"B": "down", b"C": "right", b"D": "left",
+             b"H": "home", b"F": "end"}
+SS3 = {b"A": "up", b"B": "down", b"C": "right", b"D": "left"}
+
+
+def parse_one(buf, i):
+    b = buf[i]
+    if b != 0x1b:
+        if b in (0x0d, 0x0a):
+            return ("enter", i + 1)
+        if b == 0x20:
+            return ("fire", i + 1)
+        if b == 0x03:
+            return ("quit", i + 1)
+        if 0x21 <= b <= 0x7e:
+            return (("char", chr(b).lower()), i + 1)
+        return ("ignore", i + 1)
+    if i + 1 >= len(buf):
+        return (None, -1)
+    n = buf[i + 1]
+    if n == 0x5b:                                  # ESC [
+        if i + 2 < len(buf) and buf[i + 2] == 0x3c:
+            m = MOUSE_RE.match(buf, i + 1)
+            if not m:
+                return (None, -1)
+            btn, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            return (("mouse", btn, x, y, m.group(4) == b"M"), m.end())
+        j = i + 2
+        while j < len(buf) and (0x30 <= buf[j] <= 0x3f):
+            j += 1
+        if j >= len(buf):
+            return (None, -1)
+        final = buf[j:j + 1]
+        if final == b"~":
+            return ("ignore", j + 1)
+        return (CSI_FINAL.get(final, "ignore"), j + 1)
+    if n == 0x4f:                                  # ESC O (SS3)
+        if i + 2 >= len(buf):
+            return (None, -1)
+        return (SS3.get(buf[i + 2:i + 3], "ignore"), i + 3)
+    return ("esc", i + 1)
+
+
+def parse_events(buf):
+    events = []
+    i = 0
+    while i < len(buf):
+        ev, j = parse_one(buf, i)
+        if j < 0:
+            break
+        if ev not in (None, "ignore"):
+            events.append(ev)
+        i = j
+    return events, buf[i:]
+
+
+# --------------------------------------------------------------------------- #
+#  terminal session
+# --------------------------------------------------------------------------- #
+class Term:
+    def __init__(self):
+        self.fd = sys.stdin.fileno()
+        self.old = None
+
+    def __enter__(self):
+        import termios
+        import tty
+        self.termios = termios
+        self.old = termios.tcgetattr(self.fd)
+        tty.setraw(self.fd)
+        self.cw, self.ch = self.query_cell()
+        self.w(ESC + "[?1049h" + ESC + "[2J" + ESC + "[?25l")
+        self.w(ESC + "[?1003h" + ESC + "[?1006h" + ESC + "[?1016h")  # motion mouse
+        return self
+
+    def __exit__(self, *a):
+        self.w(ESC + "[?1003l" + ESC + "[?1006l" + ESC + "[?1016l")
+        self.w(ESC + "[?25h" + ESC + "[?1049l")
+        if self.old:
+            self.termios.tcsetattr(self.fd, self.termios.TCSADRAIN, self.old)
+
+    def w(self, s):
+        os.write(self.fd, s.encode() if isinstance(s, str) else s)
+
+    def query_cell(self):
+        try:
+            os.write(self.fd, (ESC + "[16t").encode())
+            buf = b""
+            deadline = time.monotonic() + 0.3
+            while time.monotonic() < deadline:
+                r, _, _ = select.select([self.fd], [], [], deadline - time.monotonic())
+                if not r:
+                    break
+                buf += os.read(self.fd, 64)
+                m = re.search(rb"\[6;(\d+);(\d+)t", buf)
+                if m:
+                    return int(m.group(2)), int(m.group(1))
+        except OSError:
+            pass
+        return 8, 16
+
+
+def term_cells():
+    try:
+        sz = os.get_terminal_size(sys.stdout.fileno())
+        return sz.columns, sz.lines
+    except OSError:
+        return 80, 24
+
+
+# --------------------------------------------------------------------------- #
+#  main
+# --------------------------------------------------------------------------- #
+HELP = """shoom - a tiny DOOM-style raycaster in foot vector graphics.
+Usage: shoom            (run inside foot)
+Keys:  WASD/arrows move & strafe, Left/Right or mouse turn,
+       Space / left-click fire, R restart, Q / Esc quit."""
+
+
+def selftest():
+    g = Game(8, 16, 80, 24)
+    g.mode = "play"
+    frame = g.render()
+    print("shoom selftest OK: %d bytes, %d lines" % (
+        len(frame), frame.count("\n")))
+    return 0
+
+
+def main():
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print(HELP)
+        return 0
+    if os.environ.get("SHOOM_SELFTEST"):
+        return selftest()
+    if not graphics_ok():
+        sys.stderr.write(
+            "shoom needs a graphics-capable terminal (foot). "
+            "Run it inside foot, or set SHOOM_FORCE=1.\n")
+        return 1
+
+    resized = {"flag": False}
+
+    def on_winch(_s, _f):
+        resized["flag"] = True
+    try:
+        signal.signal(signal.SIGWINCH, on_winch)
+    except (ValueError, OSError):
+        pass
+
+    with Term() as t:
+        cols, rows = term_cells()
+        g = Game(t.cw, t.ch, cols, rows)
+        buf = b""
+        last = time.monotonic()
+        running = True
+        while running:
+            if resized["flag"]:
+                resized["flag"] = False
+                cols, rows = term_cells()
+                g.relayout(cols, rows)
+
+            t.w(g.render())
+
+            r, _, _ = select.select([t.fd], [], [], 0.033)
+            now = time.monotonic()
+            dt = min(0.05, now - last)
+            last = now
+
+            if r:
+                try:
+                    data = os.read(t.fd, 8192)
+                except OSError:
+                    break
+                if data:
+                    buf += data
+                    events, buf = parse_events(buf)
+                    for ev in events:
+                        if ev == "quit":
+                            running = False
+                            break
+                        if g.mode != "play":
+                            # any key / movement / click leaves the overlay
+                            if ev == "esc":
+                                running = False
+                                break
+                            if isinstance(ev, tuple) and ev[0] == "char" and ev[1] == "q":
+                                running = False
+                                break
+                            if g.mode == "title":
+                                g.mode = "play"
+                            elif isinstance(ev, tuple) and ev[0] == "char" and ev[1] == "r":
+                                g.reset(); g.mode = "play"
+                            elif ev in ("fire", "enter"):
+                                if g.mode in ("dead", "win"):
+                                    g.reset(); g.mode = "play"
+                            continue
+                        self_dispatch(g, ev, now, lambda: None)
+                        if isinstance(ev, tuple) and ev[0] == "char" and ev[1] == "q":
+                            running = False
+                            break
+            g.update(dt, now)
+    return 0
+
+
+def self_dispatch(g, ev, now, _):
+    """Apply one in-play event to the game."""
+    if ev == "fire":
+        g.fire(now)
+    elif ev == "up":
+        g.press("fwd", now)
+    elif ev == "down":
+        g.press("back", now)
+    elif ev == "left":
+        g.press("tl", now)
+    elif ev == "right":
+        g.press("tr", now)
+    elif ev == "esc":
+        g.mode = "title"
+    elif isinstance(ev, tuple) and ev[0] == "char":
+        c = ev[1]
+        if c == "w":
+            g.press("fwd", now)
+        elif c == "s":
+            g.press("back", now)
+        elif c == "a":
+            g.press("sl", now)
+        elif c == "d":
+            g.press("sr", now)
+        elif c == "r":
+            g.reset(); g.mode = "play"
+    elif isinstance(ev, tuple) and ev[0] == "mouse":
+        _, btn, x, y, press = ev
+        motion = btn & 32
+        if motion:
+            g.look(x, y)               # turn/pitch only on actual movement
+        else:
+            g.last_mx, g.last_my = x, y  # sync so the next motion delta is sane
+        if press and not motion and (btn & 0b11) == 0 and (btn & 64) == 0:
+            g.fire(now)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)
