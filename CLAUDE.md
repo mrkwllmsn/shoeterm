@@ -142,6 +142,16 @@ ones print the commands / input they send so usage is self-documenting.
   clickable F-key bar, alt-screen with clean teardown. v1 is navigate + view
   (copy/move/mkdir/delete are confirm-only stubs). `slippers [start-dir]`;
   `SLIPPERS_FORCE`/`_PLAIN` like the others.
+- **`shoom`** — a DOOM-style first-person shooter and the first **real-time
+  game** shoescript (Python, stdlib only). A software **raycaster**: each screen
+  column casts one ray into a grid map and draws one distance-shaded vertical
+  `rectf`, so the 3D view is a row of filled rects redrawn over itself each
+  frame (z-buffer in a list; imps are billboard sprites depth-tested against
+  it). WASD + mouse-look (`ESC[?1003h` motion reporting), space/click to shoot;
+  minimap + status bar; health/ammo pickups. `SHOOM_FORCE`/`_PLAIN`;
+  `SHOOM_SELFTEST=1` renders one frame headless (no GUI) for a smoke check. v1
+  is one hand-built level + contact-damage imps + one weapon (no enemy
+  projectiles / doors / texture-mapped walls yet).
 
 ### Graphics-or-plain detection (shoestring / shoelace / shoebling / slippers)
 

@@ -308,6 +308,38 @@ confirmation dialog but do not yet touch the filesystem. As with the other shoe
 tools it only runs on a graphics-capable terminal (`SLIPPERS_FORCE=1` /
 `SLIPPERS_PLAIN=1` override the detection).
 
+### shoom — a DOOM-style game
+
+[`shoom`](../shoescripts/shoom) is a tiny first-person shooter — the first
+*real-time game* shoescript. It is a software **raycaster**: for every vertical
+screen column it casts one ray into a 2D grid map, finds the nearest wall, and
+draws a single distance-shaded vertical `rectf`, so the whole 3D view is just a
+row of filled rectangles redrawn over itself at the home position each frame
+(like `memtop`/`slippers` refresh their cards). Enemies are billboard sprites
+built from vector shapes, depth-tested against the per-column wall distances.
+
+```sh
+./bld/debug/foot sh -c 'python3 shoescripts/shoom'   # or, on PATH inside foot:
+shoom
+```
+
+| Key | Action |
+|---|---|
+| W / Up · S / Down | move forward / back |
+| A · D | strafe left / right |
+| Left / Right · **mouse** | turn (mouse move = look) |
+| Space / left-click | fire |
+| R | restart · Q / Esc | quit |
+
+Clear every imp to win; walk over green crosses (health) and amber boxes (ammo)
+to top up. A minimap sits top-left and a DOOM-ish status bar (health / ammo /
+imps / marine face) along the bottom. It queries the real cell size with
+`ESC[16t`, fills the whole terminal, enables SGR-pixel mouse-motion reporting
+(`ESC[?1003h ESC[?1006h ESC[?1016h`) for mouse-look, and restores the screen
+cleanly on exit. Graphics-only like the other shoe tools (`SHOOM_FORCE=1` /
+`SHOOM_PLAIN=1` override the detection; `SHOOM_SELFTEST=1` renders one frame
+headless and exits, for CI). Stdlib-only Python.
+
 ## Notes and limitations
 
 - The image is placed at the current cursor position and scrolls with the
