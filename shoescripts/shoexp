@@ -1,0 +1,1420 @@
+#!/usr/bin/env python3
+# shoexp - a (lovingly fake) Windows XP desktop drawn entirely with foot's
+# vector-graphics protocol, driven by the mouse.
+#
+#   Run it:   ./bld/debug/foot sh -c 'python3 shoescripts/shoexp'
+#   or, installed on PATH inside foot:   shoexp
+#
+# It's a joke demo: the iconic "Bliss" wallpaper, desktop icons, a Start menu
+# and a blue taskbar with a live tray clock. Double-click an icon (or pick it
+# from Start) to open a draggable window:
+#
+#   Calculator      a working clickable calculator
+#   My Computer      drive icons + a capacity bar; double-click C: to browse
+#   My Documents      a real file explorer rooted at your home folder
+#   Recycle Bin      (it's empty, obviously)
+#
+# The file explorer ports slippers' Entry/Pane scan model, so it walks your
+# ACTUAL filesystem - double-click folders to descend, ".." to go up.
+#
+# Like slippers, every frame is one comma-delimited DCS drawing program
+# (ESC P > g ... ESC \) printed over itself at the home position. Mouse reports
+# arrive as SGR-pixel coordinates that line up 1:1 with the canvas, so a click
+# maps straight onto the drawn pixels - windows, buttons, icons and all.
+#
+# Mouse:  double-click desktop icons / drive rows / folders to open
+#         drag a window by its title bar;  click controls _ and X
+#         click Start for the menu;  click taskbar buttons to focus windows
+#         wheel scrolls the file explorer
+# Keys:   Esc closes the focused window (or the Start menu);  q / Ctrl-C quit
+#
+# Env:  SHOEXP_FORCE=1     draw even if $TERM isn't foot-like
+#       SHOEXP_PLAIN=1     never draw (print a notice and exit)
+#       SHOEXP_SELFTEST=1  render one frame headless and exit (smoke check)
+#
+# Stdlib only; no dependencies.
+
+import os
+import re
+import select
+import signal
+import shutil
+import socket
+import stat
+import sys
+import termios
+import time
+import tty
+
+ESC = "\033"
+
+# --------------------------------------------------------------------------- #
+#  palette (Luna blue, give or take)
+# --------------------------------------------------------------------------- #
+C = {
+    "sky0":     "#1f6fe5",   # wallpaper sky, top
+    "sky1":     "#3f8ff0",   # wallpaper sky, mid
+    "sky2":     "#a9d6ff",   # wallpaper sky, near horizon
+    "hill0":    "#9ccb50",   # hill crest highlight
+    "hill1":    "#6ba83a",   # hill body
+    "hill2":    "#3f7d27",   # hill shadow, bottom
+    "cloud":    "#ffffffcc",
+
+    "tb0":      "#3f8df4",   # taskbar gradient, top
+    "tb1":      "#1c50c9",   # taskbar gradient, bottom
+    "tbhi":     "#7fb6ff",   # taskbar top highlight line
+    "tray0":    "#1b53c9",   # tray well, top
+    "tray1":    "#1142a8",   # tray well, bottom
+
+    "start0":   "#5bbf3a",   # start button, top
+    "start1":   "#2f7d28",   # start button, bottom
+    "starttxt": "#ffffff",
+
+    "win":      "#ece9d8",   # XP window beige
+    "winframe": "#0831d9",   # active window frame blue
+    "winframei": "#9bb4d6",  # inactive frame
+    "ttl0":     "#3b8bf0",   # active title bar, top
+    "ttl1":     "#1c50c9",   # active title bar, bottom
+    "ttl0i":    "#9cb6df",   # inactive title bar, top
+    "ttl1i":    "#7f9cc8",   # inactive title bar, bottom
+    "ttltxt":   "#ffffff",
+    "closebtn": "#e0492f",
+    "closehi":  "#ff7a5f",
+    "ctrlbtn":  "#4f93f2",
+    "ctrlhi":   "#8fbcfb",
+
+    "ink":      "#10243f",
+    "dim":      "#5a6b86",
+    "white":    "#ffffff",
+    "sunken":   "#ffffff",
+    "sunkenbd": "#7f9db9",
+    "selrow0":  "#3a93ff",
+    "selrow1":  "#1f6fe0",
+
+    "dir":      "#f6c344",   # folder yellow
+    "diredge":  "#caa01f",
+    "file":     "#dfe3ea",
+    "fileink":  "#2a3a52",
+    "exec":     "#7ed957",
+    "link":     "#b69bff",
+
+    "iconlbl":  "#ffffff",
+    "iconsel":  "#3a6ea5aa",
+    "shadow":   "#00000040",
+}
+
+
+def _rgb(c):
+    c = c.lstrip("#")
+    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+
+
+def mix(a, b, t):
+    ra, ga, ba = _rgb(a)
+    rb, gb, bb = _rgb(b)
+    return "#%02x%02x%02x" % (int(ra + (rb - ra) * t),
+                              int(ga + (gb - ga) * t),
+                              int(ba + (bb - ba) * t))
+
+
+def lighten(c, t):
+    return mix(c, "#ffffff", t)
+
+
+def darken(c, t):
+    return mix(c, "#000000", t)
+
+
+# --------------------------------------------------------------------------- #
+#  graphics-capable terminal detection
+# --------------------------------------------------------------------------- #
+def graphics_ok():
+    if os.environ.get("SHOEXP_PLAIN"):
+        return False
+    if os.environ.get("SHOEXP_FORCE"):
+        return True
+    if not sys.stdout.isatty():
+        return False
+    term = os.environ.get("TERM", "")
+    return "foot" in term or "ghostty" in term
+
+
+# --------------------------------------------------------------------------- #
+#  drawing-command buffer  (same discipline as slippers: comma-join geometry,
+#  flush before every text because `text` runs to end of line)
+# --------------------------------------------------------------------------- #
+class Canvas:
+    def __init__(self):
+        self.lines = []
+        self.geo = []
+
+    def _flush(self):
+        if self.geo:
+            self.lines.append(",".join(self.geo))
+            self.geo = []
+
+    def cmd(self, s):
+        self.geo.append(s)
+
+    def pen(self, color):
+        self.geo.append("pen " + color)
+
+    def thickness(self, n):
+        self.geo.append("thickness %d" % n)
+
+    def clip(self, x, y, w, h):
+        self.geo.append("clip %d %d %d %d" % (x, y, w, h))
+
+    def noclip(self):
+        self.geo.append("noclip")
+
+    def rectf(self, x, y, w, h):
+        self.geo.append("rectf %d %d %d %d" % (x, y, w, h))
+
+    def rect(self, x, y, w, h):
+        self.geo.append("rect %d %d %d %d" % (x, y, w, h))
+
+    def rrectf(self, x, y, w, h, r):
+        self.geo.append("rrectf %d %d %d %d %d" % (x, y, w, h, r))
+
+    def rrect(self, x, y, w, h, r):
+        self.geo.append("rrect %d %d %d %d %d" % (x, y, w, h, r))
+
+    def line(self, x0, y0, x1, y1):
+        self.geo.append("line %d %d %d %d" % (x0, y0, x1, y1))
+
+    def trif(self, x0, y0, x1, y1, x2, y2):
+        self.geo.append("trif %d %d %d %d %d %d" % (x0, y0, x1, y1, x2, y2))
+
+    def circf(self, cx, cy, r):
+        self.geo.append("circf %d %d %d" % (cx, cy, r))
+
+    def circ(self, cx, cy, r):
+        self.geo.append("circ %d %d %d" % (cx, cy, r))
+
+    def arc(self, cx, cy, r, a0, a1):
+        self.geo.append("arc %d %d %d %d %d" % (cx, cy, r, a0, a1))
+
+    def polyf(self, pts):
+        self.geo.append("polyf " + " ".join("%d" % v for v in pts))
+
+    def bezier(self, x0, y0, x1, y1, x2, y2, x3, y3):
+        self.geo.append("bezier %d %d %d %d %d %d %d %d" %
+                        (x0, y0, x1, y1, x2, y2, x3, y3))
+
+    def vgrad(self, x, y, w, h, c0, c1, steps=18):
+        if w <= 0 or h <= 0:
+            return
+        steps = max(1, min(steps, h))
+        for i in range(steps):
+            y0 = y + h * i // steps
+            y1 = y + h * (i + 1) // steps
+            if y1 <= y0:
+                continue
+            self.pen(mix(c0, c1, i / max(1, steps - 1)))
+            self.rectf(x, y0, w, y1 - y0)
+
+    def text(self, x, y, s):
+        self._flush()
+        self.lines.append("text %d %d %s" % (x, y, sanitize(s)))
+
+    def dcs(self, cols, rows, bg):
+        self._flush()
+        body = "\n".join(self.lines)
+        return "%s[H%sP>g\nsize %d %d\nbg %s\n%s\n%s\\" % (
+            ESC, ESC, cols, rows, bg, body, ESC)
+
+
+def sanitize(s):
+    return "".join(ch for ch in s if ch >= " " and ch != "," and ch != "\x7f")
+
+
+# --------------------------------------------------------------------------- #
+#  filesystem model (ported from slippers)
+# --------------------------------------------------------------------------- #
+class Entry:
+    __slots__ = ("name", "path", "is_dir", "is_link", "is_exec", "size")
+
+    def __init__(self, name, path, st, is_link):
+        self.name = name
+        self.path = path
+        self.is_link = is_link
+        self.is_dir = stat.S_ISDIR(st.st_mode) if st else False
+        self.is_exec = bool(st and (st.st_mode & 0o111) and not self.is_dir)
+        self.size = st.st_size if st else 0
+
+
+class Pane:
+    def __init__(self, path):
+        self.cwd = os.path.abspath(path)
+        self.sel = 0
+        self.top = 0
+        self.entries = []
+        self.scan()
+
+    def scan(self, keep=None):
+        items = []
+        parent = os.path.dirname(self.cwd)
+        if parent != self.cwd:
+            try:
+                items.append(Entry("..", parent, os.stat(parent), False))
+            except OSError:
+                items.append(Entry("..", parent, None, False))
+        try:
+            with os.scandir(self.cwd) as it:
+                for de in it:
+                    try:
+                        st = de.stat(follow_symlinks=True)
+                    except OSError:
+                        st = None
+                    items.append(Entry(de.name, de.path, st, de.is_symlink()))
+        except OSError:
+            pass
+        rest = [e for e in items if e.name != ".."]
+        rest.sort(key=lambda e: (not e.is_dir, e.name.lower()))
+        self.entries = ([items[0]] if items and items[0].name == ".." else []) + rest
+        self.sel = 0
+        self.top = 0
+        if keep:
+            for i, e in enumerate(self.entries):
+                if e.name == keep:
+                    self.sel = i
+                    break
+
+    def cur(self):
+        return self.entries[self.sel] if self.entries else None
+
+    def clamp(self, visible):
+        if self.sel < 0:
+            self.sel = 0
+        if self.sel >= len(self.entries):
+            self.sel = max(0, len(self.entries) - 1)
+        if visible > 0:
+            if self.sel < self.top:
+                self.top = self.sel
+            elif self.sel >= self.top + visible:
+                self.top = self.sel - visible + 1
+            maxtop = max(0, len(self.entries) - visible)
+            self.top = max(0, min(self.top, maxtop))
+
+    def enter(self):
+        e = self.cur()
+        if e and e.is_dir:
+            try:
+                os.listdir(e.path)
+            except OSError:
+                return
+            self.cwd = os.path.abspath(e.path)
+            self.scan()
+
+    def up(self):
+        parent = os.path.dirname(self.cwd)
+        if parent != self.cwd:
+            leaving = os.path.basename(self.cwd)
+            self.cwd = parent
+            self.scan(keep=leaving)
+
+
+def human(n):
+    n = float(n)
+    for unit in ("B", "K", "M", "G", "T"):
+        if n < 1024 or unit == "T":
+            if unit == "B":
+                return "%d B" % int(n)
+            return "%.1f %s" % (n, unit)
+        n /= 1024.0
+
+
+# --------------------------------------------------------------------------- #
+#  windows
+# --------------------------------------------------------------------------- #
+WIN_SIZE = {
+    "calc":       (208, 296),
+    "mycomputer": (440, 312),
+    "explorer":   (560, 380),
+    "recycle":    (380, 240),
+}
+WIN_TITLE = {
+    "calc":       "Calculator",
+    "mycomputer": "My Computer",
+    "explorer":   "Explorer",
+    "recycle":    "Recycle Bin",
+}
+
+
+class Win:
+    _seq = 0
+
+    def __init__(self, kind, x, y):
+        Win._seq += 1
+        self.id = Win._seq
+        self.kind = kind
+        self.x, self.y = x, y
+        self.w, self.h = WIN_SIZE[kind]
+        self.title = WIN_TITLE[kind]
+        self.minimized = False
+        self.state = {}
+        if kind == "calc":
+            self.state = {"cur": "0", "acc": None, "op": None, "fresh": True}
+        elif kind == "explorer":
+            self.pane = Pane(os.path.expanduser("~"))
+            self.title = "Explorer"
+
+    # window-local geometry helpers ----------------------------------------
+    @property
+    def title_h(self):
+        return 26
+
+    def body_rect(self):
+        return (self.x + 4, self.y + self.title_h,
+                self.w - 8, self.h - self.title_h - 4)
+
+    def contains(self, px, py):
+        return self.x <= px < self.x + self.w and self.y <= py < self.y + self.h
+
+    def in_title(self, px, py):
+        return (self.x <= px < self.x + self.w and
+                self.y <= py < self.y + self.title_h)
+
+
+# --------------------------------------------------------------------------- #
+#  desktop icons
+# --------------------------------------------------------------------------- #
+DESK_ICONS = [
+    ("mycomputer", "My Computer"),
+    ("explorer",   "My Documents"),
+    ("recycle",    "Recycle Bin"),
+]
+ICON_W, ICON_H = 80, 70
+
+
+# --------------------------------------------------------------------------- #
+#  the desktop / window manager
+# --------------------------------------------------------------------------- #
+class Desktop:
+    def __init__(self, W, H, cw, ch):
+        self.W, self.H, self.cw, self.ch = W, H, cw, ch
+        self.charw = max(5, cw)
+        self.taskbar_h = 30
+        self.wins = []                 # z-order: last is topmost
+        self.start_open = False
+        self.icon_sel = -1
+        self.cascade = 0
+        self.user = os.environ.get("USER") or os.environ.get("USERNAME") or "user"
+        try:
+            self.host = socket.gethostname()
+        except OSError:
+            self.host = "localhost"
+
+    # ----- icon hit boxes (top-left column) -------------------------------
+    def icon_rect(self, i):
+        x = 16
+        y = 16 + i * (ICON_H + 8)
+        return (x, y, ICON_W, ICON_H)
+
+    def icon_at(self, px, py):
+        for i in range(len(DESK_ICONS)):
+            x, y, w, h = self.icon_rect(i)
+            if x <= px < x + w and y <= py < y + h:
+                return i
+        return None
+
+    # ----- start button / taskbar -----------------------------------------
+    def start_rect(self):
+        return (0, self.H - self.taskbar_h, 92, self.taskbar_h)
+
+    def taskbar_btn_rect(self, idx):
+        bx = 100 + idx * 164
+        return (bx, self.H - self.taskbar_h + 4, 158, self.taskbar_h - 8)
+
+    def start_menu_rect(self):
+        w, h = 232, 300
+        return (0, self.H - self.taskbar_h - h, w, h)
+
+    # ----- window management ----------------------------------------------
+    def focus(self, win):
+        if win in self.wins and self.wins[-1] is not win:
+            self.wins.remove(win)
+            self.wins.append(win)
+        win.minimized = False
+
+    def top_win(self):
+        for w in reversed(self.wins):
+            if not w.minimized:
+                return w
+        return None
+
+    def win_at(self, px, py):
+        for w in reversed(self.wins):
+            if not w.minimized and w.contains(px, py):
+                return w
+        return None
+
+    def open_app(self, kind, path=None):
+        # focus an existing window of this kind unless it's the explorer
+        # (the explorer can have several, e.g. My Documents + C:)
+        if kind != "explorer":
+            for w in self.wins:
+                if w.kind == kind:
+                    self.focus(w)
+                    return w
+        x = 70 + (self.cascade % 6) * 28
+        y = 40 + (self.cascade % 6) * 24
+        self.cascade += 1
+        win = Win(kind, x, y)
+        if kind == "explorer" and path:
+            win.pane = Pane(path)
+        self.wins.append(win)
+        return win
+
+    def close(self, win):
+        if win in self.wins:
+            self.wins.remove(win)
+
+
+# =========================================================================== #
+#  rendering
+# =========================================================================== #
+def draw_wallpaper(cv, d):
+    W, H = d.W, d.H
+    hill_top = int(H * 0.66)
+    cv.vgrad(0, 0, W, hill_top + 4, C["sky0"], C["sky2"], 26)
+    # soft clouds
+    cv.pen(C["cloud"])
+    for (cx, cy, r) in ((int(W * 0.18), int(H * 0.16), 16),
+                        (int(W * 0.74), int(H * 0.10), 13),
+                        (int(W * 0.60), int(H * 0.26), 11)):
+        cv.circf(cx, cy, r)
+        cv.circf(cx + r, cy + 3, int(r * 0.8))
+        cv.circf(cx - r, cy + 4, int(r * 0.7))
+        cv.rectf(cx - r, cy + 2, 2 * r, r)
+    # the rolling green hill: a filled polygon with a curved crest, then a
+    # vertical green gradient banded on top of it for depth
+    crest = []
+    n = 24
+    for i in range(n + 1):
+        x = W * i // n
+        # two gentle humps
+        import_y = hill_top + int(18 * _wave(i / n))
+        crest.append((x, import_y))
+    pts = []
+    for (x, y) in crest:
+        pts += [x, y]
+    pts += [W, H, 0, H]
+    cv.pen(C["hill1"])
+    cv.polyf(pts)
+    # banded shading under the crest (clip to below the average crest line)
+    base = hill_top + 20
+    cv.vgrad(0, base, W, H - base, C["hill1"], C["hill2"], 14)
+    # crest highlight
+    cv.thickness(3)
+    cv.pen(C["hill0"])
+    for i in range(n):
+        x0, y0 = crest[i]
+        x1, y1 = crest[i + 1]
+        cv.line(x0, y0, x1, y1)
+    cv.thickness(1)
+
+
+def _wave(t):
+    # cheap smooth 0..1..0-ish double bump without importing math at call time
+    # (sin via a polynomial approximation is overkill; use a parabola pair)
+    import math
+    return (math.sin(t * math.pi * 2.0) * 0.5 + 0.5)
+
+
+def draw_desktop_icons(cv, d):
+    for i, (kind, label) in enumerate(DESK_ICONS):
+        x, y, w, h = d.icon_rect(i)
+        if i == d.icon_sel:
+            cv.pen(C["iconsel"])
+            cv.rrectf(x, y, w, h, 4)
+        cx = x + w // 2
+        iy = y + 8
+        draw_big_icon(cv, kind, cx, iy)
+        # label with a faint shadow for legibility on the wallpaper
+        draw_label_centered(cv, d, cx, y + h - 14, label)
+
+
+def draw_label_centered(cv, d, cx, ty, label):
+    tw = len(label) * d.charw
+    tx = cx - tw // 2
+    tx = max(2, min(tx, d.W - tw - 2))      # keep on-screen (wide labels)
+    cv.pen("#00000070")
+    cv.text(tx + 1, ty + 1, label)
+    cv.pen(C["iconlbl"])
+    cv.text(tx, ty, label)
+
+
+def draw_big_icon(cv, kind, cx, top):
+    # 48px-ish icons centered on cx, starting at y=top
+    if kind == "mycomputer":
+        # CRT monitor
+        cv.pen("#c9d2dc"); cv.rrectf(cx - 20, top, 40, 30, 4)
+        cv.pen("#4a627e"); cv.rrectf(cx - 16, top + 3, 32, 22, 2)
+        cv.vgrad(cx - 16, top + 3, 32, 22, "#2e6bd6", "#7fb0f0", 8)
+        cv.pen("#aeb8c4"); cv.rectf(cx - 6, top + 30, 12, 5)
+        cv.pen("#8b97a6"); cv.rrectf(cx - 14, top + 34, 28, 6, 2)
+    elif kind == "explorer":
+        # yellow folder with a page peeking out
+        cv.pen("#fefefe"); cv.rrectf(cx - 10, top + 4, 26, 22, 2)
+        cv.pen(C["diredge"]); cv.polyf([cx - 20, top + 8, cx - 8, top + 8,
+                                        cx - 4, top + 4, cx - 20, top + 4])
+        cv.pen(C["dir"]); cv.rrectf(cx - 20, top + 7, 40, 22, 3)
+        cv.pen(lighten(C["dir"], 0.3)); cv.rectf(cx - 18, top + 9, 36, 3)
+    elif kind == "recycle":
+        # translucent green recycle bin
+        cv.pen("#9fb6a6"); cv.polyf([cx - 14, top + 6, cx + 14, top + 6,
+                                     cx + 10, top + 34, cx - 10, top + 34])
+        cv.pen("#bcd3c2"); cv.polyf([cx - 12, top + 8, cx + 12, top + 8,
+                                     cx + 9, top + 32, cx - 9, top + 32])
+        cv.pen("#5aa05a")
+        for dx in (-6, 0, 6):
+            cv.rectf(cx + dx, top + 11, 2, 19)
+        cv.pen("#3f8a3f"); cv.rrectf(cx - 16, top + 2, 32, 6, 2)
+        # little recycle arrows on the lid
+        cv.pen("#2f7d2f"); cv.arc(cx, top + 20, 7, 200, 340)
+
+
+def draw_window(cv, d, win, focused):
+    x, y, w, h = win.x, win.y, win.w, win.h
+    th = win.title_h
+    cw = d.charw
+    # drop shadow
+    cv.pen(C["shadow"]); cv.rrectf(x + 4, y + 5, w, h, 8)
+    # frame
+    cv.pen(C["winframe"] if focused else C["winframei"])
+    cv.rrectf(x, y, w, h, 8)
+    # title bar gradient
+    if focused:
+        cv.vgrad(x + 3, y + 3, w - 6, th - 2, C["ttl0"], C["ttl1"], 8)
+    else:
+        cv.vgrad(x + 3, y + 3, w - 6, th - 2, C["ttl0i"], C["ttl1i"], 8)
+    cv.pen(lighten(C["ttl0"], 0.35) if focused else "#ffffff55")
+    cv.rectf(x + 3, y + 4, w - 6, 1)
+    # title icon + text
+    draw_title_icon(cv, win.kind, x + 8, y + 5)
+    cv.pen("#0a1b39"); cv.text(x + 28 + 1, y + 18 + 1, win.title)
+    cv.pen(C["ttltxt"]); cv.text(x + 28, y + 18, win.title)
+    # window controls: minimize (_) and close (X)
+    cb = close_btn_rect(win)
+    mb = min_btn_rect(win)
+    cv.vgrad(mb[0], mb[1], mb[2], mb[3], C["ctrlhi"], C["ctrlbtn"], 5)
+    cv.thickness(2); cv.pen(C["white"])
+    cv.line(mb[0] + 4, mb[1] + mb[3] - 5, mb[0] + mb[2] - 5, mb[1] + mb[3] - 5)
+    cv.vgrad(cb[0], cb[1], cb[2], cb[3], C["closehi"], C["closebtn"], 5)
+    cv.pen(C["white"])
+    cv.line(cb[0] + 5, cb[1] + 4, cb[0] + cb[2] - 5, cb[1] + cb[3] - 4)
+    cv.line(cb[0] + cb[2] - 5, cb[1] + 4, cb[0] + 5, cb[1] + cb[3] - 4)
+    cv.thickness(1)
+    # body
+    bx, by, bw, bh = win.body_rect()
+    cv.pen(C["win"]); cv.rectf(bx, by, bw, bh)
+    cv.clip(bx, by, bw, bh)
+    if win.kind == "calc":
+        draw_calc(cv, d, win)
+    elif win.kind == "mycomputer":
+        draw_mycomputer(cv, d, win)
+    elif win.kind == "explorer":
+        draw_explorer(cv, d, win)
+    elif win.kind == "recycle":
+        draw_recycle(cv, d, win)
+    cv.noclip()
+
+
+def draw_title_icon(cv, kind, x, y):
+    if kind == "calc":
+        cv.pen("#e8edf2"); cv.rrectf(x, y, 16, 16, 2)
+        cv.pen("#2e6bd6"); cv.rectf(x + 2, y + 2, 12, 4)
+        cv.pen("#9aa6b4")
+        for r in range(2):
+            for c in range(3):
+                cv.rectf(x + 2 + c * 4, y + 8 + r * 4, 3, 3)
+    elif kind == "explorer":
+        cv.pen(C["dir"]); cv.rrectf(x, y + 2, 16, 12, 2)
+        cv.pen(lighten(C["dir"], 0.3)); cv.rectf(x + 1, y + 3, 14, 2)
+    elif kind == "mycomputer":
+        cv.pen("#c9d2dc"); cv.rrectf(x, y + 1, 16, 12, 2)
+        cv.vgrad(x + 2, y + 3, 12, 7, "#2e6bd6", "#7fb0f0", 4)
+    elif kind == "recycle":
+        cv.pen("#bcd3c2"); cv.polyf([x + 2, y + 2, x + 14, y + 2,
+                                     x + 12, y + 15, x + 4, y + 15])
+        cv.pen("#5aa05a"); cv.rectf(x + 7, y + 4, 2, 10)
+
+
+def close_btn_rect(win):
+    return (win.x + win.w - 24, win.y + 5, 18, 16)
+
+
+def min_btn_rect(win):
+    return (win.x + win.w - 66, win.y + 5, 18, 16)
+
+
+def max_btn_rect(win):
+    return (win.x + win.w - 45, win.y + 5, 18, 16)
+
+
+# ----- Calculator ---------------------------------------------------------- #
+CALC_KEYS = [
+    # label, key, col, row, colspan
+    ("C", "C", 0, 0, 1), ("+-", "neg", 1, 0, 1), ("%", "%", 2, 0, 1), ("/", "/", 3, 0, 1),
+    ("7", "7", 0, 1, 1), ("8", "8", 1, 1, 1), ("9", "9", 2, 1, 1), ("*", "*", 3, 1, 1),
+    ("4", "4", 0, 2, 1), ("5", "5", 1, 2, 1), ("6", "6", 2, 2, 1), ("-", "-", 3, 2, 1),
+    ("1", "1", 0, 3, 1), ("2", "2", 1, 3, 1), ("3", "3", 2, 3, 1), ("+", "+", 3, 3, 1),
+    ("0", "0", 0, 4, 2), (".", ".", 2, 4, 1), ("=", "=", 3, 4, 1),
+]
+
+
+def calc_grid(win):
+    bx, by, bw, bh = win.body_rect()
+    pad = 8
+    disp_h = 36
+    gx = bx + pad
+    gy = by + pad + disp_h + 6
+    gw = bw - 2 * pad
+    gh = bh - pad - (gy - by)
+    cols, rows = 4, 5
+    cellw = gw // cols
+    cellh = gh // rows
+    return bx, by, bw, bh, pad, disp_h, gx, gy, cellw, cellh
+
+
+def calc_btn_rect(win, col, row, span):
+    _, _, _, _, _, _, gx, gy, cellw, cellh = calc_grid(win)
+    x = gx + col * cellw + 2
+    y = gy + row * cellh + 2
+    w = cellw * span - 4
+    h = cellh - 4
+    return (x, y, w, h)
+
+
+def draw_calc(cv, d, win):
+    bx, by, bw, bh, pad, disp_h, gx, gy, cellw, cellh = calc_grid(win)
+    # display (sunken)
+    dx, dy, dw = bx + pad, by + pad, bw - 2 * pad
+    cv.pen(C["sunkenbd"]); cv.rectf(dx - 1, dy - 1, dw + 2, disp_h + 2)
+    cv.pen(C["sunken"]); cv.rectf(dx, dy, dw, disp_h)
+    s = win.state["cur"]
+    txt = s if len(s) <= 12 else s[:12]
+    cv.pen(C["ink"])
+    cv.text(dx + dw - len(txt) * d.charw - 8, dy + disp_h - 12, txt)
+    # buttons
+    for label, key, col, row, span in CALC_KEYS:
+        x, y, w, h = calc_btn_rect(win, col, row, span)
+        op = key in ("/", "*", "-", "+", "=")
+        top = "#fff4d6" if key == "=" else ("#dfeaf8" if op else "#ffffff")
+        bot = "#f0b43a" if key == "=" else ("#bcd2ee" if op else "#dfe4ea")
+        cv.vgrad(x, y, w, h, top, bot, 5)
+        cv.pen("#9aa6b4"); cv.rrect(x, y, w, h, 3)
+        cv.pen(C["ink"])
+        cv.text(x + w // 2 - len(label) * d.charw // 2, y + h // 2 + 6, label)
+
+
+def calc_press(win, key):
+    st = win.state
+    cur = st["cur"]
+    if cur == "Error" and key != "C":
+        return
+    if key in "0123456789":
+        if st["fresh"]:
+            cur = key
+            st["fresh"] = False
+        else:
+            cur = key if cur == "0" else cur + key
+    elif key == ".":
+        if st["fresh"]:
+            cur = "0."
+            st["fresh"] = False
+        elif "." not in cur:
+            cur += "."
+    elif key == "neg":
+        if cur != "0":
+            cur = cur[1:] if cur.startswith("-") else "-" + cur
+    elif key == "%":
+        try:
+            cur = _fmt(float(cur) / 100.0)
+        except ValueError:
+            cur = "Error"
+    elif key in "+-*/":
+        if st["op"] and not st["fresh"]:
+            st["acc"] = _calc(st["acc"], st["op"], float(cur))
+            cur = _fmt(st["acc"])
+        else:
+            st["acc"] = float(cur)
+        st["op"] = key
+        st["fresh"] = True
+    elif key == "=":
+        if st["op"] is not None:
+            st["acc"] = _calc(st["acc"], st["op"], float(cur))
+            cur = _fmt(st["acc"])
+            st["op"] = None
+            st["fresh"] = True
+    elif key == "C":
+        cur = "0"
+        st["acc"] = None
+        st["op"] = None
+        st["fresh"] = True
+    st["cur"] = cur
+
+
+def _calc(a, op, b):
+    try:
+        if op == "+":
+            return a + b
+        if op == "-":
+            return a - b
+        if op == "*":
+            return a * b
+        if op == "/":
+            return a / b
+    except ZeroDivisionError:
+        return None
+    return b
+
+
+def _fmt(v):
+    if v is None:
+        return "Error"
+    if v == int(v) and abs(v) < 1e15:
+        return str(int(v))
+    return ("%.10g" % v)
+
+
+# ----- My Computer --------------------------------------------------------- #
+def mycomputer_rows(win):
+    bx, by, bw, bh = win.body_rect()
+    rows = [("C:", "Local Disk (C:)", "/"),
+            ("~", "Home (%s)" % os.path.basename(os.path.expanduser("~")),
+             os.path.expanduser("~"))]
+    rects = []
+    y0 = by + 56
+    for i, r in enumerate(rows):
+        rects.append((bx + 16, y0 + i * 64, bw - 32, 56, r))
+    return rects
+
+
+def draw_mycomputer(cv, d, win):
+    bx, by, bw, bh = win.body_rect()
+    # left blue side band (XP "task pane" hint)
+    cv.vgrad(bx, by, 8, bh, "#4a8df0", "#2f6bd6", 6)
+    cv.pen(C["dim"]); cv.text(bx + 16, by + 22, "Drives on " + os.environ.get(
+        "USER", "this") + "'s machine")
+    cv.pen("#cfd6df"); cv.rectf(bx + 16, by + 30, bw - 32, 1)
+    for x, y, w, h, (short, label, path) in mycomputer_rows(win):
+        cv.pen("#f6f7fb"); cv.rrectf(x, y, w, h, 4)
+        cv.pen("#d4dae3"); cv.rrect(x, y, w, h, 4)
+        # drive icon
+        cv.pen("#c9d2dc"); cv.rrectf(x + 12, y + 14, 34, 26, 3)
+        cv.vgrad(x + 15, y + 17, 28, 14, "#dfe6ef", "#aeb9c8", 5)
+        cv.pen("#2e6bd6"); cv.rectf(x + 16, y + 33, 26, 3)
+        cv.pen(C["ink"]); cv.text(x + 58, y + 22, label)
+        # capacity bar (real)
+        try:
+            du = shutil.disk_usage(path)
+            used = du.used
+            total = du.total
+            frac = used / total if total else 0
+            info = "%s free of %s" % (human(du.free), human(total))
+        except OSError:
+            frac = 0
+            info = "unavailable"
+        bar_x, bar_y, bar_w = x + 58, y + 30, w - 58 - 16
+        cv.pen("#d7dde6"); cv.rrectf(bar_x, bar_y, bar_w, 9, 3)
+        fillw = max(2, int(bar_w * frac))
+        col0, col1 = ("#3a93ff", "#1f6fe0")
+        if frac > 0.9:
+            col0, col1 = ("#ff7a5f", "#e0492f")
+        cv.vgrad(bar_x, bar_y, fillw, 9, col0, col1, 4)
+        cv.pen("#b7c0cd"); cv.rrect(bar_x, bar_y, bar_w, 9, 3)
+        cv.pen(C["dim"]); cv.text(bar_x, y + 50, info)
+
+
+# ----- Explorer ------------------------------------------------------------ #
+def explorer_geom(win):
+    bx, by, bw, bh = win.body_rect()
+    addr_h = 22
+    row_h = 20
+    list_y = by + addr_h + 2
+    list_h = bh - addr_h - 2
+    visible = max(1, list_h // row_h)
+    return bx, by, bw, bh, addr_h, row_h, list_y, list_h, visible
+
+
+def draw_explorer(cv, d, win):
+    bx, by, bw, bh, addr_h, row_h, list_y, list_h, visible = explorer_geom(win)
+    pane = win.pane
+    pane.clamp(visible)
+    win.title = "Explorer - " + os.path.basename(pane.cwd or "/") or pane.cwd
+    # address bar
+    cv.vgrad(bx, by, bw, addr_h, "#f3f4f8", "#dfe3ea", 4)
+    cv.pen(C["dim"]); cv.text(bx + 8, by + 15, "Address")
+    ax = bx + 8 + 8 * d.charw
+    cv.pen(C["sunken"]); cv.rectf(ax, by + 3, bx + bw - ax - 8, addr_h - 6)
+    cv.pen(C["sunkenbd"]); cv.rect(ax, by + 3, bx + bw - ax - 8, addr_h - 6)
+    path = pane.cwd
+    maxc = max(4, (bx + bw - ax - 14) // d.charw)
+    if len(path) > maxc:
+        path = "..." + path[-(maxc - 3):]
+    cv.pen(C["ink"]); cv.text(ax + 4, by + 15, path)
+    # file list (white)
+    cv.pen(C["white"]); cv.rectf(bx, list_y, bw, list_h)
+    name_x = bx + 28
+    size_w = 9 * d.charw
+    name_max = max(2, (bw - 28 - 12 - size_w) // d.charw)
+    for r in range(visible):
+        idx = pane.top + r
+        if idx >= len(pane.entries):
+            break
+        e = pane.entries[idx]
+        ry = list_y + r * row_h
+        if idx == pane.sel:
+            cv.vgrad(bx + 1, ry, bw - 2, row_h, C["selrow0"], C["selrow1"], 4)
+            tcol = C["white"]
+        else:
+            tcol = C["fileink"]
+        draw_file_icon(cv, bx + 8, ry + row_h // 2, e)
+        nm = e.name + ("/" if e.is_dir and e.name != ".." else "")
+        if len(nm) > name_max:
+            nm = nm[:name_max - 1] + "~"
+        cv.pen(tcol); cv.text(name_x, ry + row_h - 6, nm)
+        tag = "<DIR>" if e.is_dir else human(e.size)
+        cv.pen(C["white"] if idx == pane.sel else C["dim"])
+        cv.text(bx + bw - len(tag) * d.charw - 10, ry + row_h - 6, tag)
+    # scrollbar
+    n = len(pane.entries)
+    if n > visible:
+        track_h = list_h
+        thumb = max(12, track_h * visible // n)
+        tpos = list_y + (track_h - thumb) * pane.top // max(1, n - visible)
+        cv.pen("#dfe3ea"); cv.rectf(bx + bw - 8, list_y, 8, track_h)
+        cv.pen("#9fb0c4"); cv.rrectf(bx + bw - 7, tpos, 6, thumb, 3)
+
+
+def draw_file_icon(cv, x, cy, e):
+    if e.is_dir:
+        cv.pen(C["diredge"]); cv.polyf([x, cy - 5, x + 6, cy - 5,
+                                        x + 8, cy - 7, x, cy - 7])
+        cv.pen(C["dir"]); cv.rrectf(x, cy - 6, 15, 11, 2)
+        cv.pen(lighten(C["dir"], 0.3)); cv.rectf(x + 1, cy - 4, 13, 2)
+    elif e.is_exec:
+        cv.pen(darken(C["exec"], 0.3)); cv.rrectf(x, cy - 6, 14, 12, 2)
+        cv.pen(C["exec"]); cv.trif(x + 4, cy - 3, x + 4, cy + 3, x + 10, cy)
+    elif e.is_link:
+        cv.pen("#cfd6df"); cv.rrectf(x + 1, cy - 6, 12, 12, 2)
+        cv.pen(C["link"]); cv.line(x + 4, cy + 2, x + 10, cy - 3)
+    else:
+        cv.pen("#cfd6df"); cv.rrectf(x + 1, cy - 6, 12, 12, 2)
+        cv.pen(C["white"]); cv.polyf([x + 9, cy - 6, x + 13, cy - 6, x + 13, cy - 2])
+        cv.pen("#9fb0c4")
+        for ly in (cy - 2, cy + 1):
+            cv.line(x + 3, ly, x + 10, ly)
+
+
+# ----- Recycle Bin --------------------------------------------------------- #
+def draw_recycle(cv, d, win):
+    bx, by, bw, bh = win.body_rect()
+    cv.pen(C["white"]); cv.rectf(bx, by, bw, bh)
+    cx = bx + bw // 2
+    cy = by + bh // 2 - 10
+    draw_big_icon(cv, "recycle", cx, cy - 18)
+    msg = "The Recycle Bin is empty."
+    cv.pen(C["dim"])
+    cv.text(cx - len(msg) * d.charw // 2, cy + 40, msg)
+
+
+# ----- taskbar + start menu ------------------------------------------------ #
+def draw_taskbar(cv, d):
+    W, H, tbh = d.W, d.H, d.taskbar_h
+    ty = H - tbh
+    cv.vgrad(0, ty, W, tbh, C["tb0"], C["tb1"], 8)
+    cv.pen(C["tbhi"]); cv.rectf(0, ty, W, 1)
+    # start button
+    sx, sy, sw, sh = d.start_rect()
+    c0, c1 = (lighten(C["start0"], 0.1), C["start1"])
+    if d.start_open:
+        c0, c1 = (C["start1"], darken(C["start1"], 0.2))
+    cv.pen(c1); cv.rrectf(sx - 12, sy + 2, sw + 12, sh - 3, 12)
+    cv.vgrad(sx - 12, sy + 3, sw + 12, (sh - 4) * 6 // 10, lighten(c0, 0.15),
+             c0, 5)
+    # little 4-pane flag
+    fx, fy = sx + 12, sy + sh // 2 - 6
+    for (dx, dy, col) in ((0, 0, "#f25022"), (7, 0, "#7fba00"),
+                          (0, 7, "#00a4ef"), (7, 7, "#ffb900")):
+        cv.pen(col); cv.rrectf(fx + dx, fy + dy, 6, 6, 1)
+    cv.pen("#0a4012"); cv.text(sx + 30 + 1, sy + sh - 9 + 1, "start")
+    cv.pen(C["starttxt"]); cv.text(sx + 30, sy + sh - 9, "start")
+    # taskbar window buttons
+    for idx, win in enumerate(d.wins):
+        bx, by, bw, bh = d.taskbar_btn_rect(idx)
+        if bx + bw > W - 110:
+            break
+        focused = (win is d.top_win()) and not win.minimized
+        if focused:
+            cv.vgrad(bx, by, bw, bh, "#1c50c9", "#3f8df4", 5)
+            cv.pen("#15409f"); cv.rrect(bx, by, bw, bh, 3)
+        else:
+            cv.vgrad(bx, by, bw, bh, "#4a8df0", "#2f6bd6", 5)
+        draw_title_icon(cv, win.kind, bx + 6, by + bh // 2 - 8)
+        label = win.title
+        maxc = max(3, (bw - 30) // d.charw)
+        if len(label) > maxc:
+            label = label[:maxc - 1] + "~"
+        cv.pen(C["white"]); cv.text(bx + 26, by + bh // 2 + 5, label)
+    # tray clock
+    tw = 86
+    tx = W - tw
+    cv.vgrad(tx, ty + 3, tw, tbh - 5, C["tray0"], C["tray1"], 5)
+    cv.pen("#1a4fb8"); cv.rect(tx, ty + 3, tw - 1, tbh - 5)
+    clk = time.strftime("%H:%M")
+    cv.pen(C["white"])
+    cv.text(tx + tw // 2 - len(clk) * d.charw // 2, ty + tbh // 2 + 5, clk)
+
+
+START_ITEMS = [
+    ("calc", "Calculator", False),
+    ("mycomputer", "My Computer", False),
+    ("explorer", "My Documents", False),
+    ("sep", "", True),
+    ("quit", "Turn Off Computer", False),
+]
+
+
+def start_item_rects(d):
+    mx, my, mw, mh = d.start_menu_rect()
+    head_h = 54
+    foot_h = 0
+    y = my + head_h + 6
+    rects = []
+    for kind, label, sep in START_ITEMS:
+        if sep:
+            rects.append((mx + 12, y + 5, mw - 24, 1, kind, label))
+            y += 12
+        else:
+            rects.append((mx + 8, y, mw - 16, 32, kind, label))
+            y += 34
+    return rects
+
+
+def draw_start_menu(cv, d):
+    mx, my, mw, mh = d.start_menu_rect()
+    cv.pen(C["shadow"]); cv.rrectf(mx + 4, my + 4, mw, mh, 8)
+    cv.pen(C["winframe"]); cv.rrectf(mx, my, mw, mh, 8)
+    cv.pen(C["white"]); cv.rrectf(mx + 2, my + 2, mw - 4, mh - 4, 6)
+    # header band
+    head_h = 54
+    cv.vgrad(mx + 2, my + 2, mw - 4, head_h, "#2f6bd6", "#1c50c9", 8)
+    cv.pen("#ff9d3b"); cv.rectf(mx + 2, my + 2 + head_h, mw - 4, 2)
+    # user avatar
+    cv.pen("#ffd27f"); cv.rrectf(mx + 12, my + 12, 32, 32, 6)
+    cv.pen("#c98a3a"); cv.circf(mx + 28, my + 24, 6)
+    cv.pen("#c98a3a"); cv.arc(mx + 28, my + 40, 11, 200, 340)
+    cv.pen(C["white"]); cv.text(mx + 54, my + 32, d.user)
+    # items
+    for x, y, w, h, kind, label in start_item_rects(d):
+        if kind == "sep":
+            cv.pen("#d8dde6"); cv.rectf(x, y, w, h)
+            continue
+        # icon chip
+        cv.pen("#eef2f8"); cv.rrectf(x + 2, y + 4, 26, 24, 4)
+        draw_title_icon(cv, kind if kind != "quit" else "mycomputer",
+                        x + 7, y + 8)
+        if kind == "quit":
+            cv.pen(C["closebtn"]); cv.rrectf(x + 6, y + 9, 18, 14, 3)
+            cv.pen(C["white"]); cv.thickness(2)
+            cv.line(x + 15, y + 11, x + 15, y + 16); cv.thickness(1)
+        cv.pen(C["ink"]); cv.text(x + 36, y + 21, label)
+
+
+# =========================================================================== #
+#  input parsing (ported from slippers)
+# =========================================================================== #
+MOUSE_RE = re.compile(rb"\[<(\d+);(\d+);(\d+)([Mm])")
+CSI_FINAL = {b"A": "up", b"B": "down", b"C": "right", b"D": "left",
+             b"H": "home", b"F": "end"}
+TILDE = {3: "del", 5: "pgup", 6: "pgdn", 1: "home", 4: "end"}
+
+
+def parse_one(buf, i):
+    b = buf[i]
+    if b != 0x1b:
+        if b in (0x0d, 0x0a):
+            return ("enter", i + 1)
+        if b in (0x7f, 0x08):
+            return ("back", i + 1)
+        if b == 0x03:
+            return ("quit", i + 1)
+        return (("char", chr(b)), i + 1)
+    if i + 1 >= len(buf):
+        return (None, -1)
+    n = buf[i + 1]
+    if n == 0x5b:
+        if i + 2 < len(buf) and buf[i + 2] == 0x3c:
+            m = MOUSE_RE.match(buf, i + 1)
+            if not m:
+                return (None, -1)
+            btn = int(m.group(1)); x = int(m.group(2)); y = int(m.group(3))
+            return (("mouse", btn, x, y, m.group(4) == b"M"), m.end())
+        j = i + 2
+        while j < len(buf) and (0x30 <= buf[j] <= 0x3f):
+            j += 1
+        if j >= len(buf):
+            return (None, -1)
+        final = buf[j:j + 1]
+        params = buf[i + 2:j]
+        if final == b"~":
+            try:
+                num = int(params.split(b";")[0])
+            except ValueError:
+                return ("ignore", j + 1)
+            return (TILDE.get(num, "ignore"), j + 1)
+        if final == b"":
+            return ("ignore", j + 1)
+        return (CSI_FINAL.get(final, "ignore"), j + 1)
+    if n == 0x4f:
+        if i + 2 >= len(buf):
+            return (None, -1)
+        return ("ignore", i + 3)
+    return ("esc", i + 1)
+
+
+def parse_events(buf):
+    events = []
+    i = 0
+    while i < len(buf):
+        ev, j = parse_one(buf, i)
+        if j < 0:
+            break
+        if ev not in (None, "ignore"):
+            events.append(ev)
+        i = j
+    return events, buf[i:]
+
+
+# =========================================================================== #
+#  terminal session
+# =========================================================================== #
+class Term:
+    def __init__(self):
+        self.fd = sys.stdin.fileno()
+        self.old = None
+
+    def __enter__(self):
+        self.old = termios.tcgetattr(self.fd)
+        tty.setraw(self.fd)
+        self.cw, self.ch = self.query_cell()
+        self.w(ESC + "[?1049h" + ESC + "[2J" + ESC + "[?25l")
+        self.w(ESC + "[?1002h" + ESC + "[?1006h" + ESC + "[?1016h")
+        return self
+
+    def __exit__(self, *a):
+        self.w(ESC + "[?1002l" + ESC + "[?1006l" + ESC + "[?1016l")
+        self.w(ESC + "[?25h" + ESC + "[?1049l")
+        if self.old:
+            termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
+
+    def w(self, s):
+        os.write(self.fd, s.encode() if isinstance(s, str) else s)
+
+    def query_cell(self):
+        try:
+            os.write(self.fd, (ESC + "[16t").encode())
+            buf = b""
+            deadline = time.monotonic() + 0.3
+            while time.monotonic() < deadline:
+                r, _, _ = select.select([self.fd], [], [], deadline - time.monotonic())
+                if not r:
+                    break
+                buf += os.read(self.fd, 64)
+                m = re.search(rb"\[6;(\d+);(\d+)t", buf)
+                if m:
+                    return int(m.group(2)), int(m.group(1))
+        except OSError:
+            pass
+        return 8, 16
+
+
+def term_cells():
+    try:
+        sz = os.get_terminal_size(sys.stdout.fileno())
+        return sz.columns, sz.lines
+    except OSError:
+        return 80, 24
+
+
+# =========================================================================== #
+#  self-test (headless single frame)
+# =========================================================================== #
+def selftest():
+    cw, ch = 8, 16
+    cols, rows = 160, 48
+    d = Desktop(cols * cw, rows * ch, cw, ch)
+    d.open_app("calc")
+    d.open_app("mycomputer")
+    d.open_app("explorer", os.path.expanduser("~"))
+    d.open_app("recycle")
+    d.start_open = True
+    cv = Canvas()
+    draw_wallpaper(cv, d)
+    draw_desktop_icons(cv, d)
+    for win in d.wins:
+        draw_window(cv, d, win, win is d.top_win())
+    draw_taskbar(cv, d)
+    draw_start_menu(cv, d)
+    out = cv.dcs(cols, rows, C["sky1"])
+    sys.stdout.write("shoexp selftest ok: %d windows, %d bytes, %d draw lines\n"
+                     % (len(d.wins), len(out), len(cv.lines)))
+    return 0
+
+
+# =========================================================================== #
+#  main
+# =========================================================================== #
+def main():
+    if os.environ.get("SHOEXP_SELFTEST"):
+        return selftest()
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print("shoexp - a fake Windows XP desktop in foot vector graphics.\n"
+              "Mouse-driven: double-click icons, drag windows, use Start.\n"
+              "q / Ctrl-C to quit. Env: SHOEXP_FORCE / SHOEXP_PLAIN.")
+        return 0
+    if not graphics_ok():
+        sys.stderr.write("shoexp needs a graphics-capable terminal (foot). "
+                         "Run it inside foot, or set SHOEXP_FORCE=1.\n")
+        return 1
+
+    resized = {"flag": True}
+
+    def on_winch(_s, _f):
+        resized["flag"] = True
+    try:
+        signal.signal(signal.SIGWINCH, on_winch)
+    except (ValueError, OSError):
+        pass
+
+    with Term() as t:
+        cw, ch = t.cw, t.ch
+        cols, rows = term_cells()
+        d = Desktop(cols * cw, rows * ch, cw, ch)
+        buf = b""
+        dirty = True
+        running = [True]
+        drag = {"win": None, "dx": 0, "dy": 0}
+        last_click = {"t": 0.0, "tag": None}
+        last_clock = ""
+
+        def relayout():
+            nonlocal cols, rows
+            cols, rows = term_cells()
+            d.W, d.H = cols * cw, rows * ch
+
+        def render():
+            cv = Canvas()
+            draw_wallpaper(cv, d)
+            draw_desktop_icons(cv, d)
+            for win in d.wins:
+                if not win.minimized:
+                    draw_window(cv, d, win, win is d.top_win())
+            draw_taskbar(cv, d)
+            if d.start_open:
+                draw_start_menu(cv, d)
+            t.w(cv.dcs(cols, rows, C["sky1"]))
+
+        def in_rect(px, py, r):
+            x, y, w, h = r[0], r[1], r[2], r[3]
+            return x <= px < x + w and y <= py < y + h
+
+        def is_double(tag):
+            now = time.monotonic()
+            hit = (now - last_click["t"] < 0.42 and last_click["tag"] == tag)
+            last_click["t"] = 0.0 if hit else now
+            last_click["tag"] = None if hit else tag
+            return hit
+
+        def launch(kind, path=None):
+            if kind == "quit":
+                running[0] = False
+                return
+            d.open_app(kind, path)
+
+        def click_start_menu(px, py):
+            for x, y, w, h, kind, label in start_item_rects(d):
+                if kind == "sep":
+                    continue
+                if in_rect(px, py, (x, y, w, h)):
+                    d.start_open = False
+                    if kind == "explorer":
+                        launch("explorer", os.path.expanduser("~"))
+                    else:
+                        launch(kind)
+                    return True
+            return False
+
+        def click_window_body(win, px, py):
+            # returns True if the click was consumed by the app
+            if win.kind == "calc":
+                for label, key, col, row, span in CALC_KEYS:
+                    if in_rect(px, py, calc_btn_rect(win, col, row, span)):
+                        calc_press(win, key)
+                        return True
+                return True
+            if win.kind == "mycomputer":
+                for x, y, w, h, (short, label, path) in mycomputer_rows(win):
+                    if in_rect(px, py, (x, y, w, h)):
+                        if is_double(("drive", win.id, short)):
+                            launch("explorer", path)
+                        return True
+                return True
+            if win.kind == "explorer":
+                _, _, _, _, _, row_h, list_y, list_h, visible = explorer_geom(win)
+                if list_y <= py < list_y + visible * row_h:
+                    r = (py - list_y) // row_h
+                    idx = win.pane.top + r
+                    if idx < len(win.pane.entries):
+                        win.pane.sel = idx
+                        e = win.pane.entries[idx]
+                        if is_double(("row", win.id, idx)):
+                            if e.is_dir:
+                                if e.name == "..":
+                                    win.pane.up()
+                                else:
+                                    win.pane.enter()
+                return True
+            return True
+
+        def on_left_press(px, py):
+            nonlocal dirty
+            # start menu has priority while open
+            if d.start_open:
+                mr = d.start_menu_rect()
+                if in_rect(px, py, mr):
+                    click_start_menu(px, py)
+                    return
+                if not in_rect(px, py, d.start_rect()):
+                    d.start_open = False
+                    # fall through to let the click also act
+            # start button
+            if in_rect(px, py, d.start_rect()):
+                d.start_open = not d.start_open
+                return
+            # taskbar window buttons
+            if py >= d.H - d.taskbar_h:
+                for idx, win in enumerate(d.wins):
+                    if in_rect(px, py, d.taskbar_btn_rect(idx)):
+                        if win is d.top_win() and not win.minimized:
+                            win.minimized = True
+                        else:
+                            d.focus(win)
+                        return
+                return
+            # windows, topmost first
+            win = d.win_at(px, py)
+            if win is not None:
+                d.focus(win)
+                if in_rect(px, py, close_btn_rect(win)):
+                    d.close(win)
+                    return
+                if in_rect(px, py, min_btn_rect(win)):
+                    win.minimized = True
+                    return
+                if win.in_title(px, py):
+                    drag["win"] = win
+                    drag["dx"] = px - win.x
+                    drag["dy"] = py - win.y
+                    return
+                click_window_body(win, px, py)
+                return
+            # desktop icons
+            ic = d.icon_at(px, py)
+            if ic is not None:
+                d.icon_sel = ic
+                if is_double(("icon", ic)):
+                    kind = DESK_ICONS[ic][0]
+                    if kind == "explorer":
+                        launch("explorer", os.path.expanduser("~"))
+                    else:
+                        launch(kind)
+                return
+            # empty desktop
+            d.icon_sel = -1
+            d.start_open = False
+
+        def on_motion(px, py):
+            if drag["win"] is not None:
+                w = drag["win"]
+                w.x = max(-w.w + 60, min(d.W - 40, px - drag["dx"]))
+                w.y = max(0, min(d.H - d.taskbar_h - 24, py - drag["dy"]))
+
+        def on_wheel(px, py, up):
+            win = d.win_at(px, py)
+            if win is not None and win.kind == "explorer":
+                win.pane.sel += -3 if up else 3
+                _, _, _, _, _, _, _, _, visible = explorer_geom(win)
+                win.pane.clamp(visible)
+
+        def handle_mouse(btn, px, py, press):
+            base = btn & ~0b11100
+            if base in (64, 65):
+                on_wheel(px, py, base == 64)
+                return
+            if press and (btn & 32):
+                on_motion(px, py)
+                return
+            if press:
+                if (btn & 0b11) == 0:
+                    on_left_press(px, py)
+                return
+            # release
+            drag["win"] = None
+
+        while running[0]:
+            if resized["flag"]:
+                resized["flag"] = False
+                relayout()
+                dirty = True
+            now_clk = time.strftime("%H:%M")
+            if now_clk != last_clock:
+                last_clock = now_clk
+                dirty = True
+            if dirty:
+                render()
+                dirty = False
+
+            r, _, _ = select.select([t.fd], [], [], 1.0)
+            if not r:
+                continue
+            try:
+                data = os.read(t.fd, 4096)
+            except OSError:
+                break
+            if not data:
+                continue
+            buf += data
+            events, buf = parse_events(buf)
+            for ev in events:
+                if ev == "quit":
+                    running[0] = False
+                    break
+                elif ev == "esc":
+                    if d.start_open:
+                        d.start_open = False
+                    else:
+                        w = d.top_win()
+                        if w is not None:
+                            d.close(w)
+                    dirty = True
+                elif isinstance(ev, tuple) and ev[0] == "char":
+                    if ev[1] in ("q", "Q"):
+                        running[0] = False
+                        break
+                elif isinstance(ev, tuple) and ev[0] == "mouse":
+                    _, btn, x, y, press = ev
+                    handle_mouse(btn, x, y, press)
+                    dirty = True
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)
