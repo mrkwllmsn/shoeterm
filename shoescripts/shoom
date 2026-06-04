@@ -84,7 +84,7 @@ def graphics_ok():
         return True
     if not sys.stdout.isatty():
         return False
-    return "foot" in os.environ.get("TERM", "")
+    return ("foot" in os.environ.get("TERM", "") or "ghostty" in os.environ.get("TERM", ""))
 
 
 # --------------------------------------------------------------------------- #
