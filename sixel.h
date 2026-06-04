@@ -13,6 +13,12 @@ void sixel_fini(struct terminal *term);
 sixel_put sixel_init(struct terminal *term, int p1, int p2, int p3);
 void sixel_unhook(struct terminal *term);
 
+/*
+ * Emit the ARGB image staged in term->sixel.image onto the grid. Shared
+ * by the sixel decoder and the vector graphics protocol (graphics.c).
+ */
+void sixel_emit_image(struct terminal *term);
+
 void sixel_destroy(struct sixel *sixel);
 void sixel_destroy_all(struct terminal *term);
 

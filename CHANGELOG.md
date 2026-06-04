@@ -1,6 +1,7 @@
 # Changelog
 
 * [Unreleased](#unreleased)
+* [1.27.0+gfx.1](#1-27-0-gfx-1)
 * [1.27.0](#1-27-0)
 * [1.26.1](#1-26-1)
 * [1.26.0](#1-26-0)
@@ -90,6 +91,25 @@
 
 ### Security
 ### Contributors
+
+
+## 1.27.0+gfx.1
+
+Fork of foot 1.27.0 adding an in-terminal vector graphics protocol.
+
+### Added
+
+* Vector graphics protocol: a new `\EP > g <commands> \E\` (DCS)
+  sequence that draws lines, shapes (rectangles, rounded rectangles,
+  circles, arcs, triangles and polygons), cubic Bézier curves and text
+  into the terminal. Commands use a small text language (`size`, `pen`,
+  `rectf`, `circ`, `text`, …); coordinates are in pixels and the canvas
+  is sized in cells. The drawing is rasterized into an image and placed
+  at the cursor, reusing the sixel image pipeline, so it scrolls with
+  the text and is erased when overwritten. See *foot-ctlseqs*(7) and
+  `doc/vector-graphics.md`.
+* `tweak.graphics=yes|no` option, enabling or disabling the vector
+  graphics protocol. The default is `yes`.
 
 
 ## 1.27.0

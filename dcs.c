@@ -5,6 +5,7 @@
 #define LOG_ENABLE_DBG 0
 #include "log.h"
 #include "foot-terminfo.h"
+#include "graphics.h"
 #include "sixel.h"
 #include "util.h"
 #include "vt.h"
@@ -502,6 +503,17 @@ dcs_hook(struct terminal *term, uint8_t final)
         case 'q':  /* XTGETTCAP */
             term->vt.dcs.put_handler = &xtgettcap_put;
             term->vt.dcs.unhook_handler = &xtgettcap_unhook;
+            break;
+        }
+        break;
+
+    case '>':
+        switch (final) {
+        case 'g':  /* Vector graphics protocol */
+            if (!term->conf->tweak.graphics)
+                break;
+            term->vt.dcs.put_handler = &graphics_put;
+            term->vt.dcs.unhook_handler = &graphics_unhook;
             break;
         }
         break;

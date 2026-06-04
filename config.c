@@ -2929,6 +2929,9 @@ parse_section_tweak(struct context *ctx)
     else if (streq(key, "sixel"))
         return value_to_bool(ctx, &conf->tweak.sixel);
 
+    else if (streq(key, "graphics"))
+        return value_to_bool(ctx, &conf->tweak.graphics);
+
     else if (streq(key, "dim-amount"))
         return value_to_float(ctx, &conf->dim.amount);
 
@@ -3621,6 +3624,7 @@ config_load(struct config *conf, const char *conf_path,
             .box_drawing_solid_shades = true,
             .font_monospace_warn = true,
             .sixel = true,
+            .graphics = true,
             .surface_bit_depth = SHM_BITS_AUTO,
             .min_stride_alignment = 256,
             .preapply_damage = true,

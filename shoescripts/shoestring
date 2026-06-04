@@ -1,0 +1,304 @@
+#!/bin/sh
+# shoestring - beautify a string into a foot vector-graphics banner.
+#
+#   echo "ship it" | shoestring
+#   shoestring "ship it"
+#   printf 'Big Title\na small subtitle\n' | shoestring
+#
+# First line = title, any following lines = subtitle. A random theme and
+# decorative motif are picked each run (the theme name is printed to stderr).
+# Force a theme with  SHOESTRING_THEME=0..8  (0 Aurora .. 8 Flowers).
+#
+# Graphics are only drawn when stdout is a graphics-capable terminal (foot);
+# otherwise it falls back to plain text (e.g. piped to a file or another
+# program, or run in a different terminal). Override:
+#   SHOESTRING_FORCE=1  always draw graphics
+#   SHOESTRING_PLAIN=1  always plain text
+#   SHOESTRING_ANIM=1   play a brief sheen-sweep animation (live foot tty only)
+#
+# Tip: drop a string banner in your shell startup:
+#   echo "welcome back, $USER" | shoestring
+
+# --- help -----------------------------------------------------------------
+show_help() {
+    B=$(printf '\033[1m');  D=$(printf '\033[2m');  R=$(printf '\033[0m')
+    H=$(printf '\033[1;36m'); A=$(printf '\033[38;5;183m')
+
+    # Banner: call ourselves with the tool name + tagline
+    SHOESTRING_FORCE=1 "$0" "shoestring" "beautify any string as a gradient banner" 2>/dev/null
+
+    printf '\n%sUSAGE%s\n' "$H" "$R"
+    printf '  %secho "text" | shoestring%s\n' "$B" "$R"
+    printf '  %sshoestring "text"%s\n' "$B" "$R"
+    printf '  %sprintf "Title\\nSubtitle\\n" | shoestring%s\n' "$B" "$R"
+
+    printf '\n%sINPUT%s\n' "$H" "$R"
+    printf '  First stdin line  %s→%s  title\n'    "$A" "$R"
+    printf '  Further lines     %s→%s  subtitle\n' "$A" "$R"
+    printf '  Or pass title directly as arguments\n'
+
+    printf '\n%sTHEMES%s  %sSHOESTRING_THEME=0..8%s\n' "$H" "$R" "$D" "$R"
+    printf '  %s0%s Aurora   %s1%s Ocean   %s2%s Sunset   %s3%s Forest\n' \
+        "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
+    printf '  %s4%s Ember    %s5%s Grape   %s6%s Slate    %s7%s VICE\n' \
+        "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
+    printf '  %s8%s Flowers\n' \
+        "$B" "$R"
+
+    printf '\n%sENVIRONMENT%s\n' "$H" "$R"
+    printf '  %sSHOESTRING_THEME%s=0..8  force a theme\n'  "$B" "$R"
+    printf '  %sSHOESTRING_FORCE%s=1    always draw graphics\n' "$B" "$R"
+    printf '  %sSHOESTRING_PLAIN%s=1    always plain text\n'  "$B" "$R"
+    printf '  %sSHOESTRING_ANIM%s=1     sheen-sweep animation (live foot tty)\n' "$B" "$R"
+
+    printf '\n%sEXAMPLES%s\n' "$H" "$R"
+    printf '  echo "ship it" | shoestring\n'
+    printf '  printf "Title\\nSubtitle\\n" | shoestring\n'
+    printf '  SHOESTRING_THEME=2 shoestring "Hello"\n'
+    printf '  %s# in ~/.bashrc:%s\n' "$D" "$R"
+    printf '  echo "welcome back, $USER" | shoestring\n'
+    printf '\n'
+    exit 0
+}
+
+case "$1" in --help|-h) show_help ;; esac
+
+# --- gather input ---------------------------------------------------------
+title=''
+subtitle=''
+if [ "$#" -gt 0 ]; then
+    title="$*"
+else
+    i=0
+    while IFS= read -r line; do
+        if [ "$i" -eq 0 ]; then
+            title="$line"
+        elif [ -z "$subtitle" ]; then
+            subtitle="$line"
+        else
+            subtitle="$subtitle $line"
+        fi
+        i=$((i + 1))
+    done
+fi
+
+# --- clamp absurdly long input so the banner stays a sane size ------------
+MAXLEN=300
+if [ "${#title}" -gt "$MAXLEN" ]; then
+    title="$(printf '%s' "$title" | cut -c1-"$MAXLEN")…"
+fi
+if [ "${#subtitle}" -gt "$MAXLEN" ]; then
+    subtitle="$(printf '%s' "$subtitle" | cut -c1-"$MAXLEN")…"
+fi
+
+# --- decide whether to draw graphics or fall back to plain text -----------
+# Graphics are emitted only when stdout is a graphics-capable terminal.
+#   SHOESTRING_FORCE=1  always draw graphics
+#   SHOESTRING_PLAIN=1  always plain text
+graphics_ok() {
+    [ -n "$SHOESTRING_PLAIN" ] && return 1
+    [ -n "$SHOESTRING_FORCE" ] && return 0
+    [ -t 1 ] || return 1                 # not a terminal (file/pipe) -> plain
+    case "$TERM" in
+        foot | foot-* | *-foot | *foot*) return 0 ;;
+    esac
+    return 1                             # unknown terminal -> plain
+}
+
+if ! graphics_ok; then
+    # Plain-text fallback (no escape sequences).
+    [ -z "$title" ] && title="hello, world"
+    printf '%s\n' "$title"
+    printf '%s\n' "$title" | sed 's/./-/g'
+    [ -n "$subtitle" ] && printf '%s\n' "$subtitle"
+    exit 0
+fi
+
+# --- ask foot for its real cell size so the canvas fits the banner exactly,
+#     leaving no padding (ESC[16t -> ESC[6;h;w t). cw_px is also the per-glyph
+#     advance used to size the box to the text. Query the controlling terminal
+#     (/dev/tty) not stdin, so it still works when input is a pipe
+#     (e.g. `fortune | shoestring`). Fall back to ~8x16. ---
+cw_px=8; ch_px=16
+old=`stty -g </dev/tty 2>/dev/null` && {
+    stty raw -echo min 0 time 2 </dev/tty 2>/dev/null
+    printf '\033[16t' >/dev/tty
+    resp=`dd bs=1 count=20 </dev/tty 2>/dev/null`
+    stty "$old" </dev/tty 2>/dev/null
+    h=`printf '%s' "$resp" | sed -n 's/.*\[6;\([0-9]*\);\([0-9]*\)t.*/\1/p'`
+    w=`printf '%s' "$resp" | sed -n 's/.*\[6;\([0-9]*\);\([0-9]*\)t.*/\2/p'`
+    [ -n "$h" ] && ch_px=$h
+    [ -n "$w" ] && cw_px=$w
+}
+
+# --- emit one full canvas, wrapped in the graphics DCS. $1 = sheen phase
+#     (0..1 across the banner, or -999 for none). Re-run per frame to animate;
+#     the seed is fixed so only the sheen moves. -----------------------------
+emit_canvas() {
+printf '\033P>g\n'
+
+awk -v title="$title" -v subtitle="$subtitle" \
+    -v seed="$seed" \
+    -v cellw="$cw_px" -v cellh="$ch_px" \
+    -v themeidx="${SHOESTRING_THEME:-}" \
+    -v sheen="$1" '
+BEGIN {
+    srand(seed)
+    if (title == "") title = "hello, world"
+
+    ntheme = 9
+    #     gradient (4 stops, 12 ints)            | accent | motif  | title  | sub    | name
+    T[0]="22 9 54 64 18 104 132 36 150 206 46 130|38e0ff|ffd6ff|ffffff|ecd8ff|Aurora"
+    T[1]="6 16 54 12 52 96 16 110 140 40 190 180 |ffd166|d6fbff|ffffff|cdeffd|Ocean"
+    T[2]="40 12 60 120 28 80 200 70 60 245 170 60|ff5d8f|fff0d0|fff7ec|ffe0c0|Sunset"
+    T[3]="8 30 24 18 70 46 40 120 60 130 200 80  |ffe066|e6ffd9|ffffff|dafad0|Forest"
+    T[4]="24 10 14 80 16 24 170 40 30 240 140 40 |ffd23f|ffd9c2|fff2ec|ffd9c8|Ember"
+    T[5]="18 8 40 60 20 90 110 40 150 200 80 200 |66f0d0|f0d6ff|ffffff|ecd8ff|Grape"
+    T[6]="18 20 28 38 44 60 70 84 110 130 150 180|8fd0ff|e8f0ff|ffffff|cfe0f0|Slate"
+    T[7]="10 5 30 40 10 70 100 10 80 10 60 80    |ff2d78|c0f4ff|ffffff|c0f4ff|VICE"
+    T[8]="60 8 40 120 20 80 150 40 130 100 30 160|ff9de0|ffd6f5|ffffff|ffd6f5|Flowers"
+
+    ti = (themeidx != "") ? themeidx + 0 : int(rand() * ntheme)
+    ti = ((ti % ntheme) + ntheme) % ntheme
+    split(T[ti], P, "|")
+    split(P[1], g, " ")
+    accent = P[2]; motif = P[3]; tcol = P[4]; scol = P[5]; tname = P[6]
+    print "shoestring theme: " tname > "/dev/stderr"
+
+    # --- geometry (pixels). charw is the real per-glyph advance (the terminal
+    #     cell width), so the box fits the text exactly. ---
+    ox = 8; oy = 8; charw = cellw; textstart = 44
+    hassub = (subtitle != "")
+    tlen = length(title); slen = length(subtitle)
+    maxlen = tlen
+    if (hassub && slen + 2 > maxlen) maxlen = slen + 2
+
+    CW = textstart + maxlen * charw + 90   # input is clamped, so no upper cap
+    if (CW < 380) CW = 380
+    CH = hassub ? 104 : 64
+    W = ox + CW + ox; H = oy + CH + oy
+    # ceil to whole cells; no slack -> snug, no padding under the banner
+    cols = int((W + cellw - 1) / cellw); rows = int((H + cellh - 1) / cellh)
+
+    print "size " cols " " rows
+    print "bg none"
+
+    # --- gradient background (2px strips) ---
+    stops[0] = 0.0; stops[1] = 0.42; stops[2] = 0.74; stops[3] = 1.0
+    for (x = 0; x < CW; x += 2) {
+        t = x / CW
+        for (i = 0; i < 3; i++) {
+            a = stops[i]; b = stops[i + 1]
+            if (t <= b) {
+                u = (t - a) / (b - a)
+                r  = int(g[i*3+1] + u*(g[(i+1)*3+1] - g[i*3+1]))
+                gg = int(g[i*3+2] + u*(g[(i+1)*3+2] - g[i*3+2]))
+                bb = int(g[i*3+3] + u*(g[(i+1)*3+3] - g[i*3+3]))
+                printf "pen #%02x%02x%02x\nrectf %d %d 2 %d\n", r, gg, bb, ox + x, oy, CH
+                break
+            }
+        }
+    }
+
+    # --- top sheen + bright edge ---
+    printf "pen #ffffff12\nrectf %d %d %d 24\n", ox, oy, CW
+    printf "pen #ffffffa0\nrectf %d %d %d 2\n", ox, oy, CW
+
+    # --- left accent bar ---
+    printf "pen #%s\nrrectf %d %d 7 %d 3\n", accent, ox + 22, oy + 22, CH - 44
+
+    # --- decorative motif (random), top-right ---
+    mx = ox + CW - 50; my = oy + 30
+    printf "thickness 2\n"
+    motifid = int(rand() * 3)
+    if (motifid == 0) {                 # sunrise arcs
+        split("be a4 88 6c 50", al, " ")
+        for (k = 0; k < 5; k++)
+            printf "pen #%s%s\narc %d %d %d 95 210\n", motif, al[k+1], mx, my, 14 + k*11
+        printf "pen #ffffff\ncircf %d %d 4\n", mx, my
+    } else if (motifid == 1) {          # concentric rings
+        split("c8 96 64 40", al, " ")
+        for (k = 0; k < 4; k++)
+            printf "pen #%s%s\ncirc %d %d %d\n", motif, al[k+1], mx, my, 10 + k*12
+        printf "pen #ffffff\ncircf %d %d 3\n", mx, my
+    } else {                            # scattered diamonds
+        for (k = 0; k < 7; k++) {
+            dx = mx - 32 + int(rand()*64); dy = my - 18 + int(rand()*40)
+            s = 3 + int(rand()*4)
+            printf "pen #%sc0\npolyf %d %d %d %d %d %d %d %d\n", motif, \
+                   dx, dy - s, dx + s, dy, dx, dy + s, dx - s, dy
+        }
+    }
+
+    # --- flourish under the title (scaled to title width) ---
+    fx0 = ox + textstart
+    fx3 = fx0 + tlen * charw
+    if (fx3 > ox + CW - 90) fx3 = ox + CW - 90
+    if (fx3 < fx0 + 40) fx3 = fx0 + 40
+    fc1 = fx0 + (fx3 - fx0) * 0.33
+    fc2 = fx0 + (fx3 - fx0) * 0.66
+    printf "thickness 2\npen #%s\nbezier %d %d %d %d %d %d %d %d\n", accent, \
+           fx0, oy + 58, fc1, oy + 50, fc2, oy + 66, fx3, oy + 54
+
+    # --- title ---
+    ty = hassub ? oy + 46 : oy + int(CH / 2) + 8
+    printf "pen #%s\ntext %d %d %s\n", tcol, ox + textstart, ty, title
+
+    # --- subtitle (with a bullet diamond) ---
+    if (hassub) {
+        bx = ox + textstart; by = oy + 82
+        printf "pen #%s\npolyf %d %d %d %d %d %d %d %d\n", accent, \
+               bx, by - 5, bx + 5, by, bx, by + 5, bx - 5, by
+        printf "pen #%s\ntext %d %d %s\n", scol, ox + textstart + 14, oy + 88, subtitle
+    }
+
+    # --- sheen sweep: a soft bright band slid across the banner (animation).
+    #     sheen is the band centre as a fraction of CW; -999 disables it. ---
+    if (sheen > -900) {
+        cxs = ox + sheen * CW; BW = 46
+        for (s = -BW; s <= BW; s += 3) {
+            ax = cxs + s
+            if (ax < ox || ax > ox + CW) continue
+            d = (s < 0 ? -s : s) / BW
+            al = int((1 - d) * (1 - d) * 110)
+            if (al <= 0) continue
+            printf "pen #ffffff%02x\nrectf %d %d 3 %d\n", al, ax, oy, CH
+        }
+    }
+}'
+
+printf '\033\\'
+}
+
+# stable seed -> every frame draws the identical banner; only the sheen moves
+seed="$$$(date +%s 2>/dev/null)"
+
+# Animate only when explicitly opted in (SHOESTRING_ANIM) AND drawing to a live
+# tty. A short sheen sweep, then the static banner is left in place. Everywhere
+# else (pipes, files, non-foot, no opt-in) emits the single static frame.
+if [ -n "${SHOESTRING_ANIM:-}" ] && [ -t 1 ]; then
+    # banner height is independent of title length, so the shell can reserve it
+    if [ -n "$subtitle" ]; then chh=104; else chh=64; fi
+    rows=$(( (16 + chh + ch_px - 1) / ch_px ))
+
+    trap 'printf "\033[?25h"' EXIT INT TERM
+    printf '\033[?25l'                       # hide cursor during the sweep
+    i=0; while [ "$i" -lt "$rows" ]; do printf '\n'; i=$((i + 1)); done
+    printf '\033[%dA' "$rows"                # reserve rows, park at banner top
+    printf '\0337'                           # save the banner origin
+
+    n=18; f=0
+    while [ "$f" -le "$n" ]; do
+        ph=$(awk -v f="$f" -v n="$n" 'BEGIN { printf "%.4f", -0.1 + 1.2 * f / n }')
+        printf '\0338'                       # back to banner origin
+        emit_canvas "$ph"
+        sleep 0.035
+        f=$((f + 1))
+    done
+    printf '\0338'; emit_canvas -999         # settle on the static banner
+    printf '\033[?25h'; trap - EXIT INT TERM
+    printf '\n'
+else
+    emit_canvas -999
+    printf '\n'
+fi

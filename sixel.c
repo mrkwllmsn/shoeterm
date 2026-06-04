@@ -1206,6 +1206,29 @@ sixel_unhook(struct terminal *term)
         term->sixel.pos.row -= rows_to_trim * term->sixel.pan;
     }
 
+    free(term->sixel.private_palette);
+    term->sixel.private_palette = NULL;
+
+    sixel_emit_image(term);
+}
+
+/*
+ * Emit the image currently staged in term->sixel.image onto the grid.
+ *
+ * Reads: term->sixel.image.{data,width,height}, term->sixel.pos,
+ * term->sixel.{transparent_bg,scrolling,cursor_right_of_graphics,pixman_fmt}.
+ *
+ * This is the common tail shared by sixel_unhook() and the vector
+ * graphics protocol (graphics.c): both stage an ARGB pixel buffer in
+ * term->sixel.image and then call this to place it, handling scrolling,
+ * cursor positioning, overlap and damage tracking.
+ *
+ * Takes ownership of term->sixel.image.data (frees it, or hands it to a
+ * struct sixel), and resets the staging fields.
+ */
+void
+sixel_emit_image(struct terminal *term)
+{
     int pixel_row_idx = 0;
     int pixel_rows_left = term->sixel.image.height;
     const int stride = term->sixel.image.width * sizeof(uint32_t);
@@ -1407,9 +1430,6 @@ sixel_unhook(struct terminal *term)
     term->sixel.image.width = 0;
     term->sixel.image.height = 0;
     term->sixel.pos = (struct coord){0, 0};
-
-    free(term->sixel.private_palette);
-    term->sixel.private_palette = NULL;
 
     LOG_DBG("you now have %zu sixels in current grid",
             tll_length(term->grid->sixel_images));

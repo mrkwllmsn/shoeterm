@@ -6,3 +6,10 @@ config_test = executable(
   dependencies: [pixman, xkb, fontconfig, wayland_client, fcft, tllist])
 
 test('config', config_test)
+
+graphics_test = executable(
+  'test-graphics',
+  'test-graphics.c',
+  dependencies: [math])
+
+test('graphics', graphics_test)

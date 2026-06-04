@@ -1,0 +1,572 @@
+#!/bin/sh
+# shoelace - render a dataset as a chart using foot's vector-graphics protocol.
+#
+#   echo "Mon,3
+#   Tue,7
+#   Wed,5" | shoelace bar "Weekly visits"
+#   shoelace pie  "Budget" < spend.csv
+#   printf 'a,1\nb,4\nc,2\n' | shoelace line
+#
+# Data is read from stdin, in either of two formats (auto-detected):
+#
+#   CSV   one "label,value" pair per line. Blank lines and lines starting
+#         with '#' are ignored. A leading non-numeric header row (e.g.
+#         "label,value") is detected and dropped; non-numeric rows are skipped.
+#
+#   JSON  input starting with '{' or '['. Recognised shapes:
+#           {"Mon":3,"Tue":7}                       object map
+#           [{"label":"Mon","value":3}, ...]        array of objects
+#                 (label keys: label/name/title/x/key/category/id;
+#                  value keys: value/val/y/count/amount/total/n)
+#           [["Mon",3], ["Tue",7]]                  array of [label,value]
+#           [3,7,5]                                 array of numbers (labels = 1..N)
+#
+#   arg 1 (optional)  chart type: bar | line | pie     (default: bar)
+#   arg 2.. (optional) chart title
+#
+# A random card theme is picked each run (override with SHOELACE_THEME=0..8,
+# matching shoestring: 0 Aurora .. 8 Flowers). Series colours come from a fixed
+# categorical palette.
+#
+# Graphics are only drawn when stdout is a graphics-capable terminal (foot);
+# otherwise it prints a plain-text bar chart (e.g. piped to a file or run in a
+# different terminal). Override:
+#   SHOELACE_FORCE=1  always draw graphics
+#   SHOELACE_PLAIN=1  always plain text
+#   SHOELACE_TYPE=bar|line|pie   force chart type
+#
+# Limitations: assumes non-negative numeric values; single series; long
+# category labels are truncated; labels are not rotated.
+
+# --- help -----------------------------------------------------------------
+show_help() {
+    B=$(printf '\033[1m');  D=$(printf '\033[2m');  R=$(printf '\033[0m')
+    H=$(printf '\033[1;36m'); A=$(printf '\033[38;5;183m')
+
+    # Banner via shoestring sibling; respect SHOELACE_PLAIN so the banner
+    # also degrades gracefully when graphics aren't available.
+    _dir=$(dirname "$0")
+    _ss="$_dir/shoestring"; [ -x "$_ss" ] || _ss=shoestring
+    if [ -n "$SHOELACE_PLAIN" ]; then
+        SHOESTRING_PLAIN=1 "$_ss" "shoelace" "render datasets as in-terminal charts" 2>/dev/null
+    else
+        SHOESTRING_FORCE=1 "$_ss" "shoelace" "render datasets as in-terminal charts" 2>/dev/null
+    fi
+
+    printf '\n%sUSAGE%s\n' "$H" "$R"
+    printf '  %secho "label,value..." | shoelace [bar|line|pie] ["Title"]%s\n' "$B" "$R"
+    printf '  %sshoelace pie "Budget" < data.csv%s\n' "$B" "$R"
+    printf '  %scat data.json | shoelace line "Trend"%s\n' "$B" "$R"
+
+    printf '\n%sCHART TYPES%s\n' "$H" "$R"
+    printf '  %s(each example shows the data piped in, then the chart)%s\n\n' "$D" "$R"
+
+    # _demo_chart <type> <title> <csv-data>
+    # Shows the data + command, then renders the chart (if in a gfx terminal).
+    _demo_chart() {
+        _dc_type=$1; _dc_title=$2; _dc_data=$3
+        printf '  %s%s%s\n' "$B" "$_dc_type" "$R"
+        printf '%s\n' "$_dc_data" | sed "s/^/    ${D}│${R} /"
+        printf '    %s└─ piped into:%s %sshoelace %s "%s"%s\n\n' \
+            "$D" "$R" "$B" "$_dc_type" "$_dc_title" "$R"
+        if [ -z "$SHOELACE_PLAIN" ] && [ -t 1 ]; then
+            printf '%s\n' "$_dc_data" | SHOELACE_FORCE=1 "$0" "$_dc_type" "$_dc_title" 2>/dev/null
+        fi
+        printf '\n'
+    }
+
+    _demo_chart bar "Weekly visits" \
+"Mon,12
+Tue,19
+Wed,7
+Thu,23
+Fri,16"
+
+    _demo_chart line "Signups / month" \
+"Jan,4
+Feb,9
+Mar,7
+Apr,15
+May,22
+Jun,18"
+
+    _demo_chart pie "Monthly budget" \
+"Rent,1200
+Food,420
+Transit,180
+Fun,260"
+
+    printf '\n%sINPUT FORMATS%s  %s(auto-detected)%s\n' "$H" "$R" "$D" "$R"
+    printf '  %sCSV%s   Mon,12              one label,value per line\n'    "$B" "$R"
+    printf '  %sJSON%s  {"Mon":3,"Tue":7}   object map\n'                  "$B" "$R"
+    printf '        [{"x":"a","y":1}]   array of objects\n'
+    printf '        [["a",1],["b",2]]   [label,value] pairs\n'
+    printf '        [3,7,5,4]           bare numbers %s(labels 1..N)%s\n'  "$D" "$R"
+
+    printf '\n%sTHEMES%s  %sSHOELACE_THEME=0..8%s\n' "$H" "$R" "$D" "$R"
+    printf '  %s0%s Aurora   %s1%s Ocean   %s2%s Sunset   %s3%s Forest\n' \
+        "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
+    printf '  %s4%s Ember    %s5%s Grape   %s6%s Slate    %s7%s VICE\n' \
+        "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
+    printf '  %s8%s Flowers\n' \
+        "$B" "$R"
+
+    printf '\n%sENVIRONMENT%s\n' "$H" "$R"
+    printf '  %sSHOELACE_THEME%s=0..8      force a theme\n'          "$B" "$R"
+    printf '  %sSHOELACE_TYPE%s=bar|..     force chart type\n'       "$B" "$R"
+    printf '  %sSHOELACE_FORCE%s=1         always draw graphics\n'   "$B" "$R"
+    printf '  %sSHOELACE_PLAIN%s=1         always plain text\n'      "$B" "$R"
+
+    printf '\n%sEXAMPLES%s\n' "$H" "$R"
+    printf '  printf "Mon,12\\nTue,19\\nWed,7\\n" | shoelace bar "Visits"\n'
+    printf '  echo '"'"'{"Rent":1200,"Food":420}'"'"' | shoelace pie "Budget"\n'
+    printf '  printf '"'"'[3,7,5,11,9]'"'"' | shoelace line "Trend"\n'
+    printf '  cat spend.csv | shoelace bar\n'
+    printf '\n'
+    exit 0
+}
+
+case "$1" in --help|-h) show_help ;; esac
+
+# --- parse type + title ---------------------------------------------------
+type=bar
+case "$1" in
+    bar | line | pie) type="$1"; shift ;;
+esac
+[ -n "$SHOELACE_TYPE" ] && type="$SHOELACE_TYPE"
+title="$*"
+
+# --- gather data (stdin) --------------------------------------------------
+if [ -t 0 ]; then
+    data=''               # interactive with no pipe -> use sample below
+else
+    data="$(cat)"
+fi
+if [ -z "$data" ]; then
+    data='Mon,3
+Tue,7
+Wed,5
+Thu,4
+Fri,8'
+    [ -z "$title" ] && title='sample data'
+fi
+
+# --- normalise JSON to "label,value" CSV when the input looks like JSON ----
+# json2csv understands an object map, an array of objects, an array of
+# [label,value] pairs, and an array of bare numbers (see header).
+json2csv() {
+    awk '
+    function tok(s,   i, c, j, d, str, num) {
+        nt = 0; i = 1
+        while (i <= length(s)) {
+            c = substr(s, i, 1)
+            if (c == " " || c == "\t" || c == "\r" || c == "\n") { i++; continue }
+            if (c == "\"") {
+                j = i + 1; str = ""
+                while (j <= length(s)) {
+                    d = substr(s, j, 1)
+                    if (d == "\\") { str = str substr(s, j + 1, 1); j += 2; continue }
+                    if (d == "\"") break
+                    str = str d; j++
+                }
+                nt++; TT[nt] = "s"; TV[nt] = str; i = j + 1; continue
+            }
+            if (c ~ /[-0-9]/) {
+                j = i; num = ""
+                while (j <= length(s) && substr(s, j, 1) ~ /[-0-9.eE+]/) { num = num substr(s, j, 1); j++ }
+                nt++; TT[nt] = "n"; TV[nt] = num + 0; i = j; continue
+            }
+            if (c ~ /[A-Za-z]/) {                # true / false / null -> keyword
+                j = i; while (j <= length(s) && substr(s, j, 1) ~ /[A-Za-z]/) j++
+                nt++; TT[nt] = "k"; TV[nt] = substr(s, i, j - i); i = j; continue
+            }
+            nt++; TT[nt] = "p"; TV[nt] = c; i++  # punctuation { } [ ] : ,
+        }
+    }
+    function emit(lab, val) { gsub(/,/, " ", lab); print lab "," val }
+    function islabelkey(k) { return k=="label"||k=="name"||k=="title"||k=="x"||k=="key"||k=="category"||k=="id" }
+    function isvaluekey(k) { return k=="value"||k=="val"||k=="y"||k=="count"||k=="amount"||k=="total"||k=="n" }
+    # parse one object spanning tokens [a,b]: collect own (depth-0 within) fields
+    function obj(a, b,   k, depth, key, lab, val, haslab, hasval, fk, fv) {
+        depth = 0; lab = ""; val = ""; haslab = 0; hasval = 0
+        for (k = a; k <= b; k++) {
+            if (TT[k] == "p" && (TV[k] == "{" || TV[k] == "[")) { depth++; continue }
+            if (TT[k] == "p" && (TV[k] == "}" || TV[k] == "]")) { depth--; continue }
+            if (depth == 1 && TT[k] == "s" && TT[k+1] == "p" && TV[k+1] == ":") {
+                key = TV[k]
+                fk = TT[k+2]; fv = TV[k+2]
+                if (fk == "s" && (islabelkey(key) || !haslab)) { lab = fv; if (islabelkey(key)) haslab = 2; else if (!haslab) haslab = 1 }
+                if (fk == "n") {
+                    if (isvaluekey(key)) { val = fv; hasval = 2 }
+                    else if (hasval < 1) { val = fv; hasval = 1 }
+                }
+            }
+        }
+        if (val == "") return 0
+        if (lab == "") { gidx++; lab = gidx }
+        emit(lab, val); return 1
+    }
+    # parse one [label,value] array spanning [a,b]
+    function pair(a, b,   k, depth, lab, val, got) {
+        depth = 0; lab = ""; val = ""; got = 0
+        for (k = a; k <= b; k++) {
+            if (TT[k] == "p" && (TV[k] == "{" || TV[k] == "[")) { depth++; continue }
+            if (TT[k] == "p" && (TV[k] == "}" || TV[k] == "]")) { depth--; continue }
+            if (depth != 1) continue
+            if (TT[k] == "s" || TT[k] == "n") {
+                if (lab == "" && got == 0) { lab = TV[k]; got = 1 }
+                else if (val == "" && TT[k] == "n") { val = TV[k]; break }
+            }
+        }
+        if (val == "") return 0
+        emit(lab, val); return 1
+    }
+    { buf = buf $0 "\n" }
+    END {
+        tok(buf)
+        if (nt == 0) exit
+        gidx = 0
+        if (TT[1] == "p" && TV[1] == "{") {            # object map
+            depth = 0
+            for (k = 1; k <= nt; k++) {
+                if (TT[k] == "p" && (TV[k] == "{" || TV[k] == "[")) { depth++; continue }
+                if (TT[k] == "p" && (TV[k] == "}" || TV[k] == "]")) { depth--; continue }
+                if (depth == 1 && TT[k] == "s" && TT[k+1] == "p" && TV[k+1] == ":" && TT[k+2] == "n")
+                    emit(TV[k], TV[k+2])
+            }
+            exit
+        }
+        if (TT[1] == "p" && TV[1] == "[") {            # array of objects / pairs / numbers
+            depth = 0; start = 0
+            for (k = 1; k <= nt; k++) {
+                if (TT[k] == "p" && (TV[k] == "{" || TV[k] == "[")) {
+                    depth++
+                    if (depth == 2 && start == 0) start = k
+                    continue
+                }
+                if (TT[k] == "p" && (TV[k] == "}" || TV[k] == "]")) {
+                    depth--
+                    if (depth == 1 && start != 0) {
+                        if (TV[start] == "{") obj(start, k); else pair(start, k)
+                        start = 0
+                    }
+                    continue
+                }
+                if (depth == 1 && TT[k] == "n") { gidx++; emit(gidx, TV[k]) }   # bare number
+            }
+            exit
+        }
+    }'
+}
+
+case "$data" in
+    [[:space:]]*) trimmed=$(printf '%s' "$data" | sed -e 's/^[[:space:]]*//') ;;
+    *) trimmed=$data ;;
+esac
+original_data="$data"
+case "$trimmed" in
+    '{'* | '['*) data=$(printf '%s' "$data" | json2csv) ;;
+esac
+
+# --- fall back to table when the data doesn't suit a chart ----------------
+# JSON that produced no label/value pairs, or CSV with more than 2 columns.
+_use_table=0
+case "$trimmed" in
+    '{'* | '['*)
+        [ -z "$(printf '%s' "$data" | tr -d '[:space:]')" ] && _use_table=1 ;;
+    *)
+        _ncols=$(printf '%s' "$data" | awk -F, '
+            /^[[:space:]]*#/ { next }
+            /^[[:space:]]*$/ { next }
+            { gsub(/\r/,""); print NF; exit }')
+        [ "${_ncols:-0}" -gt 2 ] && _use_table=1 ;;
+esac
+if [ "$_use_table" -eq 1 ]; then
+    _dir=$(dirname "$0")
+    _st="$_dir/shoetable"; [ -x "$_st" ] || _st=shoetable
+    printf '%s\n' "$original_data" | \
+        SHOELACE_PLAIN="${SHOELACE_PLAIN:-}" \
+        SHOELACE_FORCE="${SHOELACE_FORCE:-}" \
+        SHOELACE_THEME="${SHOELACE_THEME:-}" \
+        "$_st" "$title"
+    exit $?
+fi
+
+# --- decide whether to draw graphics or fall back to plain text -----------
+graphics_ok() {
+    [ -n "$SHOELACE_PLAIN" ] && return 1
+    [ -n "$SHOELACE_FORCE" ] && return 0
+    [ -t 1 ] || return 1                 # not a terminal (file/pipe) -> plain
+    case "$TERM" in
+        foot | foot-* | *-foot | *foot*) return 0 ;;
+    esac
+    return 1                             # unknown terminal -> plain
+}
+
+if ! graphics_ok; then
+    # Plain-text fallback: a simple horizontal ASCII bar chart.
+    printf '%s\n' "$data" | awk -F, -v title="$title" '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    BEGIN { n = 0 }
+    {
+        lab = trim($1); val = trim($2)
+        if (lab == "" || lab ~ /^#/) next
+        if (val !~ /^-?[0-9]+(\.[0-9]+)?$/) {       # header or junk
+            if (n == 0) next
+            next
+        }
+        labels[n] = lab; values[n] = val + 0
+        if (length(lab) > w) w = length(lab)
+        if (values[n] > max) max = values[n]
+        n++
+    }
+    END {
+        if (title != "") { print title; for (i = 0; i < length(title); i++) printf "="; print "" }
+        if (n == 0) { print "(no data)"; exit }
+        if (max <= 0) max = 1
+        for (i = 0; i < n; i++) {
+            barlen = int(values[i] / max * 40 + 0.5)
+            bar = ""; for (j = 0; j < barlen; j++) bar = bar "#"
+            printf "%-*s | %-40s %g\n", w, labels[i], bar, values[i]
+        }
+    }'
+    exit 0
+fi
+
+# --- emit the drawing program, wrapped in the graphics DCS ----------------
+printf '\033P>g\n'
+
+printf '%s\n' "$data" | awk -F, \
+    -v title="$title" -v type="$type" \
+    -v seed="$$$(date +%s 2>/dev/null)" \
+    -v themeidx="${SHOELACE_THEME:-}" '
+function trim(s)        { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+function isnum(s)       { return s ~ /^-?[0-9]+(\.[0-9]+)?$/ }
+function fmtnum(v)      { return (v == int(v)) ? sprintf("%d", v) : sprintf("%.1f", v) }
+function clip(s, m)     { return (length(s) > m) ? substr(s, 1, m) : s }
+# round up to a "nice" axis maximum (1/2/5 x 10^k)
+function nicemax(m,   p, f) {
+    if (m <= 0) return 1
+    p = exp(int(log(m) / log(10)) * log(10))
+    f = m / p
+    if (f <= 1) return 1 * p
+    if (f <= 2) return 2 * p
+    if (f <= 5) return 5 * p
+    return 10 * p
+}
+
+BEGIN { n = 0 }
+
+# --- read rows ---
+{
+    lab = trim($1); val = trim($2)
+    if (lab == "" || lab ~ /^#/) next
+    if (!isnum(val)) { if (n == 0) next; else next }   # header / junk row
+    labels[n] = lab; values[n] = val + 0
+    if (values[n] > maxv) maxv = values[n]
+    sumv += values[n]
+    if (length(lab) > maxlab) maxlab = length(lab)
+    n++
+}
+
+END {
+    srand(seed)
+    if (title == "") title = "chart"
+
+    # --- theme (card background gradient + accent), shared with shoestring ---
+    ntheme = 9
+    T[0]="22 9 54 64 18 104 132 36 150 206 46 130|38e0ff|ffffff|ecd8ff|Aurora"
+    T[1]="6 16 54 12 52 96 16 110 140 40 190 180 |ffd166|ffffff|cdeffd|Ocean"
+    T[2]="40 12 60 120 28 80 200 70 60 245 170 60|ff5d8f|fff7ec|ffe0c0|Sunset"
+    T[3]="8 30 24 18 70 46 40 120 60 130 200 80  |ffe066|ffffff|dafad0|Forest"
+    T[4]="24 10 14 80 16 24 170 40 30 240 140 40 |ffd23f|fff2ec|ffd9c8|Ember"
+    T[5]="18 8 40 60 20 90 110 40 150 200 80 200 |66f0d0|ffffff|ecd8ff|Grape"
+    T[6]="18 20 28 38 44 60 70 84 110 130 150 180|8fd0ff|ffffff|cfe0f0|Slate"
+    T[7]="10 5 30 40 10 70 100 10 80 10 60 80    |ff2d78|ffffff|c0f4ff|VICE"
+    T[8]="60 8 40 120 20 80 150 40 130 100 30 160|ff9de0|ffffff|ffd6f5|Flowers"
+    ti = (themeidx != "") ? themeidx + 0 : int(rand() * ntheme)
+    ti = ((ti % ntheme) + ntheme) % ntheme
+    split(T[ti], P, "|")
+    split(P[1], g, " ")
+    accent = P[2]; tcol = P[3]; scol = P[4]; tname = P[5]
+    print "shoelace theme: " tname "  (" type ", " n " points)" > "/dev/stderr"
+
+    # --- categorical palette for series ---
+    np = 8
+    PAL[0]="ff6b6b"; PAL[1]="4ecdc4"; PAL[2]="ffd166"; PAL[3]="a78bfa"
+    PAL[4]="6ee7b7"; PAL[5]="fca5a5"; PAL[6]="60a5fa"; PAL[7]="f0abfc"
+
+    if (n == 0) {
+        print "size 30 4"; print "bg none"
+        printf "pen #%s\ntext 12 30 (no numeric data)\n", tcol
+        exit
+    }
+
+    # --- geometry ---
+    ox = 8; oy = 8; charw = 15
+    TH = 54                                   # title band height (clears axis labels)
+    PADB = 30                                 # bottom label band
+    PL = 52; PR = 22                          # plot left/right margins (bar/line)
+
+    if (type == "pie") {
+        R = 100
+        legendw = 40 + clip_n(maxlab) * (charw - 4) + 70
+        CW = 24 + 2 * R + 28 + legendw
+        CH = TH + 2 * R + 24
+    } else {
+        slot = 64
+        if (n > 12) slot = 44
+        plotw = n * slot
+        CW = PL + plotw + PR
+        PH = 200
+        CH = TH + PH + PADB
+    }
+    if (CW < 380) CW = 380
+    if (CW > 1600) CW = 1600
+    W = ox + CW + ox; H = oy + CH + oy
+    cols = int(W / 8) + 2; rows = int(H / 16) + 2
+
+    print "size " cols " " rows
+    print "bg none"
+
+    # --- gradient card background (2px strips), like shoestring ---
+    stops[0] = 0.0; stops[1] = 0.42; stops[2] = 0.74; stops[3] = 1.0
+    for (x = 0; x < CW; x += 2) {
+        t = x / CW
+        for (i = 0; i < 3; i++) {
+            a = stops[i]; b = stops[i + 1]
+            if (t <= b) {
+                u = (t - a) / (b - a)
+                r  = int(g[i*3+1] + u*(g[(i+1)*3+1] - g[i*3+1]))
+                gg = int(g[i*3+2] + u*(g[(i+1)*3+2] - g[i*3+2]))
+                bb = int(g[i*3+3] + u*(g[(i+1)*3+3] - g[i*3+3]))
+                printf "pen #%02x%02x%02x\nrectf %d %d 2 %d\n", r, gg, bb, ox + x, oy, CH
+                break
+            }
+        }
+    }
+    # top sheen + bright edge
+    printf "pen #ffffff12\nrectf %d %d %d 24\n", ox, oy, CW
+    printf "pen #ffffffa0\nrectf %d %d %d 2\n", ox, oy, CW
+
+    # --- title + accent underline ---
+    printf "pen #%s\ntext %d %d %s\n", tcol, ox + 18, oy + 27, clip(title, int((CW - 40) / charw))
+    printf "thickness 2\npen #%s\nline %d %d %d %d\n", accent, ox + 18, oy + 34, ox + 18 + 120, oy + 34
+    printf "thickness 1\n"
+
+    if (type == "pie")       draw_pie()
+    else if (type == "line") draw_line()
+    else                     draw_bar()
+}
+
+# pie legend label width helper (kept simple: clamp label length)
+function clip_n(L) { return (L > 16) ? 16 : L }
+
+# --- bar chart ------------------------------------------------------------
+function draw_bar(   i, top, base, x0, nm, gy, gv, cx, bw, h, col, lab) {
+    top  = oy + TH
+    base = oy + TH + PH
+    x0   = ox + PL
+    nm   = nicemax(maxv)
+
+    # gridlines + y labels
+    printf "thickness 1\n"
+    for (i = 0; i <= 4; i++) {
+        gy = base - i * (PH / 4)
+        gv = nm * i / 4
+        printf "pen #ffffff22\nline %d %d %d %d\n", x0, gy, ox + CW - PR, gy
+        printf "pen #%sb0\ntext %d %d %s\n", scol, ox + 14, gy + 4, fmtnum(gv)
+    }
+    # baseline
+    printf "pen #ffffffa0\nline %d %d %d %d\n", x0, base, ox + CW - PR, base
+
+    bw = slot * 0.58
+    for (i = 0; i < n; i++) {
+        col = PAL[i % np]
+        cx  = x0 + i * slot + slot / 2
+        h   = PH * values[i] / nm
+        if (h < 1) h = 1
+        printf "pen #%s\nrrectf %d %d %d %d 4\n", col, cx - bw/2, base - h, bw, h
+        # value above bar
+        printf "pen #%s\ntext %d %d %s\n", tcol, cx - 8, base - h - 6, fmtnum(values[i])
+        # label below baseline
+        lab = clip(labels[i], int(slot / (charw - 6)) + 1)
+        printf "pen #%s\ntext %d %d %s\n", scol, cx - length(lab) * charw / 2 + 2, base + 20, lab
+    }
+}
+
+# --- line chart -----------------------------------------------------------
+function draw_line(   i, top, base, x0, nm, gy, gv, px, py, ppx, ppy, lab) {
+    top  = oy + TH
+    base = oy + TH + PH
+    x0   = ox + PL
+    nm   = nicemax(maxv)
+
+    printf "thickness 1\n"
+    for (i = 0; i <= 4; i++) {
+        gy = base - i * (PH / 4)
+        gv = nm * i / 4
+        printf "pen #ffffff22\nline %d %d %d %d\n", x0, gy, ox + CW - PR, gy
+        printf "pen #%sb0\ntext %d %d %s\n", scol, ox + 14, gy + 4, fmtnum(gv)
+    }
+    printf "pen #ffffffa0\nline %d %d %d %d\n", x0, base, ox + CW - PR, base
+
+    # connecting segments
+    printf "thickness 3\npen #%s\n", accent
+    for (i = 0; i < n; i++) {
+        px = x0 + i * slot + slot / 2
+        py = base - PH * values[i] / nm
+        if (i > 0) printf "line %d %d %d %d\n", ppx, ppy, px, py
+        ppx = px; ppy = py
+    }
+    # markers + labels
+    printf "thickness 1\n"
+    for (i = 0; i < n; i++) {
+        px = x0 + i * slot + slot / 2
+        py = base - PH * values[i] / nm
+        printf "pen #%s\ncircf %d %d 5\n", PAL[i % np], px, py
+        printf "pen #ffffff\ncirc %d %d 5\n", px, py
+        printf "pen #%s\ntext %d %d %s\n", tcol, px - 8, py - 12, fmtnum(values[i])
+        lab = clip(labels[i], int(slot / (charw - 6)) + 1)
+        printf "pen #%s\ntext %d %d %s\n", scol, px - length(lab) * charw / 2 + 2, base + 20, lab
+    }
+}
+
+# --- pie chart ------------------------------------------------------------
+function draw_pie(   i, cx, cy, R, a0, a1, sweep, segs, k, ang, rad, pts, lx, ly, pct, col, lab) {
+    R  = 100
+    cx = ox + 24 + R
+    cy = oy + TH + R + 6
+    if (sumv <= 0) sumv = 1
+    a0 = -90                                   # start at top
+
+    for (i = 0; i < n; i++) {
+        col   = PAL[i % np]
+        sweep = 360 * values[i] / sumv
+        a1    = a0 + sweep
+        segs  = int(sweep / 6); if (segs < 2) segs = 2
+        pts   = sprintf("%d %d", cx, cy)
+        for (k = 0; k <= segs; k++) {
+            ang = a0 + (a1 - a0) * k / segs
+            rad = ang * 3.14159265 / 180
+            pts = pts sprintf(" %d %d", cx + R * cos(rad), cy + R * sin(rad))
+        }
+        printf "pen #%s\npolyf %s\n", col, pts
+        a0 = a1
+    }
+    # thin outline ring for definition
+    printf "pen #ffffffa0\ncirc %d %d %d\n", cx, cy, R
+
+    # legend
+    lx = ox + 24 + 2 * R + 28
+    for (i = 0; i < n; i++) {
+        ly  = oy + TH + 6 + i * 24
+        pct = 100 * values[i] / sumv
+        printf "pen #%s\nrrectf %d %d 16 16 3\n", PAL[i % np], lx, ly
+        lab = clip(labels[i], 18)
+        printf "pen #%s\ntext %d %d %s  %d%%\n", scol, lx + 24, ly + 13, lab, int(pct + 0.5)
+    }
+}'
+
+printf '\033\\'
+printf '\n'

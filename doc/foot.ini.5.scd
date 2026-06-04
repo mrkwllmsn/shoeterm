@@ -2094,6 +2094,11 @@ any of these options.
 	Boolean. When enabled, foot will process sixel images. Default:
 	_yes_
 
+*graphics*
+	Boolean. When enabled, foot will process the vector graphics
+	protocol (the *\\EP > g* DCS sequence, see *foot-ctlseqs*(7)).
+	Default: _yes_
+
 *dim-amount*
 	Amount by which dimmed text is darkened. Default: _1.5_.
 

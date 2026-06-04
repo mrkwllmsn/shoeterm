@@ -1,6 +1,7 @@
-# ![Logo: a terminal with a foot shaped prompt](icons/hicolor/48x48/apps/foot.png) foot
+# ![Logo: a terminal with a foot shaped prompt](icons/hicolor/48x48/apps/foot.png) Shoe (foot)
 
 The fast, lightweight and minimalistic Wayland terminal emulator.
+With in built support for vector graphics primitives and tools to play with them
 
 [![CI status](https://ci.codeberg.org/api/badges/dnkl/foot/status.svg)](https://ci.codeberg.org/dnkl/foot)
 
@@ -66,6 +67,52 @@ The fast, lightweight and minimalistic Wayland terminal emulator.
 * [Sixel image support](https://en.wikipedia.org/wiki/Sixel)
 
   ![tux-with-foot](doc/sixel-tux-foot.png "Sixel screenshot")
+
+* Vector graphics — draw lines, shapes, curves and text directly in the
+  terminal with a simple escape sequence. See the
+  [showcase](https://mrkwllmsn.github.io/shoeterm/). From your shell:
+
+ ```
+    # Minimal vector-graphics demo: rounded rect + circle + text.
+    # Run inside the graphics-capable foot (or shoe):  ./bld/debug/foot sh shoescripts/hello-card.sh
+    printf '\033P>g
+    size 20 6
+    bg #101028
+    pen #ff5050
+    rrectf 10 10 130 50 12
+    pen #50d0ff
+    circ 220 35 28
+    pen #ffffff
+    text 12 90 hello
+    \033\\'
+
+  ```
+
+
+
+ Or as a oneliner:
+ ```
+   printf '\033P>g\nsize 20 6\nbg #101028\npen #ff5050\nrrectf 10 10 130 50 12\npen #50d0ff\ncirc 220 35 28\npen #ffffff\ntext 12 90 hello\n\033\\'
+ ```
+    (`ESC P > g … ESC \`). See [doc/vector-graphics.md](doc/vector-graphics.md).
+
+  ![vector-graphics](doc/vector-graphics.png "Vector graphics screenshot")
+
+  Bundled scripts turn it into charts, banners and tables — e.g. piping
+  numbers into `shoelace` renders a chart:
+
+  ![vector-graphics-chart](doc/vector-graphics-chart.png "Vector graphics chart screenshot")
+
+  `shoebling` draws an ornate vintage frame around text, and `shoestring`
+  turns a line of text into a themed gradient banner (both fall back to
+  plain text when not run in a graphics-capable terminal):
+
+  ![vector-graphics-banners](doc/vector-graphics-banners.png "shoebling and shoestring banners screenshot")
+
+  `memtop.sh` is a live memory dashboard — a half-ring usage gauge, stacked
+  RAM/swap bars and a history graph, all redrawn in place from `/proc/meminfo`:
+
+  ![vector-graphics-memtop](doc/memtop.png "memtop live memory dashboard screenshot")
 
 
 # Installing

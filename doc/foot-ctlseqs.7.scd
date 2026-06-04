@@ -804,8 +804,93 @@ and are terminated by *\\E\\* (ST).
 :  Begin (_C_=*1*) or end (_C_=*2*) application synchronized updates.
    This sequence is supported for compatibility reasons, but it's
    recommended to use private mode 2026 (see above) instead.
-|  \\EP + q <hex encoded capability name> \\E\\ 
+|  \\EP + q <hex encoded capability name> \\E\\
 :  Query builtin terminfo database (XTGETTCAP)
+|  \\EP > g <draw commands> \\E\\
+:  Draw vector graphics (lines, shapes and text) at the current cursor
+   position. See *Vector graphics* below. Can be disabled with the
+   *graphics* tweak (see *foot.ini*(5)).
+
+
+# Vector graphics
+
+The *\\EP > g* _DCS_ sequence rasterizes a batch of drawing commands into
+an image, which is then emitted at the current cursor position, exactly
+like a sixel (it scrolls with the text and is removed when overwritten).
+
+The body is a list of commands, one command per entry, separated by
+*newlines or commas* (a comma lets a whole drawing fit on one line, e.g.
+a single *printf*). Within a command the name and its arguments are
+separated by spaces. A *#* starts a comment that runs to the end of the
+line, and *text* takes the rest of its line as a string; both ignore
+commas. Coordinates are in *pixels*, with the origin in the top-left
+corner of the canvas. Colors are written as *#rrggbb*, *#rrggbbaa* or the
+keyword *none* (fully transparent).
+
+[[ *Command*
+:< *Description*
+|  size _cols_ _rows_
+:  Canvas size, in terminal *cells*. Must be the first command.
+|  bg _color_
+:  Fill the canvas background (default: *none*).
+|  pen _color_
+:  Set the current drawing color.
+|  thickness _n_
+:  Set line/outline thickness, in pixels (default: *1*).
+|  clip _x_ _y_ _w_ _h_
+:  Restrict subsequent drawing to a rectangle.
+|  noclip
+:  Remove the clip rectangle.
+|  clear
+:  Reset the whole canvas to the background color.
+|  pixel _x_ _y_
+:  Plot a single point.
+|  line _x0_ _y0_ _x1_ _y1_
+:  Draw a line.
+|  rect _x_ _y_ _w_ _h_
+:  Draw a rectangle outline.
+|  rectf _x_ _y_ _w_ _h_
+:  Draw a filled rectangle.
+|  circ _cx_ _cy_ _r_
+:  Draw a circle outline.
+|  circf _cx_ _cy_ _r_
+:  Draw a filled circle.
+|  arc _cx_ _cy_ _r_ _start_ _end_
+:  Draw a circular arc outline. Angles are in degrees (0=east, 90=south,
+   180=west, 270=north).
+|  rrect _x_ _y_ _w_ _h_ _r_
+:  Draw a rounded rectangle outline, corner radius _r_.
+|  rrectf _x_ _y_ _w_ _h_ _r_
+:  Draw a filled rounded rectangle, corner radius _r_.
+|  bezier _x0_ _y0_ _x1_ _y1_ _x2_ _y2_ _x3_ _y3_
+:  Draw a cubic Bézier curve (P0 and P3 are endpoints, P1 and P2 are
+   control points).
+|  tri _x0_ _y0_ _x1_ _y1_ _x2_ _y2_
+:  Draw a triangle outline.
+|  trif _x0_ _y0_ _x1_ _y1_ _x2_ _y2_
+:  Draw a filled triangle.
+|  poly _x0_ _y0_ _x1_ _y1_ ...
+:  Draw a closed polygon outline.
+|  polyf _x0_ _y0_ _x1_ _y1_ ...
+:  Draw a filled polygon.
+|  text _x_ _y_ _string_
+:  Draw UTF-8 text, with _x_ _y_ as the left end of the baseline. The
+   string is the rest of the line. Uses the configured font.
+
+Example (a filled rectangle, a circle outline and a label):
+
+```
+printf '\\eP>g
+size 20 6
+bg #101028
+pen #ff5050
+rectf 10 10 120 50
+pen #50d0ff
+circ 220 35 28
+pen #ffffff
+text 12 90 hello
+\\e\\\\'
+```
 
 
 # FOOTNOTE

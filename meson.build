@@ -1,5 +1,5 @@
 project('foot', 'c',
-        version: '1.27.0',
+        version: '1.27.0+gfx.1',
         license: 'MIT',
         meson_version: '>=0.59.0',
         default_options: [
@@ -276,6 +276,7 @@ vtlib = static_library(
   'cursor-shape.c', 'cursor-shape.h',
   'csi.c', 'csi.h',
   'dcs.c', 'dcs.h',
+  'graphics.c', 'graphics.h',
   'macros.h',
   'osc.c', 'osc.h',
   'sixel.c', 'sixel.h',

@@ -457,6 +457,7 @@ struct config {
         bool box_drawing_solid_shades;
         bool font_monospace_warn;
         bool sixel;
+        bool graphics;
         enum shm_bit_depth surface_bit_depth;
         uint32_t min_stride_alignment;
         bool preapply_damage;

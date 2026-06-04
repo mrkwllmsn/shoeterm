@@ -1,0 +1,305 @@
+#!/bin/sh
+# shoebling - frame a string in an ornate vintage border, drawn with foot's
+# vector graphics. A cousin of `shoestring`, but instead of a gradient card it
+# renders engraved corner scrollwork, double keylines and filigree dividers
+# around your text -- the "vintage frame" look.
+#
+#   echo "VINTAGE FRAME" | shoebling
+#   shoebling "Deploy Complete"
+#   printf 'VINTAGE FRAME\nORIGINAL\nEST. 1967\n' | shoebling
+#
+# Input (1-3 lines):
+#   line 1  ->  title    (the big centred line, framed by two flourishes)
+#   line 2  ->  kicker   (small line ABOVE the top flourish)
+#   line 3  ->  footer   (small line BELOW the bottom flourish)
+# With only two lines, line 2 is treated as the footer (below).
+# Passing arguments uses them all as the title.
+#
+# A random vintage theme is picked each run (printed to stderr). Force one with
+# SHOEBLING_THEME=0..5  (0 Sepia .. 5 Slate).
+#
+# Graphics are only drawn when stdout is a graphics-capable terminal (foot);
+# otherwise it prints a plain-text ASCII frame (safe to pipe to a file).
+#   SHOEBLING_FORCE=1  always draw graphics
+#   SHOEBLING_PLAIN=1  always plain text
+#   SHOEBLING_CAPS=0   do not upper-case the text
+#   SHOEBLING_SPACE=0  do not letter-space the title
+#   SHOEBLING_INVERT=1 dark panel with light scrollwork (inverse of parchment)
+
+# --- help -----------------------------------------------------------------
+show_help() {
+    B=$(printf '\033[1m');  D=$(printf '\033[2m');  R=$(printf '\033[0m')
+    H=$(printf '\033[1;36m'); A=$(printf '\033[38;5;180m')
+
+    # Banner: call ourselves with the tool name + tagline
+    SHOEBLING_FORCE=1 "$0" "shoebling" "ornate vintage frames for any string" 2>/dev/null
+
+    printf '\n%sUSAGE%s\n' "$H" "$R"
+    printf '  %secho "text" | shoebling%s\n' "$B" "$R"
+    printf '  %sshoebling "text"%s\n' "$B" "$R"
+    printf '  %sprintf "Title\\nKicker\\nFooter\\n" | shoebling%s\n' "$B" "$R"
+
+    printf '\n%sINPUT%s  (1-3 lines)\n' "$H" "$R"
+    printf '  line 1  %s->%s  title   (big, centred, framed by flourishes)\n' "$A" "$R"
+    printf '  line 2  %s->%s  kicker  (small line above the top flourish)\n'   "$A" "$R"
+    printf '  line 3  %s->%s  footer  (small line below the bottom flourish)\n' "$A" "$R"
+    printf '  %s(with two lines, line 2 is the footer; args -> all title)%s\n' "$D" "$R"
+
+    printf '\n%sTHEMES%s  %sSHOEBLING_THEME=0..5%s\n' "$H" "$R" "$D" "$R"
+    printf '  %s0%s Sepia    %s1%s Noir    %s2%s Royal    %s3%s Botanic\n' \
+        "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
+    printf '  %s4%s Bordeaux %s5%s Slate\n' "$B" "$R" "$B" "$R"
+
+    printf '\n%sENVIRONMENT%s\n' "$H" "$R"
+    printf '  %sSHOEBLING_THEME%s=0..5  force a theme\n'    "$B" "$R"
+    printf '  %sSHOEBLING_FORCE%s=1     always draw graphics\n' "$B" "$R"
+    printf '  %sSHOEBLING_PLAIN%s=1     always plain text\n'  "$B" "$R"
+    printf '  %sSHOEBLING_CAPS%s=0      keep original case\n' "$B" "$R"
+    printf '  %sSHOEBLING_SPACE%s=0     no title letter-spacing\n' "$B" "$R"
+    printf '  %sSHOEBLING_INVERT%s=1    dark panel, light scrollwork\n' "$B" "$R"
+
+    printf '\n%sEXAMPLES%s\n' "$H" "$R"
+    printf '  echo "VINTAGE FRAME" | shoebling\n'
+    printf '  printf "VINTAGE FRAME\\nORIGINAL\\nEST. 1967\\n" | shoebling\n'
+    printf '  SHOEBLING_THEME=2 shoebling "Royal Decree"\n'
+    printf '\n'
+    exit 0
+}
+
+case "$1" in --help|-h) show_help ;; esac
+
+# --- gather input ---------------------------------------------------------
+title=''
+kicker=''
+footer=''
+if [ "$#" -gt 0 ]; then
+    title="$*"
+else
+    i=0
+    while IFS= read -r line; do
+        case "$i" in
+            0) title="$line" ;;
+            1) line2="$line" ;;
+            2) footer="$line" ;;
+            *) ;;  # ignore further lines
+        esac
+        i=$((i + 1))
+    done
+    # 2 lines -> title + footer; 3+ lines -> title + kicker + footer
+    if [ "$i" -ge 3 ]; then
+        kicker="$line2"
+    elif [ "$i" -eq 2 ]; then
+        footer="$line2"
+    fi
+fi
+
+# --- clamp absurdly long input so the frame stays a sane size -------------
+MAXLEN=160
+clamp() { v="$1"; [ "${#v}" -gt "$MAXLEN" ] && v="$(printf '%s' "$v" | cut -c1-"$MAXLEN")…"; printf '%s' "$v"; }
+title=$(clamp "$title"); kicker=$(clamp "$kicker"); footer=$(clamp "$footer")
+
+# --- decide whether to draw graphics or fall back to plain text -----------
+graphics_ok() {
+    [ -n "$SHOEBLING_PLAIN" ] && return 1
+    [ -n "$SHOEBLING_FORCE" ] && return 0
+    [ -t 1 ] || return 1                 # not a terminal (file/pipe) -> plain
+    case "$TERM" in
+        foot | foot-* | *-foot | *foot*) return 0 ;;
+    esac
+    return 1                             # unknown terminal -> plain
+}
+
+if ! graphics_ok; then
+    # Plain-text fallback (no escape sequences) - an ASCII vintage frame.
+    [ -z "$title" ] && title="VINTAGE FRAME"
+    w=${#title}
+    [ "${#kicker}" -gt "$w" ] && w=${#kicker}
+    [ "${#footer}" -gt "$w" ] && w=${#footer}
+    inner=$((w + 6))
+    rule=$(awk -v n="$inner" 'BEGIN{s="";for(i=0;i<n;i++)s=s"=";print s}')
+    center() { s="$1"; pad=$(( (inner - ${#s}) / 2 )); printf '|%*s%s%*s|\n' "$pad" '' "$s" "$((inner - pad - ${#s}))" ''; }
+    printf '+%s+\n' "$rule"
+    [ -n "$kicker" ] && center "$kicker"
+    center ". $title ."
+    [ -n "$footer" ] && center "$footer"
+    printf '+%s+\n' "$rule"
+    exit 0
+fi
+
+# --- ask foot for its real cell size so the frame fits the text exactly ---
+cw_px=8; ch_px=16
+if [ -t 0 ] && [ -t 1 ]; then
+    old=`stty -g 2>/dev/null` && {
+        stty raw -echo min 0 time 2 2>/dev/null
+        printf '\033[16t'
+        resp=`dd bs=1 count=20 2>/dev/null`
+        stty "$old" 2>/dev/null
+        h=`printf '%s' "$resp" | sed -n 's/.*\[6;\([0-9]*\);\([0-9]*\)t.*/\1/p'`
+        w=`printf '%s' "$resp" | sed -n 's/.*\[6;\([0-9]*\);\([0-9]*\)t.*/\2/p'`
+        [ -n "$h" ] && ch_px=$h
+        [ -n "$w" ] && cw_px=$w
+    }
+fi
+
+# --- emit the drawing program, wrapped in the graphics DCS ----------------
+printf '\033P>g\n'
+
+awk -v title="$title" -v kicker="$kicker" -v footer="$footer" \
+    -v seed="$$$(date +%s 2>/dev/null)" \
+    -v cellw="$cw_px" -v cellh="$ch_px" \
+    -v themeidx="${SHOEBLING_THEME:-}" \
+    -v docaps="${SHOEBLING_CAPS:-1}" -v dospace="${SHOEBLING_SPACE:-1}" \
+    -v invert="${SHOEBLING_INVERT:-0}" '
+# --- little rasterizer helpers -------------------------------------------
+function bez(x0,y0,x1,y1,x2,y2,x3,y3) {
+    printf "bezier %d %d %d %d %d %d %d %d\n", x0,y0,x1,y1,x2,y2,x3,y3
+}
+function diamond(cx,cy,s) {
+    printf "polyf %d %d %d %d %d %d %d %d\n", cx,cy-s, cx+s,cy, cx,cy+s, cx-s,cy
+}
+function dot(cx,cy,r) { printf "circf %d %d %d\n", cx,cy,r }
+
+# letter-space a string with single spaces ("ABC" -> "A B C")
+function spaceout(s,   i,o,n) {
+    o=""; n=length(s)
+    for (i=1; i<=n; i++) { o=o substr(s,i,1); if (i<n) o=o " " }
+    return o
+}
+
+# ornate corner scroll. (ax,ay) is the inner-corner anchor; (sx,sy) the signs
+# that point inward (+1 toward growing coord). Mirrored for all four corners.
+function corner(ax,ay,sx,sy) {
+    printf "thickness 2\npen #%s\n", ink
+    bez(ax+sx*52,ay+sy*1, ax+sx*20,ay+sy*2, ax+sx*2,ay+sy*20, ax+sx*1,ay+sy*52)
+    printf "thickness 1\n"
+    bez(ax+sx*42,ay+sy*9, ax+sx*18,ay+sy*9, ax+sx*9,ay+sy*18, ax+sx*9,ay+sy*42)
+    # hooks curling past each open end
+    bez(ax+sx*52,ay+sy*1, ax+sx*62,ay-sy*6, ax+sx*66,ay+sy*5, ax+sx*58,ay+sy*9)
+    bez(ax+sx*1,ay+sy*52, ax-sx*6,ay+sy*62, ax+sx*5,ay+sy*66, ax+sx*9,ay+sy*58)
+    # terminal beads + a corner accent leaf
+    printf "pen #%s\n", accent
+    dot(ax+sx*52, ay+sy*1, 2)
+    dot(ax+sx*1,  ay+sy*52, 2)
+    diamond(ax+sx*6, ay+sy*6, 3)
+}
+
+# a single end-swash of a divider, on the (sx) side of centre cx at cy
+function swash(cx,cy,hw,sx,   ex) {
+    ex = cx + sx*(hw-22)
+    printf "thickness 2\npen #%s\n", ink
+    bez(ex,cy, ex+sx*8,cy-9, ex+sx*16,cy+7, ex+sx*22,cy-3)
+    printf "pen #%s\n", accent
+    dot(cx+sx*hw, cy-3, 2)
+}
+
+# symmetric filigree divider: rules + centre diamond + end swashes
+function divider(cx,cy,hw) {
+    printf "thickness 2\npen #%s\n", ink
+    printf "line %d %d %d %d\n", cx-hw+22, cy, cx-14, cy
+    printf "line %d %d %d %d\n", cx+14, cy, cx+hw-22, cy
+    printf "pen #%s\n", accent
+    diamond(cx,cy,4)
+    printf "pen #%s\n", ink
+    dot(cx-10,cy,1); dot(cx+10,cy,1)
+    swash(cx,cy,hw, 1)
+    swash(cx,cy,hw,-1)
+}
+
+# small crest sitting on the top/bottom border (sy=+1 dips inward/down)
+function crest(cx,y,sy) {
+    printf "thickness 1\npen #%s\n", ink
+    bez(cx,y, cx-8,y-sy*4, cx-16,y+sy*6, cx-22,y)
+    bez(cx,y, cx+8,y-sy*4, cx+16,y+sy*6, cx+22,y)
+    printf "pen #%s\n", accent
+    diamond(cx, y-sy*4, 3)
+    printf "pen #%s\n", ink
+    dot(cx-22,y,1); dot(cx+22,y,1)
+}
+
+BEGIN {
+    srand(seed)
+    if (title == "") title = "VINTAGE FRAME"
+
+    # --- theme:  ink | paper | accent | name ---
+    ntheme = 6
+    TH[0] = "3a2a18|f3e7cf|9a6b2f|Sepia"
+    TH[1] = "1a1a1a|f5f1e6|8a7d5a|Noir"
+    TH[2] = "1c2440|eef0e2|b6912f|Royal"
+    TH[3] = "203526|eef0df|8a6f2b|Botanic"
+    TH[4] = "4a1320|f2e6d8|9c5a2f|Bordeaux"
+    TH[5] = "222730|e9eaec|6f7a86|Slate"
+
+    ti = (themeidx != "") ? themeidx + 0 : int(rand() * ntheme)
+    ti = ((ti % ntheme) + ntheme) % ntheme
+    split(TH[ti], P, "|")
+    ink = P[1]; paper = P[2]; accent = P[3]; tname = P[4]
+    # inverted: dark panel with light scrollwork/text (swap ink<->paper)
+    if (invert + 0 != 0) { tmp = ink; ink = paper; paper = tmp; tname = tname " (inverted)" }
+    print "shoebling theme: " tname > "/dev/stderr"
+
+    # --- text shaping (caps + letter-spaced title) ---
+    if (docaps + 0 != 0) { title=toupper(title); kicker=toupper(kicker); footer=toupper(footer) }
+    titleS = (dospace + 0 != 0) ? spaceout(title) : title
+    kS = (kicker != "") ? (dospace+0 ? spaceout(kicker) : kicker) : ""
+    fS = (footer != "") ? (dospace+0 ? spaceout(footer) : footer) : ""
+    hasK = (kS != ""); hasF = (fS != "")
+
+    tL = length(titleS); kL = length(kS); fL = length(fS)
+    maxL = tL
+    if (kL > maxL) maxL = kL
+    if (fL > maxL) maxL = fL
+
+    # --- geometry (pixels) ---
+    ox = 10; oy = 8
+    CW = maxL * cellw + 150
+    if (CW < 380) CW = 380
+
+    # vertical cursor: kicker? -> top divider -> title -> bottom divider -> footer?
+    y = 22
+    if (hasK) { kcy = oy + y + 7; y += 26 }
+    d1y = oy + y; y += 24
+    tcy = oy + y + 8; y += 26
+    d2y = oy + y; y += 24
+    if (hasF) { fcy = oy + y + 7; y += 26 }
+    CH = y + 20
+
+    W = ox + CW + ox; H = oy + CH + oy
+    cols = int((W + cellw - 1) / cellw)
+    rows = int((H + cellh - 1) / cellh)
+
+    print "size " cols " " rows
+    print "bg none"
+
+    # --- parchment panel (rounded), with a faint inner tint ---
+    printf "pen #%s\nrrectf %d %d %d %d 6\n", paper, ox, oy, CW, CH
+
+    # --- double keyline border ---
+    cx = ox + int(CW / 2)
+    printf "thickness 2\npen #%s\nrect %d %d %d %d\n", ink, ox+3, oy+3, CW-6, CH-6
+    printf "thickness 1\nrect %d %d %d %d\n", ox+9, oy+9, CW-18, CH-18
+
+    # --- corner scrollwork ---
+    corner(ox+15,      oy+15,       1,  1)   # top-left
+    corner(ox+CW-15,   oy+15,      -1,  1)   # top-right
+    corner(ox+15,      oy+CH-15,    1, -1)   # bottom-left
+    corner(ox+CW-15,   oy+CH-15,   -1, -1)   # bottom-right
+
+    # --- centre crests on top & bottom borders ---
+    crest(cx, oy+3,      1)
+    crest(cx, oy+CH-3,  -1)
+
+    # --- divider flourishes framing the title ---
+    dhw = int(tL * cellw / 2) + 18
+    if (dhw > int(CW/2) - 34) dhw = int(CW/2) - 34
+    if (dhw < 70) dhw = 70
+    divider(cx, d1y, dhw)
+    divider(cx, d2y, dhw)
+
+    # --- text (drawn last, on top) ---
+    if (hasK) printf "pen #%s\ntext %d %d %s\n", accent, ox + int((CW - kL*cellw)/2), kcy+5, kS
+    printf "pen #%s\ntext %d %d %s\n", ink, ox + int((CW - tL*cellw)/2), tcy+5, titleS
+    if (hasF) printf "pen #%s\ntext %d %d %s\n", accent, ox + int((CW - fL*cellw)/2), fcy+5, fS
+}'
+
+printf '\033\\'
+printf '\n'

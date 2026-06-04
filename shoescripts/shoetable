@@ -1,0 +1,390 @@
+#!/bin/sh
+# shoetable — render tabular data as a beautiful in-terminal table
+# using foot's vector-graphics protocol.
+#
+#   printf 'name,age,city\nAlice,30,NYC\nBob,25,LA\n' | shoetable "People"
+#   cat records.json | shoetable "Records"
+#
+# Input:
+#   CSV   first non-blank/non-comment row = headers; rest = data rows
+#   JSON  array of objects  →  keys become column headers
+#         top-level object  →  two columns: Key / Value
+#
+# Environment:
+#   SHOETABLE_THEME=0..8   force theme  (also reads SHOELACE_THEME)
+#   SHOETABLE_FORCE=1      always draw graphics
+#   SHOETABLE_PLAIN=1      always plain text
+
+title="${1:-}"
+
+graphics_ok() {
+    [ -n "$SHOETABLE_PLAIN" ] && return 1
+    [ -n "$SHOELACE_PLAIN"  ] && return 1
+    [ -n "$SHOETABLE_FORCE" ] && return 0
+    [ -n "$SHOELACE_FORCE"  ] && return 0
+    [ -t 1 ] || return 1
+    case "$TERM" in foot | foot-* | *-foot | *foot*) return 0 ;; esac
+    return 1
+}
+
+data="$(cat)"
+
+# Convert raw input to tab-separated values.
+# First output line: tab-separated column headers.
+# Subsequent lines: tab-separated data values.
+_tsv="$(printf '%s\n' "$data" | awk '
+function tok(s,   i,c,j,d,str,num) {
+    nt=0; i=1
+    while (i <= length(s)) {
+        c=substr(s,i,1)
+        if (c==" "||c=="\t"||c=="\r"||c=="\n") { i++; continue }
+        if (c=="\"") {
+            j=i+1; str=""
+            while (j<=length(s)) {
+                d=substr(s,j,1)
+                if (d=="\\") { str=str substr(s,j+1,1); j+=2; continue }
+                if (d=="\"") break
+                str=str d; j++
+            }
+            nt++; TT[nt]="s"; TV[nt]=str; i=j+1; continue
+        }
+        if (c~/[-0-9]/) {
+            j=i; num=""
+            while (j<=length(s)&&substr(s,j,1)~/[-0-9.eE+]/) { num=num substr(s,j,1); j++ }
+            nt++; TT[nt]="n"; TV[nt]=num+0; i=j; continue
+        }
+        if (c~/[A-Za-z]/) {
+            j=i; while(j<=length(s)&&substr(s,j,1)~/[A-Za-z]/) j++
+            nt++; TT[nt]="k"; TV[nt]=substr(s,i,j-i); i=j; continue
+        }
+        nt++; TT[nt]="p"; TV[nt]=c; i++
+    }
+}
+
+function parse_json(   k,depth,col,in_first,found_first,in_obj,c) {
+    tok(buf)
+    if (nt==0) return
+
+    if (TT[1]=="p" && TV[1]=="{") {
+        # top-level object → Key / Value table
+        ncols=2; hdrs[1]="Key"; hdrs[2]="Value"
+        depth=0
+        for (k=1;k<=nt;k++) {
+            if (TT[k]=="p"&&(TV[k]=="{"||TV[k]=="[")) { depth++; continue }
+            if (TT[k]=="p"&&(TV[k]=="}"||TV[k]=="]")) { depth--; continue }
+            if (depth==1&&TT[k]=="s"&&TT[k+1]=="p"&&TV[k+1]==":") {
+                nrows++
+                cell[nrows,1]=TV[k]
+                if (TT[k+2]=="s"||TT[k+2]=="n"||TT[k+2]=="k") cell[nrows,2]=TV[k+2]
+                else cell[nrows,2]=""
+            }
+        }
+        return
+    }
+
+    if (TT[1]=="p" && TV[1]=="[") {
+        # pass 1: collect columns from first object
+        depth=0; in_first=0; found_first=0
+        for (k=1;k<=nt&&!found_first;k++) {
+            if (TT[k]=="p"&&TV[k]=="{") { depth++; if(depth==2) in_first=1; continue }
+            if (TT[k]=="p"&&TV[k]=="}") { if(depth==2&&in_first) found_first=1; depth--; continue }
+            if (TT[k]=="p"&&(TV[k]=="["||TV[k]=="]")) {
+                if(TV[k]=="[") depth++; else depth--; continue
+            }
+            if (in_first&&depth==2&&TT[k]=="s"&&TT[k+1]=="p"&&TV[k+1]==":") {
+                col=TV[k]
+                if (!(col in colidx)) { ncols++; hdrs[ncols]=col; colidx[col]=ncols }
+            }
+        }
+        if (ncols==0) return
+        # pass 2: extract rows
+        depth=0; in_obj=0
+        for (k=1;k<=nt;k++) {
+            if (TT[k]=="p"&&TV[k]=="{") {
+                depth++
+                if (depth==2) { in_obj=1; delete rowv }
+                continue
+            }
+            if (TT[k]=="p"&&TV[k]=="}") {
+                if (depth==2&&in_obj) {
+                    nrows++
+                    for (c=1;c<=ncols;c++) cell[nrows,c]=(hdrs[c] in rowv)?rowv[hdrs[c]]:""
+                    in_obj=0
+                }
+                depth--; continue
+            }
+            if (TT[k]=="p"&&(TV[k]=="["||TV[k]=="]")) {
+                if(TV[k]=="[") depth++; else depth--; continue
+            }
+            if (in_obj&&depth==2&&TT[k]=="s"&&TT[k+1]=="p"&&TV[k+1]==":") {
+                col=TV[k]
+                if (col in colidx) {
+                    if (TT[k+2]=="s"||TT[k+2]=="n"||TT[k+2]=="k") rowv[col]=TV[k+2]
+                    else rowv[col]=""
+                }
+            }
+        }
+    }
+}
+
+function parse_csv(delim,   i,n,line,fields,f,nlines) {
+    nlines=split(buf,csvlines,"\n")
+    for (i=1;i<=nlines;i++) {
+        line=csvlines[i]; gsub(/^[ \t\r]+|[ \t\r]+$/,"",line)
+        if (line==""||substr(line,1,1)=="#") continue
+        n=split(line,fields,delim)
+        for (f=1;f<=n;f++) gsub(/^[ \t]+|[ \t]+$/,"",fields[f])
+        if (ncols==0) {
+            ncols=n
+            for (f=1;f<=n;f++) hdrs[f]=fields[f]
+        } else {
+            nrows++
+            for (f=1;f<=ncols;f++) cell[nrows,f]=(f<=n)?fields[f]:""
+        }
+    }
+}
+
+function parse_wsv(   i,n,line,fields,f,rest,nlines) {
+    nlines=split(buf,csvlines,"\n")
+    for (i=1;i<=nlines;i++) {
+        line=csvlines[i]; gsub(/^[ \t\r]+|[ \t\r]+$/,"",line)
+        if (line==""||substr(line,1,1)=="#") continue
+        n=split(line,fields,/[ \t]+/)
+        if (ncols==0) {
+            ncols=n
+            for (f=1;f<=n;f++) hdrs[f]=fields[f]
+        } else {
+            nrows++
+            for (f=1;f<ncols&&f<=n;f++) cell[nrows,f]=fields[f]
+            if (ncols<=n) {
+                rest=fields[ncols]
+                for (f=ncols+1;f<=n;f++) rest=rest " " fields[f]
+                cell[nrows,ncols]=rest
+            }
+        }
+    }
+}
+
+{ buf=buf $0 "\n" }
+
+END {
+    ncols=0; nrows=0
+    s=buf; gsub(/^[ \t\n\r]+/,"",s)
+    if (substr(s,1,1)=="{"||substr(s,1,1)=="[") parse_json()
+    else {
+        firstline=s; sub(/\n.*/,"",firstline); gsub(/\r/,"",firstline)
+        if (index(firstline,"\t")>0) parse_csv("\t")
+        else if (index(firstline,",")>0) parse_csv(",")
+        else parse_wsv()
+    }
+
+    if (ncols==0) exit
+    hdr=""
+    for (c=1;c<=ncols;c++) hdr=hdr (c>1?"\t":"") hdrs[c]
+    print hdr
+    for (r=1;r<=nrows;r++) {
+        row=""
+        for (c=1;c<=ncols;c++) row=row (c>1?"\t":"") cell[r,c]
+        print row
+    }
+}')"
+
+if ! graphics_ok; then
+    # Plain text table with unicode box-drawing
+    printf '%s\n' "$_tsv" | awk -F'\t' -v title="$title" '
+    function rep(c, n,   s,i) { s=""; for(i=0;i<n;i++) s=s c; return s }
+    function pad(s, w)        { return s rep(" ", w - length(s)) }
+    NR==1 {
+        ncols=NF
+        for (c=1;c<=ncols;c++) { hdrs[c]=$c; cw[c]=length($c) }
+        next
+    }
+    {
+        nrows++
+        for (c=1;c<=ncols;c++) {
+            cell[nrows,c]=$c
+            if (length($c)>cw[c]) cw[c]=length($c)
+        }
+    }
+    END {
+        MAXCW=28
+        for (c=1;c<=ncols;c++) if(cw[c]>MAXCW) cw[c]=MAXCW
+        if (title!="") { print title; print rep("=",length(title)) }
+        if (ncols==0) { print "(no data)"; exit }
+        # top border
+        top="┌"; mid="├"; bot="└"
+        for (c=1;c<=ncols;c++) {
+            top=top rep("─",cw[c]+2) (c<ncols?"┬":"┐")
+            mid=mid rep("─",cw[c]+2) (c<ncols?"┼":"┤")
+            bot=bot rep("─",cw[c]+2) (c<ncols?"┴":"┘")
+        }
+        print top
+        hrow="│"
+        for (c=1;c<=ncols;c++) hrow=hrow " " pad(substr(hdrs[c],1,cw[c]),cw[c]) " │"
+        print hrow
+        print mid
+        for (r=1;r<=nrows;r++) {
+            row="│"
+            for (c=1;c<=ncols;c++) row=row " " pad(substr(cell[r,c],1,cw[c]),cw[c]) " │"
+            print row
+        }
+        print bot
+    }'
+    exit 0
+fi
+
+# --- emit the drawing program, wrapped in the graphics DCS ----------------
+_term_cols=$(tput cols 2>/dev/null)
+: "${_term_cols:=${COLUMNS:-120}}"
+
+printf '\033P>g\n'
+
+printf '%s\n' "$_tsv" | awk -F'\t' \
+    -v title="$title" \
+    -v seed="$$$(date +%s 2>/dev/null)" \
+    -v themeidx="${SHOETABLE_THEME:-${SHOELACE_THEME:-}}" \
+    -v term_cols="$_term_cols" \
+'
+function clip(s, n) { return (length(s) > n) ? substr(s, 1, n) : s }
+
+BEGIN { nrows=0; ncols=0; CHARW=9; CELLPADL=10; CELLPADR=6; MAXCW=22; ROWH=22; TH=54 }
+
+NR==1 {
+    ncols=NF
+    for (c=1;c<=ncols;c++) { hdrs[c]=$c; cw[c]=length($c) }
+    next
+}
+{
+    nrows++
+    for (c=1;c<=ncols;c++) {
+        cell[nrows,c]=$c
+        if (length($c) > cw[c]) cw[c]=length($c)
+    }
+}
+
+END {
+    srand(seed)
+    if (title=="") title="table"
+
+    # --- theme (same palette as shoelace/shoestring) ---
+    ntheme=9
+    T[0]="22 9 54 64 18 104 132 36 150 206 46 130|38e0ff|ffffff|ecd8ff|Aurora"
+    T[1]="6 16 54 12 52 96 16 110 140 40 190 180 |ffd166|ffffff|cdeffd|Ocean"
+    T[2]="40 12 60 120 28 80 200 70 60 245 170 60|ff5d8f|fff7ec|ffe0c0|Sunset"
+    T[3]="8 30 24 18 70 46 40 120 60 130 200 80  |ffe066|ffffff|dafad0|Forest"
+    T[4]="24 10 14 80 16 24 170 40 30 240 140 40 |ffd23f|fff2ec|ffd9c8|Ember"
+    T[5]="18 8 40 60 20 90 110 40 150 200 80 200 |66f0d0|ffffff|ecd8ff|Grape"
+    T[6]="18 20 28 38 44 60 70 84 110 130 150 180|8fd0ff|ffffff|cfe0f0|Slate"
+    T[7]="10 5 30 40 10 70 100 10 80 10 60 80    |ff2d78|ffffff|c0f4ff|VICE"
+    T[8]="60 8 40 120 20 80 150 40 130 100 30 160|ff9de0|ffffff|ffd6f5|Flowers"
+    ti=(themeidx!="") ? themeidx+0 : int(rand()*ntheme)
+    ti=((ti%ntheme)+ntheme)%ntheme
+    split(T[ti],P,"|")
+    split(P[1],g," ")
+    accent=P[2]; tcol=P[3]; scol=P[4]; tname=P[5]
+    print "shoetable theme: " tname "  (" ncols " cols, " nrows " rows)" > "/dev/stderr"
+
+    if (ncols==0) {
+        print "size 30 4"; print "bg none"
+        printf "pen #%s\ntext 12 30 (no data)\n", tcol
+        exit
+    }
+
+    # --- canvas geometry constants (needed before column sizing) ---
+    TPAD=18; ox=8; oy=8; PADBOTTOM=18
+    MAXW=(term_cols>10 ? (term_cols-2)*8 : 960)
+
+    # --- scale MAXCW down so all columns fit within MAXW ---
+    avail=MAXW - 2*ox - 2*TPAD - (ncols>1 ? ncols-1 : 0)
+    fit_cw=int((int(avail/ncols) - CELLPADL - CELLPADR) / CHARW)
+    if (fit_cw < MAXCW) MAXCW=(fit_cw < 4 ? 4 : fit_cw)
+
+    # --- column pixel widths and x positions ---
+    tabw=0
+    for (c=1;c<=ncols;c++) {
+        if (cw[c]>MAXCW) cw[c]=MAXCW
+        cpx[c]=cw[c]*CHARW + CELLPADL + CELLPADR
+        cx0[c]=tabw
+        tabw+=cpx[c] + (c<ncols ? 1 : 0)   # 1px separator between columns
+    }
+
+    # --- canvas geometry ---
+    CW=tabw + 2*TPAD
+    if (CW<380) CW=380
+    CH=TH + ROWH + nrows*ROWH + PADBOTTOM
+    W=ox+CW+ox; H=oy+CH+oy
+    cols_c=int(W/8)+2; rows_c=int(H/16)+2
+    TOFF=ox+TPAD   # table left edge in canvas coords
+    TY=oy+TH       # table top y in canvas coords
+    TBOT=TY + ROWH + nrows*ROWH   # table bottom y
+
+    print "size " cols_c " " rows_c
+    print "bg none"
+
+    # --- gradient card background (identical to shoelace) ---
+    stops[0]=0.0; stops[1]=0.42; stops[2]=0.74; stops[3]=1.0
+    for (x=0;x<CW;x+=2) {
+        t=x/CW
+        for (i=0;i<3;i++) {
+            a=stops[i]; b=stops[i+1]
+            if (t<=b) {
+                u=(t-a)/(b-a)
+                cr=int(g[i*3+1]+u*(g[(i+1)*3+1]-g[i*3+1]))
+                cg=int(g[i*3+2]+u*(g[(i+1)*3+2]-g[i*3+2]))
+                cb=int(g[i*3+3]+u*(g[(i+1)*3+3]-g[i*3+3]))
+                printf "pen #%02x%02x%02x\nrectf %d %d 2 %d\n", cr,cg,cb, ox+x,oy,CH
+                break
+            }
+        }
+    }
+    printf "pen #ffffff12\nrectf %d %d %d 24\n", ox, oy, CW
+    printf "pen #ffffffa0\nrectf %d %d %d 2\n",  ox, oy, CW
+
+    # --- title + accent underline ---
+    printf "pen #%s\ntext %d %d %s\n", tcol, ox+18, oy+27, clip(title, int((CW-40)/CHARW))
+    printf "thickness 2\npen #%s\nline %d %d %d %d\n", accent, ox+18, oy+34, ox+138, oy+34
+    printf "thickness 1\n"
+
+    # --- header row background (dark overlay + accent tint) ---
+    printf "pen #00000035\nrectf %d %d %d %d\n", TOFF, TY, tabw, ROWH
+    printf "pen #%s28\nrectf %d %d %d %d\n",     accent, TOFF, TY, tabw, ROWH
+
+    # --- alternating row shading ---
+    for (ri=1;ri<=nrows;ri++) {
+        ry=TY + ROWH + (ri-1)*ROWH
+        if (ri%2==0) printf "pen #ffffff0d\nrectf %d %d %d %d\n", TOFF, ry, tabw, ROWH
+    }
+
+    # --- outer border ---
+    printf "pen #ffffff28\nrect %d %d %d %d\n", TOFF, TY, tabw, ROWH+nrows*ROWH
+
+    # --- header separator (accent) ---
+    printf "pen #%s70\nline %d %d %d %d\n", accent, TOFF, TY+ROWH, TOFF+tabw, TY+ROWH
+
+    # --- column separators ---
+    printf "pen #ffffff1a\n"
+    for (c=1;c<ncols;c++) {
+        sx=TOFF + cx0[c] + cpx[c]
+        printf "line %d %d %d %d\n", sx, TY, sx, TBOT
+    }
+
+    # --- header text ---
+    for (c=1;c<=ncols;c++) {
+        tx=TOFF + cx0[c] + CELLPADL
+        ty=TY + ROWH - 6
+        printf "pen #%s\ntext %d %d %s\n", accent, tx, ty, clip(hdrs[c], cw[c])
+    }
+
+    # --- data rows ---
+    for (ri=1;ri<=nrows;ri++) {
+        ry=TY + ROWH + (ri-1)*ROWH
+        ty=ry + ROWH - 6
+        for (c=1;c<=ncols;c++) {
+            tx=TOFF + cx0[c] + CELLPADL
+            printf "pen #%s\ntext %d %d %s\n", scol, tx, ty, clip(cell[ri,c], cw[c])
+        }
+    }
+}'
+
+printf '\033\\\n'
+printf '\n'

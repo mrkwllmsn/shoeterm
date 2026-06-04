@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Shoe · vector graphics — draw shapes, curves &amp; text in your terminal</title>
+<meta name="description" content="Shoe is a fast, Wayland-native terminal — built on foot — that draws lines, shapes, curves and text from one escape sequence. Charts, banners, gauges and dashboards — straight in the terminal." />
+<link rel="icon" type="image/png" href="assets/foot.png" />
+<meta property="og:title" content="Shoe · vector graphics in the terminal" />
+<meta property="og:description" content="One escape sequence. Lines, shapes, curves and text — drawn natively in a fast Wayland terminal, built on foot." />
+<meta property="og:image" content="assets/vector-graphics-chart.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Sora:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+<style>
+:root{
+  --bg:#07070f;
+  --bg-2:#0b0b18;
+  --panel:#101028;
+  --panel-2:#15162b;
+  --ink:#ece7df;
+  --ink-dim:#9a9ab4;
+  --ink-faint:#62627e;
+  --line:rgba(255,255,255,.08);
+  --line-2:rgba(255,255,255,.14);
+
+  --coral:#ff5050;
+  --pink:#ff80c0;
+  --gold:#ffb84d;
+  --cyan:#50d0ff;
+  --green:#4fd99a;
+  --violet:#9a7bff;
+
+  --titlebar:#f6e4c8;
+  --max:1180px;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:'Sora',system-ui,sans-serif;
+  font-weight:300;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+img{display:block;max-width:100%}
+a{color:inherit;text-decoration:none}
+
+/* ---------- atmosphere ---------- */
+.bg-fx{position:fixed;inset:0;z-index:-2;pointer-events:none}
+.bg-fx::before{ /* gradient mesh */
+  content:"";position:absolute;inset:0;
+  background:
+    radial-gradient(60% 50% at 12% 8%, rgba(255,80,80,.18), transparent 60%),
+    radial-gradient(55% 45% at 88% 6%, rgba(80,208,255,.16), transparent 60%),
+    radial-gradient(70% 60% at 78% 78%, rgba(255,128,192,.14), transparent 62%),
+    radial-gradient(60% 60% at 18% 88%, rgba(255,184,77,.12), transparent 60%);
+  filter:saturate(115%);
+}
+.grid-fx{position:fixed;inset:0;z-index:-2;pointer-events:none;opacity:.5;
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,.03) 1px, transparent 1px);
+  background-size:64px 64px;
+  mask-image:radial-gradient(circle at 50% 30%, #000 0%, transparent 75%);
+}
+.grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.05;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+/* ---------- shared ---------- */
+.wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
+.eyebrow{
+  font-family:'JetBrains Mono',monospace;font-weight:500;
+  font-size:.72rem;letter-spacing:.28em;text-transform:uppercase;
+  color:var(--ink-faint);
+}
+.gradient-text{
+  background:linear-gradient(100deg,var(--coral),var(--gold) 35%,var(--cyan) 72%,var(--pink));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+h2.section-title{
+  font-family:'Syne',sans-serif;font-weight:800;
+  font-size:clamp(2rem,5vw,3.4rem);line-height:1.02;letter-spacing:-.02em;
+}
+.lead{color:var(--ink-dim);font-size:clamp(1rem,1.6vw,1.18rem);max-width:62ch}
+
+/* ---------- nav ---------- */
+header.nav{position:sticky;top:0;z-index:50;
+  backdrop-filter:blur(14px) saturate(140%);
+  background:linear-gradient(to bottom,rgba(7,7,15,.86),rgba(7,7,15,.5));
+  border-bottom:1px solid var(--line);
+}
+.nav-in{max-width:var(--max);margin:0 auto;padding:14px 24px;display:flex;align-items:center;gap:28px}
+.brand{display:flex;align-items:center;gap:11px;font-family:'Syne';font-weight:800;font-size:1.12rem;letter-spacing:-.01em}
+.brand img{width:26px;height:26px}
+.brand .tag{font-family:'JetBrains Mono';font-weight:500;font-size:.66rem;letter-spacing:.14em;color:var(--cyan);
+  border:1px solid rgba(80,208,255,.35);border-radius:999px;padding:3px 9px;text-transform:uppercase}
+.nav-links{margin-left:auto;display:flex;gap:30px;align-items:center}
+.nav-links a:not(.btn){font-size:.92rem;color:var(--ink-dim);transition:color .2s}
+.nav-links a:not(.btn):hover{color:var(--ink)}
+.btn{
+  font-family:'Sora';font-weight:500;font-size:.92rem;
+  padding:10px 20px;border-radius:11px;display:inline-flex;align-items:center;gap:8px;
+  transition:transform .25s var(--ease),box-shadow .25s var(--ease),background .25s;
+  white-space:nowrap;cursor:pointer;border:0;
+}
+.btn-primary{
+  color:#1a0a0a;font-weight:600;
+  background:linear-gradient(100deg,var(--gold),var(--coral) 55%,var(--pink));
+  box-shadow:0 6px 22px -6px rgba(255,90,90,.6);
+}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 12px 30px -8px rgba(255,90,90,.7)}
+.btn-ghost{color:var(--ink);border:1px solid var(--line-2);background:rgba(255,255,255,.02)}
+.btn-ghost:hover{border-color:var(--cyan);color:#fff;transform:translateY(-2px)}
+@media(max-width:820px){
+  .nav-links{gap:0}
+  .nav-links a:not(.btn){display:none}
+  .nav-in{gap:16px}
+  .btn-primary.nav-cta{padding:9px 16px;font-size:.86rem}
+}
+
+/* ---------- terminal window frame ---------- */
+.term{
+  border-radius:12px;overflow:hidden;
+  background:#0d0d1c;
+  border:1px solid var(--line-2);
+  box-shadow:0 40px 90px -40px rgba(0,0,0,.9), 0 0 0 1px rgba(0,0,0,.4);
+}
+.term-bar{
+  display:flex;align-items:center;gap:8px;
+  background:var(--titlebar);
+  padding:7px 12px;
+}
+.term-bar .t{font-family:'JetBrains Mono';font-size:.74rem;color:#5b4a32;font-weight:500}
+.term-bar .ctl{margin-left:auto;display:flex;gap:7px;opacity:.55}
+.term-bar .ctl i{width:11px;height:2px;background:#5b4a32;display:block;align-self:center}
+.term-bar .ctl b{width:11px;height:11px;border:1.5px solid #5b4a32;border-radius:2px;display:block}
+.term-bar .ctl s{width:13px;height:13px;position:relative;display:block}
+.term-bar .ctl s::before,.term-bar .ctl s::after{content:"";position:absolute;left:6px;top:0;width:1.6px;height:13px;background:#5b4a32}
+.term-bar .ctl s::before{transform:rotate(45deg)}.term-bar .ctl s::after{transform:rotate(-45deg)}
+.term img,.term video{width:100%;display:block}
+
+/* ---------- hero ---------- */
+.hero{position:relative;padding:72px 0 40px}
+.hero-grid{display:grid;gap:48px;align-items:center}
+@media(min-width:980px){.hero-grid{grid-template-columns:1.05fr .95fr;gap:56px}}
+.hero h1{
+  font-family:'Syne';font-weight:800;letter-spacing:-.03em;
+  font-size:clamp(2.7rem,7vw,4.9rem);line-height:.98;
+}
+.hero h1 .l2{display:block}
+.hero p.sub{margin-top:24px;font-size:clamp(1.05rem,1.8vw,1.32rem);color:var(--ink-dim);max-width:36ch}
+.hero .cta-row{margin-top:34px;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+.hero .meta{margin-top:30px;display:flex;flex-wrap:wrap;gap:10px 22px;font-family:'JetBrains Mono';font-size:.78rem;color:var(--ink-faint)}
+.hero .meta span{display:flex;align-items:center;gap:7px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green)}
+.dot.c{background:var(--cyan);box-shadow:0 0 10px var(--cyan)}
+.dot.g{background:var(--gold);box-shadow:0 0 10px var(--gold)}
+
+/* code card in hero */
+.codecard{position:relative}
+.codecard .term-body{background:#0a0a16;padding:20px 20px 22px;font-family:'JetBrains Mono';font-size:.86rem;line-height:1.7}
+.codecard .ln{white-space:pre;color:var(--ink)}
+.codecard .cm{color:var(--ink-faint)}
+.codecard .kw{color:var(--cyan)}
+.codecard .num{color:var(--gold)}
+.codecard .esc{color:var(--pink)}
+.copy{position:absolute;top:46px;right:14px;z-index:3;
+  font-family:'JetBrains Mono';font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;
+  padding:6px 11px;border-radius:8px;border:1px solid var(--line-2);
+  background:rgba(10,10,22,.8);color:var(--ink-dim);cursor:pointer;transition:.2s}
+.copy:hover{color:#fff;border-color:var(--cyan)}
+.codecard .preview{
+  margin-top:14px;border-radius:10px;border:1px solid var(--line);overflow:hidden;
+  display:flex;align-items:center;gap:14px;padding:14px;background:#101028}
+.codecard .preview .swatch{display:flex;gap:10px;align-items:center}
+.mini-rrect{width:64px;height:30px;border-radius:9px;background:var(--coral)}
+.mini-circ{width:40px;height:40px;border-radius:50%;background:var(--cyan)}
+.mini-text{font-family:'JetBrains Mono';color:#fff;font-size:1.1rem}
+.preview .cap{margin-left:auto;font-family:'JetBrains Mono';font-size:.68rem;color:var(--ink-faint)}
+.codecard .preview.pv-shot{flex-direction:column;align-items:stretch;gap:0;padding:0}
+.pv-shot img{width:100%;display:block}
+.pv-shot .cap{margin:0;padding:8px 12px;text-align:right;background:#0a0a16;border-top:1px solid var(--line)}
+
+/* floating hero accents */
+.float-badge{position:absolute;font-family:'JetBrains Mono';font-size:.7rem;
+  padding:7px 12px;border-radius:999px;border:1px solid var(--line-2);
+  background:rgba(13,13,28,.85);backdrop-filter:blur(8px);box-shadow:0 10px 30px -12px #000;color:var(--ink-dim)}
+.float-badge b{font-weight:500}
+.fb-1{top:-14px;left:-12px;color:var(--coral)}
+.fb-2{bottom:-16px;right:-10px;color:var(--cyan)}
+@media(max-width:980px){.float-badge{display:none}}
+
+/* ---------- marquee strip ---------- */
+.strip{border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  padding:18px 0;margin-top:48px;overflow:hidden;background:rgba(255,255,255,.012)}
+.marquee{display:flex;gap:0;width:max-content;animation:slide 28s linear infinite}
+.marquee span{font-family:'JetBrains Mono';font-size:.82rem;color:var(--ink-faint);
+  padding:0 26px;border-right:1px solid var(--line);white-space:nowrap;letter-spacing:.04em}
+.marquee span b{color:var(--ink-dim);font-weight:500}
+@keyframes slide{to{transform:translateX(-50%)}}
+
+/* ---------- sections ---------- */
+section{position:relative}
+.sec{padding:96px 0}
+.sec-head{max-width:760px;margin-bottom:52px}
+.sec-head .eyebrow{display:block;margin-bottom:16px}
+.sec-head p{margin-top:18px}
+
+/* gallery */
+.gallery{display:grid;gap:26px}
+@media(min-width:860px){.gallery{grid-template-columns:repeat(12,1fr)}}
+.shot{position:relative}
+.shot .term{transition:transform .5s var(--ease),box-shadow .5s var(--ease)}
+.shot:hover .term{transform:translateY(-6px);box-shadow:0 50px 100px -40px rgba(0,0,0,.95)}
+.shot .cap{margin-top:16px;display:flex;gap:14px;align-items:flex-start}
+.shot .cap .k{font-family:'JetBrains Mono';font-size:.72rem;color:var(--ink-faint);padding-top:3px;white-space:nowrap}
+.shot .cap h3{font-family:'Syne';font-weight:700;font-size:1.18rem;letter-spacing:-.01em}
+.shot .cap p{color:var(--ink-dim);font-size:.94rem;margin-top:3px}
+.g-wide{grid-column:span 12}
+.g-7{grid-column:span 12}.g-5{grid-column:span 12}
+@media(min-width:860px){.g-7{grid-column:span 7}.g-5{grid-column:span 5}}
+
+/* protocol / how it works */
+.proto{display:grid;gap:42px;align-items:start}
+@media(min-width:920px){.proto{grid-template-columns:1fr 1fr;gap:56px}}
+.proto-steps{display:flex;flex-direction:column;gap:8px}
+.step{display:flex;gap:18px;padding:20px;border-radius:14px;border:1px solid transparent;transition:.3s}
+.step:hover{border-color:var(--line);background:rgba(255,255,255,.02)}
+.step .n{font-family:'JetBrains Mono';font-weight:700;font-size:.9rem;color:var(--bg);
+  width:30px;height:30px;flex:none;border-radius:9px;display:grid;place-items:center;
+  background:linear-gradient(135deg,var(--gold),var(--coral))}
+.step:nth-child(2) .n{background:linear-gradient(135deg,var(--cyan),var(--violet))}
+.step:nth-child(3) .n{background:linear-gradient(135deg,var(--pink),var(--coral))}
+.step h4{font-family:'Syne';font-weight:700;font-size:1.06rem;margin-bottom:4px}
+.step p{color:var(--ink-dim);font-size:.94rem}
+.step code{font-family:'JetBrains Mono';color:var(--cyan);font-size:.86em;background:rgba(80,208,255,.08);padding:1px 6px;border-radius:5px}
+
+/* feature grid */
+.feat-grid{display:grid;gap:18px;grid-template-columns:repeat(2,1fr)}
+@media(min-width:720px){.feat-grid{grid-template-columns:repeat(4,1fr)}}
+.feat{padding:22px 20px;border-radius:14px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.025),transparent);
+  transition:transform .3s var(--ease),border-color .3s var(--ease),background .3s var(--ease);
+  cursor:pointer;user-select:none}
+.feat:hover{transform:translateY(-4px);border-color:var(--line-2);background:linear-gradient(180deg,rgba(255,255,255,.05),transparent)}
+.feat.open{border-color:var(--line-2);background:linear-gradient(180deg,rgba(255,255,255,.05),transparent);transform:none}
+.feat .ic{width:38px;height:38px;margin-bottom:14px}
+.feat h4{font-family:'JetBrains Mono';font-weight:500;font-size:.92rem;color:var(--ink);margin-bottom:5px}
+.feat p{font-size:.82rem;color:var(--ink-faint);line-height:1.5}
+.feat .ex-hint{margin-top:14px;display:flex;align-items:center;gap:7px;
+  font-family:'JetBrains Mono';font-size:.68rem;letter-spacing:.04em;color:var(--ink-faint);transition:color .2s}
+.feat:hover .ex-hint,.feat.open .ex-hint{color:var(--cyan)}
+.feat .ex-hint .chev{transition:transform .3s var(--ease)}
+.feat.open .ex-hint .chev{transform:rotate(180deg)}
+
+/* full-width example drawer — spans the whole grid row */
+.feat-detail{grid-column:1/-1;display:grid;grid-template-rows:0fr;
+  transition:grid-template-rows .42s var(--ease),margin .42s var(--ease),opacity .3s ease;
+  margin:0;opacity:0}
+.feat-detail.open{grid-template-rows:1fr;margin:4px 0 8px;opacity:1}
+.feat-detail > .fd-clip{overflow:hidden;min-height:0}
+.feat-detail .fd-in{
+  display:grid;gap:24px;align-items:stretch;
+  padding:24px;border-radius:16px;border:1px solid var(--line-2);
+  background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.012));}
+@media(min-width:720px){.feat-detail .fd-in{grid-template-columns:minmax(0,1fr) minmax(0,1.15fr)}}
+.feat-detail .fd-render{width:100%;height:100%;min-height:150px;border-radius:12px;display:block;
+  background:#0a0a16;border:1px solid var(--line)}
+.feat-detail .fd-side{display:flex;flex-direction:column}
+.feat-detail .fd-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:14px}
+.feat-detail .fd-title{font-family:'JetBrains Mono';font-weight:500;font-size:.82rem;color:var(--ink);
+  margin-bottom:3px}
+.feat-detail .fd-sub{font-size:.82rem;color:var(--ink-faint)}
+.feat-detail .fd-copy{margin-left:auto;flex:none;
+  font-family:'JetBrains Mono';font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;
+  padding:7px 13px;border-radius:9px;border:1px solid var(--line-2);
+  background:rgba(10,10,22,.7);color:var(--ink-dim);cursor:pointer;transition:.2s;white-space:nowrap}
+.feat-detail .fd-copy:hover{color:#fff;border-color:var(--cyan)}
+.feat-detail pre{flex:1;margin:0;padding:16px 18px;border-radius:12px;
+  background:#0a0a16;border:1px solid var(--line);
+  font-family:'JetBrains Mono';font-size:.84rem;line-height:1.9;color:var(--ink-dim);
+  white-space:pre-wrap;word-break:break-word}
+.feat-detail pre .kw{color:var(--cyan)}
+.feat-detail pre .num{color:var(--gold)}
+.feat-detail pre .cm{color:var(--ink-faint)}
+.feat-detail pre .esc{color:var(--pink)}
+.feat-detail pre .pn{color:var(--ink-faint)}
+.feat-detail pre .dim{color:var(--ink-faint)}
+/* the exact runnable one-liner shown under the breakdown */
+.feat-detail .fd-run{flex:none;margin-top:12px}
+.feat-detail .fd-label{display:block;font-family:'JetBrains Mono';font-size:.6rem;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:7px}
+.feat-detail pre.fd-cmd{flex:none;font-size:.74rem;line-height:1.65;color:var(--ink-dim)}
+
+/* tooling cards */
+.tools{display:grid;gap:18px;grid-template-columns:repeat(1,1fr)}
+@media(min-width:680px){.tools{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:1000px){.tools{grid-template-columns:repeat(4,1fr)}}
+.tool{padding:24px 22px;border-radius:16px;border:1px solid var(--line);position:relative;overflow:hidden;
+  background:var(--bg-2);transition:.3s var(--ease)}
+.tool::before{content:"";position:absolute;inset:0;opacity:0;transition:opacity .35s;
+  background:radial-gradient(120% 80% at 0% 0%,rgba(255,255,255,.06),transparent 60%)}
+.tool:hover{transform:translateY(-5px);border-color:var(--line-2)}
+.tool:hover::before{opacity:1}
+.tool .cmd{font-family:'JetBrains Mono';font-size:.78rem;color:var(--ink-faint);margin-bottom:14px}
+.tool .cmd b{color:var(--cyan);font-weight:500}
+.tool h4{font-family:'Syne';font-weight:800;font-size:1.35rem;letter-spacing:-.01em;margin-bottom:8px}
+.tool p{font-size:.88rem;color:var(--ink-dim)}
+.tool .bar{height:3px;border-radius:2px;margin-top:18px}
+.t1 .bar{background:linear-gradient(90deg,var(--coral),var(--pink))}
+.t2 .bar{background:linear-gradient(90deg,var(--gold),var(--coral))}
+.t3 .bar{background:linear-gradient(90deg,var(--cyan),var(--violet))}
+.t4 .bar{background:linear-gradient(90deg,var(--green),var(--cyan))}
+
+/* big CTA */
+.cta-final{position:relative;margin:40px auto 0;border-radius:26px;overflow:hidden;
+  border:1px solid var(--line-2);padding:clamp(40px,7vw,88px) 24px;text-align:center;
+  background:
+    radial-gradient(80% 120% at 50% 0%,rgba(255,90,90,.16),transparent 60%),
+    radial-gradient(70% 120% at 100% 100%,rgba(80,208,255,.16),transparent 60%),
+    var(--bg-2);}
+.cta-final h2{font-family:'Syne';font-weight:800;font-size:clamp(2.1rem,5.5vw,3.7rem);letter-spacing:-.025em;line-height:1.02}
+.cta-final p{margin:18px auto 0;max-width:48ch;color:var(--ink-dim);font-size:1.08rem}
+.cta-final .cta-row{margin-top:34px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.cmd-pill{margin-top:26px;display:inline-flex;align-items:center;gap:12px;font-family:'JetBrains Mono';font-size:.86rem;
+  padding:11px 18px;border-radius:11px;border:1px solid var(--line-2);background:rgba(7,7,15,.6);color:var(--ink)}
+.cmd-pill .pr{color:var(--green)}
+
+/* footer */
+footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
+.foot-in{display:flex;flex-wrap:wrap;gap:24px;align-items:center;justify-content:space-between}
+.foot-in .brand{font-size:1rem}
+.foot-links{display:flex;gap:24px;flex-wrap:wrap}
+.foot-links a{font-size:.88rem;color:var(--ink-dim);transition:.2s}
+.foot-links a:hover{color:var(--ink)}
+.foot-note{width:100%;margin-top:28px;font-size:.78rem;color:var(--ink-faint);font-family:'JetBrains Mono'}
+
+/* reveal animation */
+.reveal{opacity:0;transform:translateY(26px);transition:opacity .8s var(--ease),transform .8s var(--ease)}
+.reveal.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}.marquee{animation:none}}
+</style>
+</head>
+<body>
+
+<div class="bg-fx"></div>
+<div class="grid-fx"></div>
+<div class="grain"></div>
+
+<!-- NAV -->
+<header class="nav">
+  <div class="nav-in">
+    <a class="brand" href="#top">
+      <img src="assets/foot.svg" alt="Shoe logo" onerror="this.src='assets/foot.png'"/>
+      Shoe
+      <span class="tag">vector graphics</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#gallery">Gallery</a>
+      <a href="#how">How it works</a>
+      <a href="#primitives">Primitives</a>
+      <a href="#tools">Tooling</a>
+      <a href="https://github.com/mrkwllmsn/shoeterm" target="_blank" rel="noopener">GitHub ↗</a>
+      <a class="btn btn-primary nav-cta" href="#start">Start drawing →</a>
+    </nav>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div class="reveal">
+      <span class="eyebrow">Shoe · Wayland terminal · built on foot</span>
+      <h1 style="margin-top:18px">
+        Draw <span class="gradient-text">anything</span>
+        <span class="l2">in your terminal.</span>
+      </h1>
+      <p class="sub">Lines, shapes, curves and text — drawn natively from a single
+        escape sequence. No GPU, no GUI toolkit, no libraries. Just <b style="color:var(--ink);font-weight:500">Shoe</b>.</p>
+      <p style="margin-top:14px;font-size:.9rem;color:var(--ink-faint);font-family:'JetBrains Mono'">
+        Shoe is the vector-graphics layer, built gratefully on the excellent
+        <a href="https://codeberg.org/dnkl/foot" target="_blank" rel="noopener" style="color:var(--cyan)">foot</a> terminal.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#start">Get started</a>
+        <a class="btn btn-ghost" href="#gallery">See the gallery</a>
+      </div>
+      <div class="meta">
+        <span><i class="dot"></i> Pure pixman rasterizer</span>
+        <span><i class="dot c"></i> Reuses the sixel pipeline</span>
+        <span><i class="dot g"></i> Charts · banners · dashboards</span>
+      </div>
+    </div>
+
+    <div class="codecard reveal" style="transition-delay:.12s">
+      <span class="float-badge fb-1">● rrectf 10 10 130 50 <b>12</b></span>
+      <span class="float-badge fb-2">● circ 220 35 <b>28</b></span>
+      <div class="term">
+        <div class="term-bar"><span class="t">Shoe — hello-card.sh</span>
+          <span class="ctl"><i></i><b></b><s></s></span></div>
+        <div class="term-body">
+<button class="copy" id="copyBtn">Copy</button>
+<span class="ln"><span class="cm"># draw a card: rounded rect + circle + text</span></span>
+<span class="ln"><span class="esc">ESC P &gt; g</span></span>
+<span class="ln"><span class="kw">size</span> <span class="num">20 6</span></span>
+<span class="ln"><span class="kw">bg</span>   #101028</span>
+<span class="ln"><span class="kw">pen</span>  #ff5050</span>
+<span class="ln"><span class="kw">rrectf</span> <span class="num">10 10 130 50 12</span></span>
+<span class="ln"><span class="kw">pen</span>  #50d0ff</span>
+<span class="ln"><span class="kw">circ</span> <span class="num">220 35 28</span></span>
+<span class="ln"><span class="kw">pen</span>  #ffffff</span>
+<span class="ln"><span class="kw">text</span> <span class="num">12 90</span> hello</span>
+<span class="ln"><span class="esc">ESC \</span></span>
+        </div>
+      </div>
+      <div class="preview pv-shot">
+        <img src="assets/hello.png" alt="The hello-card.sh script rendered in Shoe: a red rounded rectangle, a cyan circle outline and the word hello below"/>
+        <span class="cap">↑ rendered output</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- marquee -->
+  <div class="strip reveal">
+    <div class="marquee" id="marquee"></div>
+  </div>
+</section>
+
+<!-- GALLERY -->
+<section class="sec" id="gallery">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">The gallery</span>
+      <h2 class="section-title">Pixels where you least expect them.</h2>
+      <p class="lead">Every image below is the terminal — no image viewer, no browser, no
+        screenshot trickery. Shoe composites drawn canvases right onto the grid, so they
+        scroll, scale and erase like any other output.</p>
+    </div>
+
+    <div class="gallery">
+      <!-- hero shot wide -->
+      <div class="shot g-wide reveal">
+        <div class="term">
+          <div class="term-bar"><span class="t">Shoe — draw-demo.sh</span><span class="ctl"><i></i><b></b><s></s></span></div>
+          <img src="assets/vector-graphics.png" alt="Vector graphics primitives demo running in Shoe — lines, rectangles and rounded rects drawn from escape-sequence command blocks"/>
+        </div>
+        <div class="cap">
+          <span class="k">draw-demo.sh</span>
+          <div>
+            <h3>Every primitive, sent verbatim</h3>
+            <p>A guided tour: each command block is printed, then drawn — lines &amp; thickness,
+              outlined and filled rects, rounded corners, circles, triangles, polygons and Béziers.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- chart -->
+      <div class="shot g-7 reveal">
+        <div class="term">
+          <div class="term-bar"><span class="t">Shoe — shoelace bar</span><span class="ctl"><i></i><b></b><s></s></span></div>
+          <img src="assets/vector-graphics-chart.png" alt="A coloured bar chart titled Quarterly throughput drawn in the terminal by piping numbers into shoelace"/>
+        </div>
+        <div class="cap">
+          <span class="k">shoelace</span>
+          <div>
+            <h3>Pipe numbers in, get a chart</h3>
+            <p><code style="font-family:'JetBrains Mono';color:var(--cyan)">echo '[5,8,6,11,9,14,12,17]' | shoelace bar "Quarterly throughput"</code> —
+              bar, line or pie, from CSV or JSON, parsed in pure awk.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- banners -->
+      <div class="shot g-5 reveal" style="transition-delay:.08s">
+        <div class="term">
+          <div class="term-bar"><span class="t">Shoe — shoebling · shoestring</span><span class="ctl"><i></i><b></b><s></s></span></div>
+          <img src="assets/vector-graphics-banners.png" alt="An ornate vintage frame around the text SHOE IS ON FOOT, and a purple gradient banner from shoestring"/>
+        </div>
+        <div class="cap">
+          <span class="k">banners</span>
+          <div>
+            <h3>Headers with character</h3>
+            <p>Ornate vintage frames or themed gradient banners — and they fall back to
+              plain text when there’s no graphics terminal.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- shoestring in action -->
+      <div class="shot g-wide reveal">
+        <div class="term">
+          <div class="term-bar"><span class="t">Shoe — free -m | shoestring</span><span class="ctl"><i></i><b></b><s></s></span></div>
+          <img src="assets/free.png" alt="The output of free -m piped into shoestring: a blue gradient banner showing the memory table — total, used, free, shared, buff/cache and available — drawn in the terminal"/>
+        </div>
+        <div class="cap">
+          <span class="k">shoestring</span>
+          <div>
+            <h3>Any command, dressed up</h3>
+            <p><code style="font-family:'JetBrains Mono';color:var(--cyan)">free -m | shoestring</code> —
+              pipe any output through it and the first line becomes a themed gradient banner, the rest the body.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- memtop -->
+      <div class="shot g-7 reveal">
+        <div class="term">
+          <div class="term-bar"><span class="t">Shoe — memtop.sh</span><span class="ctl"><i></i><b></b><s></s></span></div>
+          <img src="assets/memtop.png" alt="A live memory dashboard with a half-ring usage gauge reading 84% in use, stacked RAM and swap bars, and a history graph"/>
+        </div>
+        <div class="cap">
+          <span class="k">memtop.sh</span>
+          <div>
+            <h3>A live dashboard, redrawn in place</h3>
+            <p>A half-ring usage gauge, stacked RAM/swap bars and a history graph — refreshed
+              from <code style="font-family:'JetBrains Mono';color:var(--cyan)">/proc/meminfo</code>, font-size independent, all in the terminal.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- frogger -->
+      <div class="shot g-5 reveal" style="transition-delay:.08s">
+        <div class="term">
+          <div class="term-bar"><span class="t">Shoe — frogger.sh</span><span class="ctl"><i></i><b></b><s></s></span></div>
+          <video src="assets/frogger.webm" poster="assets/frogger.png" autoplay loop muted playsinline
+            aria-label="A game of Frogger rendered in Shoe — the frog crossing lanes of traffic and a river of logs, drawn entirely with vector-graphics commands"></video>
+        </div>
+        <div class="cap">
+          <span class="k">frogger.sh</span>
+          <div>
+            <h3>Yes, it plays games too</h3>
+            <p>A game of Frogger in pure bash. ~60 fps using shoes
+            vector based console graphics, WASD to hop across the road
+            and river. Just run frogger.sh from your shoe terminal</p>
+
+            <a class="btn btn-primary"
+                href="https://raw.githubusercontent.com/mrkwllmsn/shoeterm/refs/heads/master/shoescripts/frogger.sh">
+                Goto frogger.sh</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="sec" id="how">
+  <div class="wrap proto">
+    <div class="reveal">
+      <div class="sec-head" style="margin-bottom:32px">
+        <span class="eyebrow">How it works</span>
+        <h2 class="section-title">One escape sequence.<br/>That’s the whole API.</h2>
+        <p class="lead">Open with <code style="font-family:'JetBrains Mono';color:var(--cyan)">ESC P &gt; g</code>, write
+          whitespace-separated drawing commands in pixels, close with <code style="font-family:'JetBrains Mono';color:var(--cyan)">ESC \</code>.
+          The canvas is sized in cells, so it lands exactly where your cursor is.</p>
+      </div>
+      <div class="proto-steps">
+        <div class="step">
+          <span class="n">1</span>
+          <div><h4>Open the canvas</h4>
+            <p><code>size &lt;cols&gt; &lt;rows&gt;</code> sets a canvas measured in terminal cells —
+              its pixel size follows the font automatically.</p></div>
+        </div>
+        <div class="step">
+          <span class="n">2</span>
+          <div><h4>Draw in pixels</h4>
+            <p><code>pen</code>, <code>thickness</code>, then <code>line</code>, <code>rect</code>,
+              <code>circ</code>, <code>arc</code>, <code>tri</code>, <code>poly</code>,
+              <code>bezier</code>, <code>text</code> — colors are <code>#rrggbbaa</code> or <code>none</code>.</p></div>
+        </div>
+        <div class="step">
+          <span class="n">3</span>
+          <div><h4>It composites for free</h4>
+            <p>The drawn ARGB buffer rides the existing sixel pipeline, so it inherits placement,
+              scrolling, scaling and erase-on-overwrite — with no changes to the renderer.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="reveal" style="transition-delay:.1s">
+      <div class="term">
+        <div class="term-bar"><span class="t">Shoe — primitives</span><span class="ctl"><i></i><b></b><s></s></span></div>
+        <div class="codecard"><div class="term-body" style="font-size:.82rem">
+<span class="ln"><span class="esc">ESC P &gt; g</span></span>
+<span class="ln"><span class="kw">size</span> <span class="num">30 6</span></span>
+<span class="ln"><span class="kw">bg</span> #15162b</span>
+<span class="ln"><span class="cm"># a stroked path</span></span>
+<span class="ln"><span class="kw">thickness</span> <span class="num">4</span></span>
+<span class="ln"><span class="kw">pen</span> #ffd000  <span class="kw">line</span> <span class="num">12 18 224 18</span></span>
+<span class="ln"><span class="kw">pen</span> #50d0ff  <span class="kw">bezier</span> <span class="num">12 60 80 0 160 80 224 30</span></span>
+<span class="ln"><span class="cm"># fills with alpha</span></span>
+<span class="ln"><span class="kw">pen</span> #ff5050cc <span class="kw">circf</span> <span class="num">70 40 26</span></span>
+<span class="ln"><span class="kw">pen</span> #50d0ffcc <span class="kw">circf</span> <span class="num">100 40 26</span></span>
+<span class="ln"><span class="kw">pen</span> #ffffff   <span class="kw">text</span> <span class="num">12 96</span> shipped ✓</span>
+<span class="ln"><span class="esc">ESC \</span></span>
+      </div></div>
+      </div>
+      <p style="margin-top:18px;font-size:.84rem;color:var(--ink-faint);font-family:'JetBrains Mono'">
+        Newline- or whitespace-separated · <span style="color:var(--ink-dim)"># line comments</span> · origin top-left, y down
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- PRIMITIVES -->
+<section class="sec" id="primitives">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">The toolbox</span>
+      <h2 class="section-title">A small, sharp set of primitives.</h2>
+      <p class="lead">Dependency-free software rasterizers — premultiplied ARGB, source-over
+        blending — for everything you’d reach for on a 2D canvas.</p>
+    </div>
+    <div class="feat-grid">
+      <div class="feat reveal" role="button" tabindex="0" aria-expanded="false" data-ex="line">
+        <svg class="ic" viewBox="0 0 40 40" fill="none" stroke="#50d0ff" stroke-width="2.4" stroke-linecap="round"><path d="M6 30 L34 10"/></svg>
+        <h4>line · thickness</h4><p>Bresenham strokes at any width.</p>
+        <div class="ex-hint"><span class="chev">▾</span> see example</div>
+      </div>
+      <div class="feat reveal" role="button" tabindex="0" aria-expanded="false" data-ex="rect" style="transition-delay:.04s">
+        <svg class="ic" viewBox="0 0 40 40" fill="none" stroke="#ff5050" stroke-width="2.4"><rect x="7" y="9" width="26" height="22" rx="6"/></svg>
+        <h4>rect · rrect</h4><p>Outlined or filled, square or rounded.</p>
+        <div class="ex-hint"><span class="chev">▾</span> see example</div>
+      </div>
+      <div class="feat reveal" role="button" tabindex="0" aria-expanded="false" data-ex="circ" style="transition-delay:.08s">
+        <svg class="ic" viewBox="0 0 40 40" fill="none" stroke="#ffb84d" stroke-width="2.4"><circle cx="20" cy="20" r="13"/></svg>
+        <h4>circ · arc</h4><p>Midpoint circles &amp; partial arcs.</p>
+        <div class="ex-hint"><span class="chev">▾</span> see example</div>
+      </div>
+      <div class="feat reveal" role="button" tabindex="0" aria-expanded="false" data-ex="tri" style="transition-delay:.12s">
+        <svg class="ic" viewBox="0 0 40 40" fill="none" stroke="#4fd99a" stroke-width="2.4" stroke-linejoin="round"><path d="M20 8 L33 32 L7 32 Z"/></svg>
+        <h4>tri · poly</h4><p>Barycentric &amp; scanline fills.</p>
+        <div class="ex-hint"><span class="chev">▾</span> see example</div>
+      </div>
+      <div class="feat reveal" role="button" tabindex="0" aria-expanded="false" data-ex="bezier">
+        <svg class="ic" viewBox="0 0 40 40" fill="none" stroke="#ff80c0" stroke-width="2.4" stroke-linecap="round"><path d="M6 32 C 6 12, 34 28, 34 8"/></svg>
+        <h4>bezier</h4><p>Cubic curves, smooth at any scale.</p>
+        <div class="ex-hint"><span class="chev">▾</span> see example</div>
+      </div>
+      <div class="feat reveal" role="button" tabindex="0" aria-expanded="false" data-ex="text" style="transition-delay:.04s">
+        <svg class="ic" viewBox="0 0 40 40" fill="none" stroke="#9a7bff" stroke-width="2.4" stroke-linecap="round"><path d="M9 28 V14 M9 14 H17 M9 21 H15 M23 14 V28 M23 14 L31 28"/></svg>
+        <h4>text</h4><p>Real fonts via fcft, tabs &amp; color.</p>
+        <div class="ex-hint"><span class="chev">▾</span> see example</div>
+      </div>
+      <div class="feat reveal" role="button" tabindex="0" aria-expanded="false" data-ex="clip" style="transition-delay:.08s">
+        <svg class="ic" viewBox="0 0 40 40" fill="none" stroke="#50d0ff" stroke-width="2.4"><rect x="7" y="7" width="26" height="26" rx="3" stroke-dasharray="4 4"/></svg>
+        <h4>clip · noclip</h4><p>Mask drawing to a region.</p>
+        <div class="ex-hint"><span class="chev">▾</span> see example</div>
+      </div>
+      <div class="feat reveal" role="button" tabindex="0" aria-expanded="false" data-ex="pixel" style="transition-delay:.12s">
+        <svg class="ic" viewBox="0 0 40 40" fill="none" stroke="#ffb84d" stroke-width="2.4"><path d="M8 20 H32 M20 8 V32" stroke-linecap="round"/><circle cx="20" cy="20" r="2.5" fill="#ffb84d"/></svg>
+        <h4>pixel · bg · clear</h4><p>The fine-grained bits.</p>
+        <div class="ex-hint"><span class="chev">▾</span> see example</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TOOLING -->
+<section class="sec" id="tools">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">Batteries included</span>
+      <h2 class="section-title">Userland tools, ready to pipe.</h2>
+      <p class="lead">The primitives ship with a set of self-contained shell scripts. Each one detects
+        a graphics-capable terminal and falls back to plain text everywhere else.</p>
+    </div>
+    <div class="tools">
+      <div class="tool t1 reveal">
+        <div class="cmd">echo … | <b>shoestring</b></div>
+        <h4>shoestring</h4>
+        <p>Turns a line of text into a randomly-themed gradient banner. Title on line one, subtitle below.</p>
+        <div class="bar"></div>
+      </div>
+      <div class="tool t2 reveal" style="transition-delay:.05s">
+        <div class="cmd">echo … | <b>shoebling</b></div>
+        <h4>shoebling</h4>
+        <p>An ornate vintage frame — corner scrollwork, double keyline, filigree dividers — built in awk.</p>
+        <div class="bar"></div>
+      </div>
+      <div class="tool t3 reveal" style="transition-delay:.1s">
+        <div class="cmd">… | <b>shoelace</b> bar|line|pie</div>
+        <h4>shoelace</h4>
+        <p>Charts from CSV or JSON — object maps, arrays, label/value pairs or bare numbers.</p>
+        <div class="bar"></div>
+      </div>
+      <div class="tool t4 reveal" style="transition-delay:.15s">
+        <div class="cmd">$ <b>memtop.sh</b></div>
+        <h4>memtop</h4>
+        <p>A live memory dashboard: usage gauge, stacked bars and a history graph, redrawn in place.</p>
+        <div class="bar"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section class="wrap" id="start">
+  <div class="cta-final reveal">
+    <span class="eyebrow">Start drawing</span>
+    <h2 style="margin-top:14px">Your terminal just got<br/><span class="gradient-text">a canvas.</span></h2>
+    <p>Build Shoe, drop into the shell, and send your first escape sequence. Charts,
+      banners and dashboards are one pipe away.</p>
+    <div class="cmd-pill"><span class="pr">$</span> ./bld/debug/foot sh shoescripts/hello-card.sh</div>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#gallery">See the gallery</a>
+      <a class="btn btn-ghost" href="https://github.com/mrkwllmsn/shoeterm" target="_blank" rel="noopener">View on GitHub ↗</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="foot-in">
+      <a class="brand" href="#top"><img src="assets/foot.svg" alt="" onerror="this.src='assets/foot.png'"/> Shoe <span class="tag">vector graphics</span></a>
+      <div class="foot-links">
+        <a href="#gallery">Gallery</a>
+        <a href="#how">How it works</a>
+        <a href="#primitives">Primitives</a>
+        <a href="#tools">Tooling</a>
+        <a href="https://github.com/mrkwllmsn/shoeterm" target="_blank" rel="noopener">GitHub ↗</a>
+        <a href="https://codeberg.org/dnkl/foot" target="_blank" rel="noopener">foot source ↗</a>
+      </div>
+    </div>
+    <p class="foot-note">// Shoe — a vector-graphics terminal built on <a href="https://codeberg.org/dnkl/foot" target="_blank" rel="noopener" style="color:var(--ink-dim)">foot</a>, a fast, lightweight, Wayland-native terminal emulator. Drawn CPU-side via pixman. ESC P &gt; g … ESC \</p>
+  </div>
+</footer>
+
+<script>
+// marquee
+(function(){
+  const items=['size 20 6','pen #ff5050','rrectf 10 10 130 50 12','circ 220 35 28',
+    'thickness 4','bezier · cubic curves','poly · scanline fill','text · fcft fonts',
+    'arc 0 → 180°','clip / noclip','#rrggbbaa or none','redrawn in place',
+    'frogger · one canvas / tick'];
+  const m=document.getElementById('marquee');
+  const make=()=>items.map(t=>`<span><b>▸</b> ${t}</span>`).join('');
+  m.innerHTML=make()+make();
+})();
+
+// copy hero snippet
+(function(){
+  const btn=document.getElementById('copyBtn');
+  const snippet="printf '\\033P>g,size 20 6,bg #101028,pen #ff5050,rrectf 10 10 130 50 12,pen #50d0ff,circ 220 35 28,pen #ffffff,text 12 90 hello\\033\\\\'";
+  btn.addEventListener('click',async()=>{
+    try{await navigator.clipboard.writeText(snippet);btn.textContent='Copied ✓';}
+    catch(e){btn.textContent='Copy failed';}
+    setTimeout(()=>btn.textContent='Copy',1600);
+  });
+})();
+
+// primitive cards: click to reveal a full-width code example drawer
+(function(){
+  // each example: a label, an SVG preview of the result, and the literal commands
+  const EX={
+    line:{title:'line · thickness',sub:'Bresenham strokes at any width.',
+      svg:`<line x1="20" y1="120" x2="240" y2="36" stroke="#50d0ff" stroke-width="14" stroke-linecap="round"/>
+           <line x1="240" y1="120" x2="360" y2="64" stroke="#ffb84d" stroke-width="3" stroke-linecap="round"/>`,
+      cmds:[['thickness 14'],['pen #50d0ff'],['line 16 120 240 36'],['thickness 3'],['pen #ffb84d'],['line 240 120 360 64']]},
+    rect:{title:'rect · rrect',sub:'Outlined or filled, square or rounded.',
+      svg:`<rect x="24" y="30" width="150" height="90" rx="22" fill="#ff5050"/>
+           <rect x="210" y="30" width="150" height="90" fill="none" stroke="#ffb84d" stroke-width="4"/>`,
+      cmds:[['pen #ff5050'],['rrectf 24 30 150 90 22'],['pen #ffb84d'],['rect 210 30 150 90']]},
+    circ:{title:'circ · arc',sub:'Midpoint circles & partial arcs.',
+      svg:`<circle cx="96" cy="75" r="46" fill="#ffb84d"/>
+           <path d="M236 75 A60 60 0 0 1 356 75" fill="none" stroke="#50d0ff" stroke-width="8" stroke-linecap="round"/>`,
+      cmds:[['pen #ffb84d'],['circf 96 75 46'],['thickness 8'],['pen #50d0ff'],['arc 296 75 60 180 360']]},
+    tri:{title:'tri · poly',sub:'Barycentric & scanline fills.',
+      svg:`<polygon points="92,26 134,124 50,124" fill="#4fd99a"/>
+           <polygon points="200,36 308,26 356,86 282,126 204,98" fill="none" stroke="#ff80c0" stroke-width="4" stroke-linejoin="round"/>`,
+      cmds:[['pen #4fd99a'],['trif 92 26 134 124 50 124'],['pen #ff80c0'],['poly 200 36 308 26 356 86 282 126 204 98']]},
+    bezier:{title:'bezier',sub:'Cubic curves, smooth at any scale.',
+      svg:`<path d="M24 124 C 120 12, 250 144, 360 34" fill="none" stroke="#ff80c0" stroke-width="8" stroke-linecap="round"/>`,
+      cmds:[['thickness 8'],['pen #ff80c0'],['bezier 24 124 120 12 250 144 360 34']]},
+    text:{title:'text',sub:'Real fonts via fcft, tabs & color.',
+      svg:`<text x="30" y="92" font-family="'JetBrains Mono',monospace" font-size="56" font-weight="700" fill="#ffffff">Shoe <tspan fill="#4fd99a">✓</tspan></text>`,
+      cmds:[['pen #ffffff'],['text 30 92 Shoe ✓']]},
+    clip:{title:'clip · noclip',sub:'Mask drawing to a region.',
+      svg:`<defs><clipPath id="cd"><rect x="100" y="28" width="200" height="94"/></clipPath></defs>
+           <circle cx="200" cy="75" r="70" fill="#50d0ff" clip-path="url(#cd)"/>
+           <rect x="100" y="28" width="200" height="94" fill="none" stroke="#62627e" stroke-width="2" stroke-dasharray="7 7"/>`,
+      cmds:[['clip 100 28 200 94'],['pen #50d0ff'],['circf 200 75 70'],['noclip']]},
+    pixel:{title:'pixel · bg · clear',sub:'The fine-grained bits.',
+      svg:`<rect x="8" y="8" width="384" height="134" rx="8" fill="#101028"/>
+           <g fill="#ff5050"><rect x="60" y="44" width="7" height="7"/><rect x="104" y="86" width="7" height="7"/><rect x="150" y="36" width="7" height="7"/><rect x="196" y="100" width="7" height="7"/><rect x="236" y="58" width="7" height="7"/><rect x="282" y="92" width="7" height="7"/><rect x="324" y="48" width="7" height="7"/></g>`,
+      cmds:[['bg #101028','# fill the canvas'],['pen #ff5050'],['pixel 40 30'],['clear','# wipe back to transparent']]},
+  };
+
+  // render a command list to highlighted HTML + plain text (for copy).
+  // foot's graphics parser is one-command-per-line, so each cmds entry is a
+  // single command line: ['<command + args>', '<optional # comment>'].
+  const word=(w)=> w[0]==='#' ? w
+    : /^-?\d/.test(w) ? `<span class="num">${w}</span>`
+    : `<span class="kw">${w}</span>`;
+  const colorize=(toks)=>toks.split(/\s+/).filter(Boolean).map(word).join(' ');
+  const fmt=(cmds)=>{
+    // html keeps the readable per-line breakdown (with inline comments) for
+    // the <pre> preview; the copied command joins the commands with commas
+    // onto a single line — foot accepts comma OR newline as the separator, so
+    // this pastes and runs as one printf. Comments are left out of the copy
+    // ('#' would otherwise swallow the rest of the single line).
+    let html='', parts=['size 46 9'];
+    cmds.forEach(([toks,cm])=>{
+      let line=colorize(toks);
+      if(cm) line+='   '+`<span class="cm">${cm}</span>`;
+      html+=line+'\n'; parts.push(toks);
+    });
+    const plain="printf '\\033P>g,"+parts.join(',')+"\\033\\\\'";
+    // cmd: the exact runnable one-liner, highlighted (matches `plain` byte for
+    // byte so what's shown is what the Copy button puts on the clipboard).
+    const cmd='<span class="dim">printf \'</span><span class="esc">\\033P&gt;g</span>'
+      +'<span class="pn">,</span>'+parts.map(colorize).join('<span class="pn">,</span>')
+      +'<span class="esc">\\033\\\\</span><span class="dim">\'</span>';
+    return {html:html.replace(/\n$/,''),plain,cmd};
+  };
+
+  const grid=document.querySelector('.feat-grid');
+  const cards=[...document.querySelectorAll('.feat[data-ex]')];
+  let drawer=null, openCard=null;
+
+  const close=()=>{
+    if(!openCard)return;
+    openCard.classList.remove('open');
+    openCard.setAttribute('aria-expanded','false');
+    const h=openCard.querySelector('.ex-hint');if(h)h.lastChild.textContent=' see example';
+    const d=drawer;
+    if(d){d.classList.remove('open');setTimeout(()=>{if(d.parentNode&&!d.classList.contains('open'))d.remove();},460);}
+    drawer=null;openCard=null;
+  };
+
+  const open=(card)=>{
+    const ex=EX[card.dataset.ex];if(!ex)return;
+    const {html,plain,cmd}=fmt(ex.cmds);
+    drawer=document.createElement('div');
+    drawer.className='feat-detail';
+    drawer.innerHTML=`<div class="fd-clip"><div class="fd-in">
+        <svg class="fd-render" viewBox="0 0 400 150" preserveAspectRatio="xMidYMid meet">${ex.svg}</svg>
+        <div class="fd-side">
+          <div class="fd-head">
+            <div><div class="fd-title">${ex.title}</div><div class="fd-sub">${ex.sub}</div></div>
+            <button class="fd-copy" type="button">Copy</button>
+          </div>
+          <pre>${html}</pre>
+          <div class="fd-run"><span class="fd-label">Paste &amp; run</span><pre class="fd-cmd">${cmd}</pre></div>
+        </div>
+      </div></div>`;
+    // insert right after the clicked card so it spans that row
+    card.after(drawer);
+    card.classList.add('open');
+    card.setAttribute('aria-expanded','true');
+    const h=card.querySelector('.ex-hint');if(h)h.lastChild.textContent=' hide example';
+    openCard=card;
+    requestAnimationFrame(()=>drawer.classList.add('open'));
+
+    const btn=drawer.querySelector('.fd-copy');
+    btn.addEventListener('click',async(e)=>{
+      e.stopPropagation();
+      try{await navigator.clipboard.writeText(plain);btn.textContent='Copied ✓';}
+      catch(err){btn.textContent='Copy failed';}
+      setTimeout(()=>btn.textContent='Copy',1600);
+    });
+  };
+
+  const toggle=(card)=>{
+    if(openCard===card){close();return;}
+    close();open(card);
+  };
+  cards.forEach(card=>{
+    card.addEventListener('click',()=>toggle(card));
+    card.addEventListener('keydown',e=>{
+      if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle(card);}
+    });
+  });
+})();
+
+// scroll reveal
+(function(){
+  const els=document.querySelectorAll('.reveal');
+  const io=new IntersectionObserver((ents)=>{
+    ents.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});
+  },{threshold:.12,rootMargin:'0px 0px -8% 0px'});
+  els.forEach(el=>io.observe(el));
+})();
+</script>
+</body>
+</html>
