@@ -1,0 +1,905 @@
+#!/usr/bin/env python3
+# slippers - a Midnight-Commander-style dual-pane file explorer drawn
+# entirely with foot's vector-graphics protocol, driven by keyboard *and* mouse.
+#
+#   Run it:   ./bld/debug/foot sh -c 'python3 shoescripts/slippers'
+#   or, installed on PATH inside foot:   slippers [start-dir]
+#
+# It is the first interactive shoescript: every frame is one comma-delimited
+# DCS drawing program (ESC P > g ... ESC \) printed over itself at the home
+# position, exactly like memtop.sh redraws its card. Mouse clicks arrive as
+# SGR-pixel reports whose pixel coordinates line up 1:1 with the canvas, so a
+# click maps straight onto the drawn rows.
+#
+# Keys:   Up/Down PgUp/PgDn Home/End  move      Tab  switch pane
+#         Enter / ->        open dir / file info  Backspace / <-  parent dir
+#         F1 Help  F3 View  F5 Copy  F6 Move  F7 Mkdir  F8 Delete  F10/q Quit
+# Mouse:  click a row -> select + activate its pane;  double-click a dir -> open
+#         wheel -> scroll;  click the function-key bar -> fire that action
+#
+# v1 is navigate + view: the destructive ops (Copy/Move/Mkdir/Delete) draw a
+# confirmation dialog but do nothing yet (TODO: real filesystem ops).
+#
+# Env:  SLIPPERS_FORCE=1  draw even if $TERM isn't foot-like
+#       SLIPPERS_PLAIN=1  never draw (print a notice and exit)
+#
+# Stdlib only; no dependencies.
+
+import os
+import re
+import select
+import shutil
+import signal
+import stat
+import sys
+import termios
+import time
+import tty
+
+ESC = "\033"
+
+# ---- theme (midnight aurora) ----------------------------------------------
+C = {
+    "page0":    "#0e1730",   # background gradient, top
+    "page1":    "#060912",   # background gradient, bottom
+    "shadow":   "#03050b",   # drop shadows
+    "panel":    "#121a2e",   # panel body
+    "border":   "#2b3656",   # idle panel border
+    "active":   "#46d6ff",   # active accent (cyan)
+    "active2":  "#7b8cff",   # secondary accent (violet)
+    "hdr0":     "#26345a",   # header / bar gradient, top
+    "hdr1":     "#19223c",   # header / bar gradient, bottom
+    "ink":      "#eef2fb",
+    "dim":      "#8a96b4",
+    "faint":    "#5b678c",
+    "dir":      "#6fb3ff",
+    "exec":     "#4ce0a4",
+    "link":     "#c79bff",
+    "file":     "#c9d3e8",
+    "sel0":     "#3f7bf2",   # selection gradient, top (active pane)
+    "sel1":     "#23488f",   # selection gradient, bottom
+    "selidle":  "#283250",   # selection bar, inactive pane
+    "stripe":   "#ffffff09",  # zebra overlay (very faint)
+    "accent":   "#ffc24a",   # amber highlight (F-key numbers)
+    "danger":   "#ff5d7a",
+    "modal0":   "#222e4c",
+    "modal1":   "#161f37",
+}
+
+
+def _rgb(c):
+    c = c.lstrip("#")
+    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+
+
+def mix(a, b, t):
+    ra, ga, ba = _rgb(a)
+    rb, gb, bb = _rgb(b)
+    return "#%02x%02x%02x" % (int(ra + (rb - ra) * t),
+                              int(ga + (gb - ga) * t),
+                              int(ba + (bb - ba) * t))
+
+
+def lighten(c, t):
+    return mix(c, "#ffffff", t)
+
+
+def darken(c, t):
+    return mix(c, "#000000", t)
+
+# Function-key bar (Midnight Commander order).
+FKEYS = [
+    ("1", "Help"), ("2", "Menu"), ("3", "View"), ("4", "Edit"), ("5", "Copy"),
+    ("6", "Move"), ("7", "Mkdir"), ("8", "Del"), ("9", "Conf"), ("10", "Quit"),
+]
+
+
+# --------------------------------------------------------------------------- #
+#  graphics-capable terminal detection
+# --------------------------------------------------------------------------- #
+def graphics_ok():
+    if os.environ.get("SLIPPERS_PLAIN"):
+        return False
+    if os.environ.get("SLIPPERS_FORCE"):
+        return True
+    if not sys.stdout.isatty():
+        return False
+    term = os.environ.get("TERM", "")
+    return "foot" in term
+
+
+# --------------------------------------------------------------------------- #
+#  drawing-command buffer
+#
+#  Geometry commands are comma-joined (the requested delimiter); `text`
+#  commands must each end the line, because foot's `text` consumes to the end
+#  of the line and treats commas inside it as literal. So we flush the pending
+#  comma-run before every text and put the text on its own physical line.
+# --------------------------------------------------------------------------- #
+class Canvas:
+    def __init__(self):
+        self.lines = []
+        self.geo = []
+
+    def _flush(self):
+        if self.geo:
+            self.lines.append(",".join(self.geo))
+            self.geo = []
+
+    def cmd(self, s):           # a geometry command
+        self.geo.append(s)
+
+    def pen(self, color):
+        self.geo.append("pen " + color)
+
+    def rectf(self, x, y, w, h):
+        self.geo.append("rectf %d %d %d %d" % (x, y, w, h))
+
+    def rect(self, x, y, w, h):
+        self.geo.append("rect %d %d %d %d" % (x, y, w, h))
+
+    def rrectf(self, x, y, w, h, r):
+        self.geo.append("rrectf %d %d %d %d %d" % (x, y, w, h, r))
+
+    def rrect(self, x, y, w, h, r):
+        self.geo.append("rrect %d %d %d %d %d" % (x, y, w, h, r))
+
+    def line(self, x0, y0, x1, y1):
+        self.geo.append("line %d %d %d %d" % (x0, y0, x1, y1))
+
+    def trif(self, x0, y0, x1, y1, x2, y2):
+        self.geo.append("trif %d %d %d %d %d %d" % (x0, y0, x1, y1, x2, y2))
+
+    def circf(self, cx, cy, r):
+        self.geo.append("circf %d %d %d" % (cx, cy, r))
+
+    def thickness(self, n):
+        self.geo.append("thickness %d" % n)
+
+    def vgrad(self, x, y, w, h, c0, c1, steps=18):
+        # vertical gradient as a stack of horizontal strips
+        if w <= 0 or h <= 0:
+            return
+        steps = max(1, min(steps, h))
+        for i in range(steps):
+            y0 = y + h * i // steps
+            y1 = y + h * (i + 1) // steps
+            if y1 <= y0:
+                continue
+            self.pen(mix(c0, c1, i / max(1, steps - 1)))
+            self.rectf(x, y0, w, y1 - y0)
+
+    def text(self, x, y, s):
+        self._flush()
+        self.lines.append("text %d %d %s" % (x, y, sanitize(s)))
+
+    def dcs(self, cols, rows):
+        self._flush()
+        body = "\n".join(self.lines)
+        return "%s[H%sP>g\nsize %d %d\nbg %s\n%s\n%s\\" % (
+            ESC, ESC, cols, rows, C["page1"], body, ESC)
+
+
+def sanitize(s):
+    # Drop control chars / newlines / commas that would confuse the parser or
+    # make fcft draw control-picture glyphs. (text runs to end of line.)
+    return "".join(ch for ch in s if ch >= " " and ch != "," and ch != "\x7f")
+
+
+# --------------------------------------------------------------------------- #
+#  filesystem model
+# --------------------------------------------------------------------------- #
+class Entry:
+    __slots__ = ("name", "path", "is_dir", "is_link", "is_exec", "size", "mtime")
+
+    def __init__(self, name, path, st, is_link):
+        self.name = name
+        self.path = path
+        self.is_link = is_link
+        self.is_dir = stat.S_ISDIR(st.st_mode) if st else False
+        self.is_exec = bool(st and (st.st_mode & 0o111) and not self.is_dir)
+        self.size = st.st_size if st else 0
+        self.mtime = st.st_mtime if st else 0
+
+    def color(self):
+        if self.is_link:
+            return C["link"]
+        if self.is_dir:
+            return C["dir"]
+        if self.is_exec:
+            return C["exec"]
+        return C["file"]
+
+
+class Pane:
+    def __init__(self, path):
+        self.cwd = os.path.abspath(path)
+        self.sel = 0
+        self.top = 0
+        self.entries = []
+        self.scan()
+
+    def scan(self, keep=None):
+        # keep: name to reselect after the rescan (None -> select the top entry).
+        items = []
+        parent = os.path.dirname(self.cwd)
+        if parent != self.cwd:
+            try:
+                items.append(Entry("..", parent, os.stat(parent), False))
+            except OSError:
+                items.append(Entry("..", parent, None, False))
+        try:
+            with os.scandir(self.cwd) as it:
+                for de in it:
+                    try:
+                        st = de.stat(follow_symlinks=True)
+                    except OSError:
+                        st = None
+                    items.append(Entry(de.name, de.path, st, de.is_symlink()))
+        except OSError:
+            pass
+        rest = [e for e in items if e.name != ".."]
+        rest.sort(key=lambda e: (not e.is_dir, e.name.lower()))
+        self.entries = ([items[0]] if items and items[0].name == ".." else []) + rest
+        # restore selection on the same name if we can
+        self.sel = 0
+        if keep:
+            for i, e in enumerate(self.entries):
+                if e.name == keep:
+                    self.sel = i
+                    break
+        self.clamp(0)
+
+    def cur(self):
+        return self.entries[self.sel] if self.entries else None
+
+    def clamp(self, visible):
+        if self.sel < 0:
+            self.sel = 0
+        if self.sel >= len(self.entries):
+            self.sel = max(0, len(self.entries) - 1)
+        if visible > 0:
+            if self.sel < self.top:
+                self.top = self.sel
+            elif self.sel >= self.top + visible:
+                self.top = self.sel - visible + 1
+            maxtop = max(0, len(self.entries) - visible)
+            if self.top > maxtop:
+                self.top = maxtop
+            if self.top < 0:
+                self.top = 0
+
+    def enter(self):
+        e = self.cur()
+        if e and e.is_dir:
+            try:
+                os.listdir(e.path)            # permission probe
+            except OSError:
+                return
+            self.cwd = os.path.abspath(e.path)
+            self.scan()
+            return True
+        return False
+
+    def up(self):
+        parent = os.path.dirname(self.cwd)
+        if parent != self.cwd:
+            leaving = os.path.basename(self.cwd)
+            self.cwd = parent
+            self.scan(keep=leaving)
+
+
+def human(n):
+    for unit in ("B", "K", "M", "G", "T"):
+        if n < 1024 or unit == "T":
+            if unit == "B":
+                return "%d B" % n
+            return "%.1f%s" % (n, unit)
+        n /= 1024.0
+
+
+# --------------------------------------------------------------------------- #
+#  layout - one source of truth for the renderer and the mouse hit-tests
+# --------------------------------------------------------------------------- #
+class Layout:
+    def __init__(self, W, H, cw, ch):
+        self.W, self.H, self.cw, self.ch = W, H, cw, ch
+        self.row_h = ch + 4
+        self.title_h = ch + 12
+        self.foot_h = ch + 12
+        self.info_h = ch + 8
+        self.hdr_h = ch + 10
+        m = 6
+        gap = 8
+        pw = (W - 2 * m - gap) // 2
+        self.pane_top = self.title_h + m
+        self.pane_bot = H - self.foot_h - self.info_h - m
+        self.panes = [
+            (m, self.pane_top, pw, self.pane_bot - self.pane_top),
+            (m + pw + gap, self.pane_top, pw, self.pane_bot - self.pane_top),
+        ]
+        self.rows_y = self.pane_top + self.hdr_h
+        self.visible = max(1, (self.pane_bot - self.rows_y - 4) // self.row_h)
+        self.fk_w = W // 10
+        self.fbar_y = H - self.foot_h
+
+    def pane_at(self, x):
+        for i, (px, _, pw, _) in enumerate(self.panes):
+            if px <= x < px + pw:
+                return i
+        return None
+
+    def row_at(self, y):
+        if self.rows_y <= y < self.rows_y + self.visible * self.row_h:
+            return (y - self.rows_y) // self.row_h
+        return None
+
+    def fkey_at(self, x, y):
+        if y >= self.fbar_y:
+            idx = x // self.fk_w
+            if 0 <= idx < 10:
+                return idx
+        return None
+
+
+# --------------------------------------------------------------------------- #
+#  renderer
+# --------------------------------------------------------------------------- #
+def draw(cv, lay, panes, active, status):
+    cw, ch = lay.cw, lay.ch
+    charw = max(5, cw)
+    baseline = lay.row_h - 6            # text baseline within a row
+
+    # ---- background: full-canvas vertical gradient ----
+    cv.vgrad(0, 0, lay.W, lay.H, C["page0"], C["page1"], 22)
+
+    # ---- title bar ----
+    tb = lay.title_h
+    cv.vgrad(0, 0, lay.W, tb, C["hdr0"], C["hdr1"], 8)
+    tbase = tb - 9
+    # traffic-light dots
+    for j, col in enumerate((C["danger"], C["accent"], C["exec"])):
+        cv.pen(darken(col, 0.35)); cv.circf(18 + j * 16, tb // 2 + 1, 5)
+        cv.pen(col); cv.circf(18 + j * 16, tb // 2, 4)
+    nx = 18 + 3 * 16 + 12
+    cv.pen(C["active"]); cv.text(nx, tbase, "slippers")
+    hint = "Tab  Enter  F1 help  F10 quit"
+    cv.pen(C["dim"]); cv.text(lay.W - len(hint) * charw - 12, tbase, hint)
+    # accent underline
+    cv.pen(C["active2"]); cv.rectf(0, tb - 2, lay.W, 2)
+
+    for i, (px, py, pw, phh) in enumerate(lay.panes):
+        pane = panes[i]
+        is_active = (i == active)
+        rad = 12
+        # drop shadow
+        cv.pen(C["shadow"]); cv.rrectf(px + 3, py + 5, pw, phh, rad)
+        # body
+        cv.pen(C["panel"]); cv.rrectf(px, py, pw, phh, rad)
+        # header strip (gradient), inset so the rounded corners show
+        cv.vgrad(px + 3, py + 3, pw - 6, lay.hdr_h - 3, C["hdr0"], C["hdr1"], 6)
+        # folder glyph + path, right-truncated to keep the tail visible
+        gy = py + lay.hdr_h // 2
+        cv.pen(C["active"] if is_active else C["dim"])
+        cv.rectf(px + 10, gy - 5, 6, 3); cv.rectf(px + 10, gy - 2, 13, 9)
+        maxc = max(4, (pw - 36) // charw)
+        path = pane.cwd
+        if len(path) > maxc:
+            path = "..." + path[-(maxc - 3):]
+        cv.pen(C["ink"] if is_active else C["dim"])
+        cv.text(px + 32, py + lay.hdr_h - 7, path)
+        # header divider
+        cv.pen(C["active"] if is_active else C["border"])
+        cv.rectf(px + 6, py + lay.hdr_h, pw - 12, 1)
+
+        # glowing border (active) / plain border (idle)
+        if is_active:
+            cv.thickness(3); cv.pen(C["active"] + "40")
+            cv.rrect(px - 1, py - 1, pw + 2, phh + 2, rad + 1)
+            cv.thickness(2); cv.pen(C["active"]); cv.rrect(px, py, pw, phh, rad)
+        else:
+            cv.thickness(1); cv.pen(C["border"]); cv.rrect(px, py, pw, phh, rad)
+        cv.thickness(1)
+
+        # rows
+        pane.clamp(lay.visible)
+        name_x = px + 12 + int(charw * 2.0)        # leave room for the icon
+        size_w = 8 * charw
+        name_max = max(2, (pw - 24 - int(charw * 2.0) - size_w) // charw)
+        for r in range(lay.visible):
+            idx = pane.top + r
+            if idx >= len(pane.entries):
+                break
+            e = pane.entries[idx]
+            ry = lay.rows_y + r * lay.row_h
+            chosen = (idx == pane.sel)
+            hot = chosen and is_active
+            if chosen:
+                if is_active:
+                    rh = lay.row_h - 2
+                    cv.pen(C["sel1"]); cv.rrectf(px + 6, ry + 1, pw - 12, rh, 6)
+                    cv.pen(C["sel0"]); cv.rrectf(px + 6, ry + 1, pw - 12, rh * 55 // 100, 6)
+                    cv.pen(C["active"]); cv.rrectf(px + 7, ry + 2, 3, rh - 2, 1)
+                else:
+                    cv.pen(C["selidle"]); cv.rrectf(px + 6, ry + 1, pw - 12, lay.row_h - 2, 6)
+            elif r % 2 == 1:
+                cv.pen(C["stripe"]); cv.rectf(px + 6, ry, pw - 12, lay.row_h)
+
+            draw_icon(cv, px + 12, ry, lay.row_h, e)
+            nm = e.name + ("/" if e.is_dir and e.name != ".." else "")
+            if len(nm) > name_max:
+                nm = nm[:name_max - 1] + "~"
+            cv.pen(C["ink"] if hot else e.color())
+            cv.text(name_x, ry + baseline, nm)
+            tag = "<DIR>" if e.is_dir else human(e.size)
+            cv.pen(lighten(C["ink"], 0.0) if hot else C["dim"])
+            cv.text(px + pw - 12 - len(tag) * charw, ry + baseline, tag)
+
+        # scrollbar
+        n = len(pane.entries)
+        if n > lay.visible:
+            track_h = phh - lay.hdr_h - 10
+            ty = py + lay.hdr_h + 5
+            thumb = max(10, track_h * lay.visible // n)
+            tpos = ty + (track_h - thumb) * pane.top // max(1, n - lay.visible)
+            cv.pen(darken(C["panel"], 0.4)); cv.rrectf(px + pw - 7, ty, 4, track_h, 2)
+            cv.pen(C["active"] if is_active else C["faint"])
+            cv.rrectf(px + pw - 7, tpos, 4, thumb, 2)
+
+    # ---- status bar ----
+    iy = lay.fbar_y - lay.info_h
+    cv.vgrad(0, iy, lay.W, lay.info_h, C["hdr1"], C["hdr0"], 5)
+    cv.pen(C["active2"]); cv.rectf(0, iy, lay.W, 1)
+    cv.pen(C["accent"]); cv.circf(14, iy + lay.info_h // 2, 3)
+    cv.pen(C["dim"]); cv.text(26, iy + lay.info_h - 7, status)
+    pane = panes[active]
+    ndir = sum(1 for e in pane.entries if e.is_dir and e.name != "..")
+    nfile = sum(1 for e in pane.entries if not e.is_dir)
+    try:
+        free = human(shutil.disk_usage(pane.cwd).free)
+    except OSError:
+        free = "?"
+    info = "%d dirs  %d files   %s free" % (ndir, nfile, free)
+    cv.pen(C["faint"]); cv.text(lay.W - len(info) * charw - 12, iy + lay.info_h - 7, info)
+
+    # ---- function-key bar (pill buttons) ----
+    cv.vgrad(0, lay.fbar_y, lay.W, lay.foot_h, C["page1"], C["page0"], 5)
+    for k in range(10):
+        x = k * lay.fk_w + 3
+        w = lay.fk_w - 6
+        num, label = FKEYS[k]
+        danger = (label == "Del")
+        by = lay.fbar_y + 3
+        bh = lay.foot_h - 6
+        cv.pen(C["hdr1"]); cv.rrectf(x, by, w, bh, 6)
+        cv.pen(darken(C["danger"], 0.2) if danger else C["hdr0"])
+        cv.rrectf(x, by, w, bh * 6 // 10, 6)
+        # number badge
+        cv.pen(C["danger"] if danger else C["accent"])
+        cv.text(x + 6, lay.fbar_y + lay.foot_h - 8, num)
+        cv.pen(C["ink"])
+        cv.text(x + 6 + len(num) * charw + 4, lay.fbar_y + lay.foot_h - 8, label)
+
+
+def draw_icon(cv, x, ry, row_h, e):
+    cy = ry + row_h // 2
+    base = e.color()
+    if e.is_dir:
+        # two-tone folder with a back tab
+        cv.pen(darken(base, 0.35)); cv.rectf(x, cy - 6, 8, 4)
+        cv.pen(base); cv.rrectf(x, cy - 3, 16, 11, 2)
+        cv.pen(lighten(base, 0.25)); cv.rectf(x + 1, cy - 2, 14, 2)
+    elif e.is_exec:
+        # rounded badge + play glyph
+        cv.pen(darken(base, 0.45)); cv.rrectf(x, cy - 7, 15, 14, 3)
+        cv.pen(base); cv.trif(x + 5, cy - 4, x + 5, cy + 4, x + 11, cy)
+    elif e.is_link:
+        # page + link arrow
+        cv.pen(darken(base, 0.4)); cv.rrectf(x + 1, cy - 7, 12, 14, 2)
+        cv.pen(base)
+        cv.line(x + 4, cy + 3, x + 10, cy - 3)
+        cv.trif(x + 10, cy - 4, x + 6, cy - 3, x + 10, cy + 1)
+    else:
+        # dog-eared page with faint ruled lines
+        cv.pen(lighten(C["panel"], 0.18)); cv.rrectf(x + 1, cy - 7, 12, 14, 2)
+        cv.pen(C["panel"]); cv.trif(x + 8, cy - 7, x + 13, cy - 7, x + 13, cy - 2)
+        cv.pen(base)
+        for ly in (cy - 2, cy + 1, cy + 4):
+            cv.line(x + 3, ly, x + 10, ly)
+
+
+# --------------------------------------------------------------------------- #
+#  modal dialogs (drawn over the current frame)
+# --------------------------------------------------------------------------- #
+def modal(write, cv_factory, lay, cols, rows, title, body_lines, buttons):
+    cw, ch, charw = lay.cw, lay.ch, max(5, lay.cw)
+    w = max(len(title), max((len(l) for l in body_lines), default=0),
+            len(buttons)) * charw + 60
+    w = min(w, lay.W - 40)
+    h = (len(body_lines) + 4) * (ch + 4) + 20
+    x = (lay.W - w) // 2
+    y = (lay.H - h) // 2
+    cv = cv_factory()
+    # dim the whole frame behind the dialog
+    cv.pen("#050810cc"); cv.rectf(0, 0, lay.W, lay.H)
+    # drop shadow + gradient body + glowing border
+    cv.pen(C["shadow"]); cv.rrectf(x + 4, y + 6, w, h, 12)
+    cv.vgrad(x, y, w, h, C["modal0"], C["modal1"], 14)
+    cv.thickness(2); cv.pen(C["active"] + "55"); cv.rrect(x - 1, y - 1, w + 2, h + 2, 13)
+    cv.pen(C["active"]); cv.rrect(x, y, w, h, 12); cv.thickness(1)
+    # title + accent underline
+    cv.pen(C["accent"]); cv.text(x + 18, y + ch + 8, title)
+    cv.pen(C["active2"]); cv.rectf(x + 18, y + ch + 14, w - 36, 2)
+    yy = y + 2 * (ch + 10)
+    cv.pen(C["ink"])
+    for l in body_lines:
+        cv.text(x + 18, yy, l)
+        yy += ch + 4
+    cv.pen(C["dim"]); cv.text(x + 18, y + h - 13, buttons)
+    write(cv.dcs(cols, rows).encode())
+
+
+# --------------------------------------------------------------------------- #
+#  input parsing  (returns a list of semantic events)
+# --------------------------------------------------------------------------- #
+MOUSE_RE = re.compile(rb"\[<(\d+);(\d+);(\d+)([Mm])")
+
+CSI_FINAL = {
+    b"A": "up", b"B": "down", b"C": "right", b"D": "left",
+    b"H": "home", b"F": "end",
+}
+TILDE = {
+    1: "home", 7: "home", 4: "end", 8: "end", 3: "del",
+    5: "pgup", 6: "pgdn",
+    15: "f5", 17: "f6", 18: "f7", 19: "f8", 20: "f9", 21: "f10",
+    11: "f1", 12: "f2", 13: "f3", 14: "f4",
+}
+SS3 = {b"P": "f1", b"Q": "f2", b"R": "f3", b"S": "f4",
+       b"A": "up", b"B": "down", b"C": "right", b"D": "left",
+       b"H": "home", b"F": "end"}
+
+
+def parse_one(buf, i):
+    """Parse one event starting at buf[i]. Return (event, next_index) or
+    (None, -1) when the buffer ends mid-sequence (need more bytes)."""
+    b = buf[i]
+    if b != 0x1b:                       # plain byte
+        if b in (0x0d, 0x0a):
+            return ("enter", i + 1)
+        if b == 0x09:
+            return ("tab", i + 1)
+        if b in (0x7f, 0x08):
+            return ("back", i + 1)
+        if b == 0x03:                   # Ctrl-C
+            return ("quit", i + 1)
+        return (("char", chr(b)), i + 1)
+    # ESC ...
+    if i + 1 >= len(buf):
+        return (None, -1)
+    n = buf[i + 1]
+    if n == 0x5b:                       # ESC [
+        # mouse?
+        if i + 2 < len(buf) and buf[i + 2] == 0x3c:
+            m = MOUSE_RE.match(buf, i + 1)
+            if not m:
+                return (None, -1)
+            btn, x, y, kind = int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)
+            return (("mouse", btn, x, y, kind == b"M"), m.end())
+        # generic CSI: digits/;, then final
+        j = i + 2
+        while j < len(buf) and (0x30 <= buf[j] <= 0x3f):
+            j += 1
+        if j >= len(buf):
+            return (None, -1)
+        final = buf[j:j + 1]
+        params = buf[i + 2:j]
+        if final == b"~":
+            try:
+                num = int(params.split(b";")[0])
+            except ValueError:
+                return ("ignore", j + 1)
+            return (TILDE.get(num, "ignore"), j + 1)
+        return (CSI_FINAL.get(final, "ignore"), j + 1)
+    if n == 0x4f:                       # ESC O  (SS3, function keys)
+        if i + 2 >= len(buf):
+            return (None, -1)
+        return (SS3.get(buf[i + 2:i + 3], "ignore"), i + 3)
+    # bare ESC followed by something else
+    return ("esc", i + 1)
+
+
+def parse_events(buf):
+    events = []
+    i = 0
+    while i < len(buf):
+        ev, j = parse_one(buf, i)
+        if j < 0:
+            break                       # incomplete; keep the tail
+        if ev not in (None, "ignore"):
+            events.append(ev)
+        i = j
+    return events, buf[i:]
+
+
+# --------------------------------------------------------------------------- #
+#  terminal session
+# --------------------------------------------------------------------------- #
+class Term:
+    def __init__(self):
+        self.fd = sys.stdin.fileno()
+        self.old = None
+
+    def __enter__(self):
+        self.old = termios.tcgetattr(self.fd)
+        tty.setraw(self.fd)
+        self.cw, self.ch = self.query_cell()
+        self.w(ESC + "[?1049h" + ESC + "[2J" + ESC + "[?25l")     # alt, clear, hide
+        self.w(ESC + "[?1002h" + ESC + "[?1006h" + ESC + "[?1016h")  # mouse on
+        return self
+
+    def __exit__(self, *a):
+        self.w(ESC + "[?1002l" + ESC + "[?1006l" + ESC + "[?1016l")
+        self.w(ESC + "[?25h" + ESC + "[?1049l")
+        if self.old:
+            termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
+
+    def w(self, s):
+        os.write(self.fd, s.encode() if isinstance(s, str) else s)
+
+    def query_cell(self):
+        # ESC[16t -> ESC[6;h;w t ; fall back to 8x16
+        try:
+            os.write(self.fd, (ESC + "[16t").encode())
+            buf = b""
+            deadline = time.monotonic() + 0.3
+            while time.monotonic() < deadline:
+                r, _, _ = select.select([self.fd], [], [], deadline - time.monotonic())
+                if not r:
+                    break
+                buf += os.read(self.fd, 64)
+                m = re.search(rb"\[6;(\d+);(\d+)t", buf)
+                if m:
+                    return int(m.group(2)), int(m.group(1))
+        except OSError:
+            pass
+        return 8, 16
+
+
+def term_cells():
+    try:
+        sz = os.get_terminal_size(sys.stdout.fileno())
+        return sz.columns, sz.lines
+    except OSError:
+        return 80, 24
+
+
+# --------------------------------------------------------------------------- #
+#  main
+# --------------------------------------------------------------------------- #
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print("slippers - dual-pane file explorer in foot vector graphics.\n"
+              "Usage: slippers [start-dir]\n"
+              "Keys: arrows/PgUp/PgDn/Home/End move, Tab switch pane,\n"
+              "      Enter open, Backspace parent, F10/q quit. Mouse supported.")
+        return 0
+
+    if not graphics_ok():
+        sys.stderr.write(
+            "slippers needs a graphics-capable terminal (foot). "
+            "Run it inside foot, or set SLIPPERS_FORCE=1.\n")
+        return 1
+
+    start = args[0] if args else os.getcwd()
+    if not os.path.isdir(start):
+        start = os.getcwd()
+    panes = [Pane(start), Pane(start)]
+    active = 0
+    resized = {"flag": True}
+
+    def on_winch(_s, _f):
+        resized["flag"] = True
+    try:
+        signal.signal(signal.SIGWINCH, on_winch)
+    except (ValueError, OSError):
+        pass
+
+    with Term() as t:
+        cw, ch = t.cw, t.ch
+        cols, rows = term_cells()
+        lay = Layout(cols * cw, rows * ch, cw, ch)
+        buf = b""
+        last_click = (0.0, -1, -1)      # time, pane, row
+        dirty = True
+        running = True
+
+        def render():
+            cv = Canvas()
+            e = panes[active].cur()
+            if e:
+                kind = "DIR" if e.is_dir else ("LINK" if e.is_link else "FILE")
+                status = "%s   %s   %s" % (
+                    e.name, kind,
+                    "" if e.is_dir else human(e.size))
+            else:
+                status = "(empty)"
+            draw(cv, lay, panes, active, status)
+            t.w(cv.dcs(cols, rows))
+
+        def relayout():
+            nonlocal cols, rows, lay
+            cols, rows = term_cells()
+            lay = Layout(cols * cw, rows * ch, cw, ch)
+
+        def show_modal(title, lines, buttons="[Enter] OK   [Esc] Cancel"):
+            modal(t.w, Canvas, lay, cols, rows, title, lines, buttons)
+            # block for one key
+            while True:
+                r, _, _ = select.select([t.fd], [], [], None)
+                if not r:
+                    continue
+                data = os.read(t.fd, 64)
+                evs, _ = parse_events(data)
+                for ev in evs:
+                    if ev in ("enter", "esc", "quit") or (
+                            isinstance(ev, tuple) and ev[0] == "char"):
+                        return ev
+
+        def do_fkey(idx):
+            nonlocal running
+            pane = panes[active]
+            e = pane.cur()
+            name = e.name if e else "(none)"
+            if idx == 0:                # F1 Help
+                show_modal("slippers - help", [
+                    "Arrows / PgUp / PgDn / Home / End  -  move",
+                    "Tab  switch pane     Enter / ->  open dir",
+                    "Backspace / <-  parent dir",
+                    "Mouse: click row, double-click dir, wheel,",
+                    "       click this function-key bar.",
+                    "F10 or q  -  quit",
+                ], buttons="[any key] close")
+            elif idx == 2:              # F3 View
+                show_modal("View: " + name, file_info(e), buttons="[any key] close")
+            elif idx in (4, 5, 6, 7):   # Copy / Move / Mkdir / Delete (stubs)
+                label = {4: "Copy", 5: "Move", 6: "Mkdir", 7: "Delete"}[idx]
+                show_modal(label + " - not yet implemented", [
+                    "Target: " + name,
+                    "",
+                    "v1 is navigate + view only;",
+                    "file operations are coming next.",
+                ], buttons="[any key] close")
+            elif idx == 9:              # F10 Quit
+                running = False
+
+        def file_info(e):
+            if not e:
+                return ["(nothing selected)"]
+            try:
+                st = os.stat(e.path)
+                return [
+                    "Path: " + e.path,
+                    "Size: " + human(st.st_size),
+                    "Mode: " + stat.filemode(st.st_mode),
+                    "Modified: " + time.strftime("%Y-%m-%d %H:%M",
+                                                 time.localtime(st.st_mtime)),
+                ]
+            except OSError as ex:
+                return ["Cannot stat: " + str(ex)]
+
+        def open_selected():
+            pane = panes[active]
+            e = pane.cur()
+            if not e:
+                return
+            if e.is_dir:
+                if e.name == "..":
+                    pane.up()
+                else:
+                    pane.enter()
+            else:
+                show_modal("Info: " + e.name, file_info(e), buttons="[any key] close")
+
+        def handle_mouse(btn, x, y, press):
+            nonlocal active, last_click
+            base = btn & ~0b11100        # strip shift/alt/ctrl modifier bits
+            # wheel up / down (with motion bit cleared)
+            if base in (64, 65):
+                p = panes[active]
+                p.sel += -3 if base == 64 else 3
+                p.clamp(lay.visible)
+                return
+            if not press or (btn & 0b11) != 0:   # only act on left-button press
+                return
+            fk = lay.fkey_at(x, y)
+            if fk is not None:
+                do_fkey(fk)
+                return
+            pi = lay.pane_at(x)
+            if pi is None:
+                return
+            active = pi
+            row = lay.row_at(y)
+            if row is None:
+                return
+            p = panes[active]
+            idx = p.top + row
+            if idx >= len(p.entries):
+                return
+            p.sel = idx
+            now = time.monotonic()
+            lt, lp, lr = last_click
+            if now - lt < 0.4 and lp == active and lr == idx:
+                open_selected()
+                last_click = (0.0, -1, -1)
+            else:
+                last_click = (now, active, idx)
+
+        while running:
+            if resized["flag"]:
+                resized["flag"] = False
+                relayout()
+                dirty = True
+            if dirty:
+                render()
+                dirty = False
+
+            r, _, _ = select.select([t.fd], [], [], 0.5)
+            if not r:
+                continue
+            try:
+                data = os.read(t.fd, 4096)
+            except OSError:
+                break
+            if not data:
+                continue
+            buf += data
+            events, buf = parse_events(buf)
+
+            for ev in events:
+                pane = panes[active]
+                if ev == "quit":
+                    running = False
+                    break
+                elif ev == "tab":
+                    active ^= 1; dirty = True
+                elif ev == "up":
+                    pane.sel -= 1; pane.clamp(lay.visible); dirty = True
+                elif ev == "down":
+                    pane.sel += 1; pane.clamp(lay.visible); dirty = True
+                elif ev == "pgup":
+                    pane.sel -= lay.visible; pane.clamp(lay.visible); dirty = True
+                elif ev == "pgdn":
+                    pane.sel += lay.visible; pane.clamp(lay.visible); dirty = True
+                elif ev == "home":
+                    pane.sel = 0; pane.clamp(lay.visible); dirty = True
+                elif ev == "end":
+                    pane.sel = len(pane.entries) - 1; pane.clamp(lay.visible); dirty = True
+                elif ev in ("enter", "right"):
+                    open_selected(); dirty = True
+                elif ev in ("back", "left"):
+                    pane.up(); dirty = True
+                elif ev == "f10":
+                    running = False; break
+                elif isinstance(ev, str) and ev.startswith("f"):
+                    do_fkey(int(ev[1:]) - 1); dirty = True
+                elif isinstance(ev, tuple) and ev[0] == "char":
+                    c = ev[1]
+                    if c in ("q", "Q"):
+                        running = False; break
+                    if c in ("\t",):
+                        active ^= 1; dirty = True
+                elif isinstance(ev, tuple) and ev[0] == "mouse":
+                    _, btn, x, y, press = ev
+                    handle_mouse(btn, x, y, press)
+                    dirty = True
+
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

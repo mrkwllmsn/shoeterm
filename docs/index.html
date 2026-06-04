@@ -214,11 +214,15 @@ section{position:relative}
 .sec-head p{margin-top:18px}
 
 /* gallery */
-.gallery{display:grid;gap:26px}
+.gallery{display:grid;gap:58px 26px}
 @media(min-width:860px){.gallery{grid-template-columns:repeat(12,1fr)}}
-.shot{position:relative}
-.shot .term{transition:transform .5s var(--ease),box-shadow .5s var(--ease)}
-.shot:hover .term{transform:translateY(-6px);box-shadow:0 50px 100px -40px rgba(0,0,0,.95)}
+.shot{position:relative;padding:18px;border-radius:18px;
+  border:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(255,255,255,.025),transparent);
+  transition:transform .5s var(--ease),box-shadow .5s var(--ease),border-color .35s}
+.shot:hover{transform:translateY(-5px);border-color:var(--line-2);
+  box-shadow:0 50px 100px -45px rgba(0,0,0,.9)}
+.shot .term{transition:box-shadow .5s var(--ease)}
 .shot .cap{margin-top:16px;display:flex;gap:14px;align-items:flex-start}
 .shot .cap .k{font-family:'JetBrains Mono';font-size:.72rem;color:var(--ink-faint);padding-top:3px;white-space:nowrap}
 .shot .cap h3{font-family:'Syne';font-weight:700;font-size:1.18rem;letter-spacing:-.01em}
@@ -226,6 +230,13 @@ section{position:relative}
 .g-wide{grid-column:span 12}
 .g-7{grid-column:span 12}.g-5{grid-column:span 12}
 @media(min-width:860px){.g-7{grid-column:span 7}.g-5{grid-column:span 5}}
+/* gallery feature row: image beside its caption (stacks 1-up on mobile) */
+.galrow .cap{margin-top:16px}
+@media(min-width:860px){
+  .galrow{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:center}
+  .galrow .cap{margin-top:0}
+  .galrow.rev .term{order:2}
+}
 
 /* protocol / how it works */
 .proto{display:grid;gap:42px;align-items:start}
@@ -317,6 +328,7 @@ section{position:relative}
 .t2 .bar{background:linear-gradient(90deg,var(--gold),var(--coral))}
 .t3 .bar{background:linear-gradient(90deg,var(--cyan),var(--violet))}
 .t4 .bar{background:linear-gradient(90deg,var(--green),var(--cyan))}
+.t5 .bar{background:linear-gradient(90deg,var(--violet),var(--green))}
 
 /* big CTA */
 .cta-final{position:relative;margin:40px auto 0;border-radius:26px;overflow:hidden;
@@ -474,8 +486,32 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
     </div>
 
     <div class="gallery">
-      <!-- hero shot wide -->
-      <div class="shot g-wide reveal">
+      <!-- slippers -->
+      <div class="shot g-wide reveal galrow">
+        <div class="term">
+          <div class="term-bar"><span class="t">Shoe — slippers</span><span class="ctl"><i></i><b></b><s></s></span></div>
+          <button class="zoomable" type="button" data-full="assets/slippers1.png"
+            aria-label="Open the full-size slippers screenshot">
+            <img src="assets/slippers1.png" alt="slippers, a dual-pane Midnight-Commander-style file explorer drawn entirely with vector graphics — two panels of files with folder and file icons, a glowing active-pane border, a status bar and a row of pill-shaped function keys"/>
+            <span class="zoom-hint">⤢ Click to enlarge</span>
+          </button>
+        </div>
+        <div class="cap">
+          <span class="k">slippers</span>
+          <div>
+            <h3>A whole gui file manager in your terminal, drawn from escapes</h3>
+            <p>A dual-pane, Midnight-Commander-style explorer rendered entirely in vector
+              graphics in your console — gradient panels, a glowing active pane, type icons and pill function
+              keys. Full mouse support: click a row to select it, double-click to open a folder,
+              scroll with the wheel and click the function-key bar — clicks land straight on the
+              drawn rows via SGR-pixel reports. It's a demo of what the protocol can do:
+              browse and view only — copy, move and delete aren't implemented.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- hero shot wide (reversed: text left, image right) -->
+      <div class="shot g-wide reveal galrow rev">
         <div class="term">
           <div class="term-bar"><span class="t">Shoe — draw-demo.sh</span><span class="ctl"><i></i><b></b><s></s></span></div>
           <img src="assets/vector-graphics.png" alt="Vector graphics primitives demo running in Shoe — lines, rectangles and rounded rects drawn from escape-sequence command blocks"/>
@@ -747,6 +783,12 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         <div class="cmd">$ <b>memtop.sh</b></div>
         <h4>memtop</h4>
         <p>A live memory dashboard: usage gauge, stacked bars and a history graph, redrawn in place.</p>
+        <div class="bar"></div>
+      </div>
+      <div class="tool t5 reveal" style="transition-delay:.2s">
+        <div class="cmd">$ <b>slippers</b></div>
+        <h4>slippers</h4>
+        <p>A dual-pane file manager — Midnight-Commander style — with full mouse support (click, double-click, wheel), drawn entirely in vector graphics. A browse-and-view demo: no copy/move/delete.</p>
         <div class="bar"></div>
       </div>
     </div>

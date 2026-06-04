@@ -270,6 +270,44 @@ The `once` mode draws one frame at the cursor and returns without clearing the
 screen or hijacking the cursor, so it can be dropped into `welcome.sh` or a
 shell-startup banner.
 
+### slippers — interactive file explorer
+
+[`slippers`](../shoescripts/slippers) is a dual-pane,
+Midnight-Commander-style file browser drawn entirely with the vector-graphics
+protocol and driven by both keyboard **and mouse**. It is the first *interactive*
+shoescript (and the first written in Python): every frame is one
+comma-delimited drawing program redrawn over itself at the home position, just
+like `memtop.sh` refreshes its card.
+
+```sh
+./bld/debug/foot sh -c 'python3 shoescripts/slippers'   # or, on PATH inside foot:
+slippers [start-dir]
+```
+
+Two panes show sorted directory listings (`..` first, then folders, then files;
+folder / executable / file icons and type colours). Keys:
+
+| Key | Action |
+|---|---|
+| Up / Down / PgUp / PgDn / Home / End | move the selection |
+| Tab | switch the active pane |
+| Enter / → | open a directory (or show file info) |
+| Backspace / ← | go to the parent directory |
+| F1 | help · F3 view · F5/F6/F7/F8 copy/move/mkdir/delete |
+| F10 / q | quit |
+
+**Mouse** (SGR-pixel reports, `ESC[?1002h ESC[?1006h ESC[?1016h`): the pixel
+coordinates line up 1:1 with the canvas, so clicking a row selects it and
+activates its pane, double-clicking a directory opens it, the wheel scrolls,
+and clicking the function-key bar fires that action.
+
+It queries the real cell size with `ESC[16t` and fills the whole terminal, and
+restores the screen (alt-screen, cursor, mouse modes) cleanly on exit. v1 is
+**navigate + view**: the destructive operations (copy/move/mkdir/delete) draw a
+confirmation dialog but do not yet touch the filesystem. As with the other shoe
+tools it only runs on a graphics-capable terminal (`SLIPPERS_FORCE=1` /
+`SLIPPERS_PLAIN=1` override the detection).
+
 ## Notes and limitations
 
 - The image is placed at the current cursor position and scrolls with the

@@ -100,6 +100,14 @@ scaling, damage, and erase for free. **No changes to `render.c`.**
 - **Pixel coords depend on font size:** a script using absolute pixels assumes a
   cell size; the userland scripts assume ~8×16 px and estimate text width with a
   `charw` constant (tune it if text overflows).
+- **Comma vs `text`:** commands split on commas *or* newlines, but `text` runs
+  to end of **line** (commas in it are literal). So in the one-line/comma form a
+  `text` must be the last token on its line — emit a real `\n` after every
+  `text` and comma-join the rest (see `slippers`'s `Canvas`).
+- **Interactive: mouse is SGR-pixel.** Enable `ESC[?1002h ESC[?1006h ESC[?1016h`;
+  reports arrive as `ESC[<btn;Xpx;Ypx M/m` in **pixel** coords that line up 1:1
+  with a canvas drawn at `ESC[H`, so clicks map straight onto drawn rectangles
+  (no cell math). Wheel = btn 64/65; modifiers add +4/+8/+16, motion +32.
 
 ## Userland scripts (`shoescripts/`)
 
@@ -128,8 +136,14 @@ ones print the commands / input they send so usage is self-documenting.
   `memtop.sh [interval]` for live mode, `memtop.sh once` for a single frame at
   the cursor (banner-friendly). Queries cell size via `ESC[16t` so the card is
   font-size independent.
+- **`slippers`** — dual-pane Midnight-Commander-style file explorer. The
+  first **interactive** shoescript and the first in **Python** (stdlib only):
+  redraws a full-screen frame in place, keyboard + **mouse** (SGR-pixel) nav,
+  clickable F-key bar, alt-screen with clean teardown. v1 is navigate + view
+  (copy/move/mkdir/delete are confirm-only stubs). `slippers [start-dir]`;
+  `SLIPPERS_FORCE`/`_PLAIN` like the others.
 
-### Graphics-or-plain detection (shoestring / shoelace / shoebling)
+### Graphics-or-plain detection (shoestring / shoelace / shoebling / slippers)
 
 All emit graphics only to a graphics-capable terminal, else fall back to plain
 text (so they're safe when piped to a file or run elsewhere). `graphics_ok()`:
