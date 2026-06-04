@@ -611,6 +611,28 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
           </div>
         </div>
       </div>
+
+      <!-- shoom -->
+      <div class="shot g-wide reveal galrow rev">
+        <div class="term">
+          <div class="term-bar"><span class="t">Shoe — shoom</span><span class="ctl"><i></i><b></b><s></s></span></div>
+          <img src="assets/shoom.png" alt="A DOOM-style first-person view rendered entirely in Shoe vector graphics: shaded 3D walls cast by a raycaster, an imp ahead, a pistol at the bottom, a minimap in the corner and a health/ammo status bar"/>
+        </div>
+        <div class="cap">
+          <span class="k">shoom</span>
+          <div>
+            <h3>And then we built DOOM</h3>
+            <p>A first-person shooter in your terminal. Pure Python
+            calling our console vector graphics library — a software raycaster that draws
+              every wall as a single shaded vertical rectangle, ~30 fps redrawn in place.
+              Billboard imps depth-tested against the walls, mouse-look, a minimap and a
+              status bar. WASD to move, mouse to aim, space to fire.</p>
+            <a class="btn btn-primary"
+                href="https://raw.githubusercontent.com/mrkwllmsn/shoeterm/refs/heads/shoe-vector-graphics/shoescripts/shoom">
+                Goto shoom</a>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -841,7 +863,7 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
   const items=['size 20 6','pen #ff5050','rrectf 10 10 130 50 12','circ 220 35 28',
     'thickness 4','bezier · cubic curves','poly · scanline fill','text · fcft fonts',
     'arc 0 → 180°','clip / noclip','#rrggbbaa or none','redrawn in place',
-    'frogger · one canvas / tick'];
+    'frogger · one canvas / tick','shoom · raycaster in a rectf'];
   const m=document.getElementById('marquee');
   const make=()=>items.map(t=>`<span><b>▸</b> ${t}</span>`).join('');
   m.innerHTML=make()+make();
