@@ -1,0 +1,210 @@
+#!/bin/sh
+# shoeshine - a flashy *animated* banner for foot, drawn with the vector
+# graphics protocol. Always uses the embedded bitmap font (`textmode pixel`)
+# for a chunky retro look, then layers on the flash:
+#
+#   * per-character RAINBOW text that flows over time
+#   * a drop shadow under the text and a drop-shadowed panel
+#   * a sweeping diagonal GLEAM that sails across the letters
+#   * a pulsing rainbow border + a mini rainbow rule under the title
+#   * twinkling sparkles
+#
+#   Try it:   ./bld/debug/foot sh shoescripts/shoeshine "RAINBOW"
+#   Pipe it:  echo "HELLO\nfrom foot" | ./bld/debug/foot sh shoescripts/shoeshine
+#
+# Title  = $1 (or first stdin line); Subtitle = $2 (or second stdin line).
+# Env: SHOESHINE_SCALE (bitmap magnification, default 3),
+#      SHOESHINE_FRAMES (default 60), SHOESHINE_PLAIN / SHOESHINE_FORCE.
+
+# ---- input (figlet-style: all args are the title) ------------------------
+TITLE="$*"; SUBTITLE=""
+if [ -z "$TITLE" ] && [ ! -t 0 ]; then
+  IFS= read -r TITLE          # first stdin line = title
+  IFS= read -r SUBTITLE       # optional second line = subtitle
+fi
+[ -z "$TITLE" ] && TITLE="SHOESHINE"
+
+# ---- graphics-or-plain detection (mirrors the other shoe tools) ----------
+graphics_ok() {
+  [ -n "$SHOESHINE_PLAIN" ] && return 1
+  [ -n "$SHOESHINE_FORCE" ] && return 0
+  [ -t 1 ] || return 1
+  case "$TERM" in foot|foot-*|*foot*) return 0 ;; *) return 1 ;; esac
+}
+if ! graphics_ok; then
+  # plain unicode box fallback so piping to a file stays readable
+  line=$TITLE; [ -n "$SUBTITLE" ] && line="$TITLE  -  $SUBTITLE"
+  w=${#line}; bar=""; i=0; while [ "$i" -lt $((w+2)) ]; do bar="$bar-"; i=$((i+1)); done
+  printf '+%s+\n| %s |\n+%s+\n' "$bar" "$line" "$bar"
+  exit 0
+fi
+
+# ---- geometry ------------------------------------------------------------
+scale=${SHOESHINE_SCALE:-3}
+nframes=${SHOESHINE_FRAMES:-60}
+charw=$((8 * scale));  charh=$((16 * scale))
+sh=$scale                                   # shadow offset (px)
+n=${#TITLE}; textw=$((n * charw))
+
+subscale=0; subtextw=0; extra=0; subcharh=0
+if [ -n "$SUBTITLE" ]; then
+  subscale=$((scale - 1)); [ "$subscale" -lt 1 ] && subscale=1
+  subcharh=$((16 * subscale))
+  subtextw=$(( ${#SUBTITLE} * 8 * subscale ))
+  extra=$((subcharh + 18))
+fi
+
+innerw=$textw; [ "$subtextw" -gt "$innerw" ] && innerw=$subtextw
+PL=34; PT=28                                # panel padding
+PW=$((innerw + 2 * PL)); PH=$((charh + 2 * PT + extra))
+PX=16; PY=14                                # panel origin (room for shadow/glow)
+total_w=$((PX + PW + 22)); total_h=$((PY + PH + 22))
+
+# Cell size (ESC[16t -> ESC[6;h;w t) so the canvas is font-size independent.
+cw_px=8; ch_px=16
+old=`stty -g </dev/tty 2>/dev/null` && {
+  stty raw -echo min 0 time 2 </dev/tty 2>/dev/null
+  printf '\033[16t' >/dev/tty
+  resp=`dd bs=1 count=20 </dev/tty 2>/dev/null`
+  stty "$old" </dev/tty 2>/dev/null
+  h=`printf '%s' "$resp" | sed -n 's/.*\[6;\([0-9]*\);\([0-9]*\)t.*/\1/p'`
+  w=`printf '%s' "$resp" | sed -n 's/.*\[6;\([0-9]*\);\([0-9]*\)t.*/\2/p'`
+  [ -n "$h" ] && ch_px=$h
+  [ -n "$w" ] && cw_px=$w
+}
+cols=$(( (total_w + cw_px - 1) / cw_px ))
+rows=$(( (total_h + ch_px - 1) / ch_px ))
+
+# ---- one animation frame (awk emits the whole DCS body) ------------------
+frame() {
+  awk -v f="$1" -v T="$TITLE" -v SUB="$SUBTITLE" \
+      -v scale="$scale" -v subscale="$subscale" \
+      -v charw="$charw" -v charh="$charh" -v sh="$sh" \
+      -v textw="$textw" -v subtextw="$subtextw" \
+      -v PX="$PX" -v PY="$PY" -v PW="$PW" -v PH="$PH" \
+      -v PL="$PL" -v PT="$PT" -v cols="$cols" -v rows="$rows" 'BEGIN{
+    # --- hsv -> rgb (s,v in 0..1) into globals R,G,B ---
+    # (defined below as function hsv)
+    base = f * 9                      # rainbow flow speed
+    r14 = 14                          # corner radius
+
+    TX  = PX + int((PW - textw) / 2)  # centered title
+    BY  = PY + PT + charh - scale     # title baseline
+    STX = PX + int((PW - subtextw) / 2)
+    SBY = BY + 14 + (16 * subscale)
+
+    printf "size %d %d\n", cols, rows
+    printf "bg none\n"
+
+    # --- drop-shadowed rounded panel + sheen ---
+    printf "pen #00000080\nrrectf %d %d %d %d %d\n", PX+6, PY+9, PW, PH, r14
+    printf "pen #15152b\nrrectf %d %d %d %d %d\n",   PX,   PY,   PW, PH, r14
+    printf "pen #ffffff14\nrectf %d %d %d 6\n",      PX+10, PY+6, PW-20
+
+    # --- pulsing rainbow border ---
+    bb = 0.78 + 0.22 * sin(f*0.22)
+    hsv(base+90, 0.7, bb)
+    printf "thickness 2\npen #%02x%02x%02x\nrrect %d %d %d %d %d\n", R,G,B, PX,PY,PW,PH, r14
+    printf "thickness 1\n"
+
+    # --- title drop shadow (one cheap text command) ---
+    printf "textmode pixel %d\n", scale
+    printf "pen #00000099\ntext %d %d %s\n", TX+sh, BY+sh, T
+
+    # --- rainbow title, one text per character ---
+    for (i = 1; i <= length(T); i++) {
+      c = substr(T, i, 1)
+      if (c == " " || c == "#") continue   # '#' would start a comment line
+      hsv(base + (i-1)*26, 0.95, 1.0)
+      printf "pen #%02x%02x%02x\ntext %d %d %s\n", R,G,B, TX+(i-1)*charw, BY, c
+    }
+
+    # --- mini rainbow rule under the title ---
+    ry = BY + 8
+    for (x = 0; x < textw; x += 6) {
+      hsv(base + x*0.7, 0.9, 1.0)
+      printf "pen #%02x%02x%02x\nrectf %d %d 6 3\n", R,G,B, TX+x, ry
+    }
+
+    # --- sweeping diagonal gleam over the letters ---
+    cyc = textw + 90
+    sx  = TX - 45 + (f*16) % cyc
+    printf "clip %d %d %d %d\n", TX, PY+PT-2, textw, charh+4
+    for (k = -5; k <= 5; k++) {
+      a = 50 - (k<0?-k:k)*9; if (a < 0) a = 0
+      bx = sx + k*5
+      # slanted band: top shifted right of bottom
+      printf "pen #ffffff%02x\npolyf %d %d %d %d %d %d %d %d\n", a, \
+        bx+18, PY+PT-2, bx+24, PY+PT-2, bx-6, PY+PT+charh+2, bx-12, PY+PT+charh+2
+    }
+    printf "noclip\n"
+
+    # --- twinkling sparkles ---
+    ns = 6
+    spx[0]=PX+0.10*PW; spy[0]=PY+0.22*PH
+    spx[1]=PX+0.92*PW; spy[1]=PY+0.30*PH
+    spx[2]=PX+0.30*PW; spy[2]=PY+0.80*PH
+    spx[3]=PX+0.72*PW; spy[3]=PY+0.78*PH
+    spx[4]=PX+0.50*PW; spy[4]=PY+0.12*PH
+    spx[5]=PX+0.06*PW; spy[5]=PY+0.70*PH
+    for (i = 0; i < ns; i++) {
+      bri = (sin(f*0.34 + i*1.7) + 1) / 2
+      sz  = 2 + bri*5
+      a   = int(90 + bri*165)
+      x = int(spx[i]); y = int(spy[i])
+      printf "pen #ffffff%02x\n", a
+      printf "line %d %d %d %d\n", x-sz, y, x+sz, y
+      printf "line %d %d %d %d\n", x, y-sz, x, y+sz
+      printf "circf %d %d 1\n", x, y
+    }
+
+    # --- subtitle ---
+    if (length(SUB) > 0) {
+      printf "textmode pixel %d\n", subscale
+      printf "pen #00000099\ntext %d %d %s\n", STX+subscale, SBY+subscale, SUB
+      hsv(base+40, 0.30, 0.95)
+      printf "pen #%02x%02x%02x\ntext %d %d %s\n", R,G,B, STX, SBY, SUB
+    }
+  }
+  function hsv(hh, s, v,   i,ff,p,q,t,r,g,b){
+    hh = hh - int(hh/360)*360; if (hh < 0) hh += 360
+    i = int(hh/60) % 6
+    ff = hh/60 - int(hh/60)
+    p = v*(1-s); q = v*(1-ff*s); t = v*(1-(1-ff)*s)
+    if      (i==0){r=v;g=t;b=p}
+    else if (i==1){r=q;g=v;b=p}
+    else if (i==2){r=p;g=v;b=t}
+    else if (i==3){r=p;g=q;b=v}
+    else if (i==4){r=t;g=p;b=v}
+    else          {r=v;g=p;b=q}
+    R=int(r*255); G=int(g*255); B=int(b*255)
+  }'
+}
+
+emit() { printf '\033P>g\n'; frame "$1"; printf '\033\\'; }
+
+# ---- selftest: one static frame at the cursor, then exit -----------------
+if [ -n "$SHOESHINE_SELFTEST" ]; then
+  emit $((nframes / 3))
+  printf '\n'
+  exit 0
+fi
+
+# ---- animate in place ----------------------------------------------------
+# Reserve the rows, anchor the cursor at the top of them, and redraw each
+# frame at the same spot (the new image erases the old cells).
+i=0; while [ "$i" -lt "$rows" ]; do printf '\n'; i=$((i+1)); done
+printf '\033[%dA' "$rows"   # back up to the top of the reserved block
+printf '\0337'              # save cursor (DECSC)
+
+f=0
+while [ "$f" -lt "$nframes" ]; do
+  printf '\0338'            # restore to the anchor
+  emit "$f"
+  sleep 0.04
+  f=$((f + 1))
+done
+
+printf '\0338'             # leave the cursor just below the banner
+printf '\033[%dB' "$rows"
+printf '\n'
