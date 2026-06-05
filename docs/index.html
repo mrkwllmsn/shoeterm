@@ -445,6 +445,22 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
     },
     {
       "@type": "SoftwareApplication",
+      "@id": "https://github.com/pimoroni/pimoroni-pico#picographics",
+      "name": "PicoGraphics",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "MicroPython / C++ (Raspberry Pi Pico)",
+      "url": "https://github.com/pimoroni/pimoroni-pico/blob/main/micropython/modules/picographics/README.md",
+      "codeRepository": "https://github.com/pimoroni/pimoroni-pico",
+      "description": "Pimoroni's PicoGraphics drawing library for the Raspberry Pi Pico. Its pen/shape drawing API was the design inspiration for Shoe's vector-graphics command set.",
+      "author": {
+        "@type": "Organization",
+        "name": "Pimoroni",
+        "url": "https://pimoroni.com"
+      },
+      "isAccessibleForFree": true
+    },
+    {
+      "@type": "SoftwareApplication",
       "@id": "https://mrkwllmsn.github.io/shoeterm/#software",
       "name": "Shoe",
       "alternateName": "Shoe vector-graphics terminal",
@@ -456,7 +472,10 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
       "codeRepository": "https://github.com/mrkwllmsn/shoeterm",
       "programmingLanguage": ["C", "Shell", "Python"],
       "license": "https://github.com/mrkwllmsn/shoeterm/blob/master/LICENSE",
-      "isBasedOn": { "@id": "https://codeberg.org/dnkl/foot#software" },
+      "isBasedOn": [
+        { "@id": "https://codeberg.org/dnkl/foot#software" },
+        { "@id": "https://github.com/pimoroni/pimoroni-pico#picographics" }
+      ],
       "image": "https://mrkwllmsn.github.io/shoeterm/assets/vector-graphics-chart.png",
       "screenshot": [
         {
