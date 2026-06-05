@@ -554,9 +554,13 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
           "uploadDate": "2026-06-05"
         }
       ],
-      "description": "Shoe turns your terminal into a 2D vector canvas. Draw lines, rectangles, rounded rectangles, circles, arcs, triangles, polygons, cubic Béziers, anti-aliased pixels and real font text — all from one terminal escape sequence (ESC P > g … ESC \\), no GPU, no GUI toolkit and no libraries. It's the vector-graphics layer added on top of foot, a fast, lightweight, Wayland-native terminal emulator that renders CPU-side via pixman. Pipe numbers in and get a chart; pipe text in and get a banner; build live dashboards, gauges, file managers — even games like DOOM and a fake Windows XP desktop — straight in the terminal.",
+      "description": "Shoe turns your terminal into a 2D vector
+      canvas. Draw lines, rectangles, rounded rectangles, circles,
+      arcs, triangles, polygons, cubic Béziers, anti-aliased pixels
+      and real font text — all from one terminal escape sequence
+      (\033P>g … \033\\), no GPU, no GUI toolkit and no libraries. It's the vector-graphics layer added on top of foot, a fast, lightweight, Wayland-native terminal emulator that renders CPU-side via pixman. Pipe numbers in and get a chart; pipe text in and get a banner; build live dashboards, gauges, file managers — even games like DOOM and a fake Windows XP desktop — straight in the terminal.",
       "featureList": [
-        "Single-escape-sequence drawing API: ESC P > g <commands> ESC \\",
+        "Single-escape-sequence drawing API: \033P>g <commands>  \033\\",
         "Primitives: line, rect, rrect, circ, arc, tri, poly, bezier, pixel, text, clip",
         "Filled and outlined shapes with adjustable stroke thickness",
         "Real font rendering via fcft with tabs and color",
@@ -619,7 +623,7 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
           "name": "How do you draw graphics in the terminal with Shoe?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Send a DCS escape sequence of the form ESC P > g <commands> ESC \\. Commands are separated by newlines or commas — for example: size 40 6, pen #ff5050, rrectf 10 10 130 50 12, text 12 90 hello. The whole drawing can fit in one printf."
+            "text": "Send a DCS escape sequence of the form \033P>g <commands> \033\\. Commands are separated by newlines or commas — for example: size 40 6, pen #ff5050, rrectf 10 10 130 50 12, text 12 90 hello. The whole drawing can fit in one printf."
           }
         },
         {
@@ -643,7 +647,16 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
           "name": "Show me a Shoe printf one-liner example.",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "A whole drawing fits in one printf — commands are comma-separated. A card: printf '\\033P>g size 20 6, bg #101028, pen #ff5050, rrectf 10 10 130 50 12, pen #50d0ff, circ 220 35 28, pen #ffffff, text 12 90 hello\\033\\\\'  —  Simple shapes: printf '\\033P>g size 10 4, pen #50d0ff, thickness 3, line 10 10 180 60, circ 120 30 20, rectf 200 10 60 40\\033\\\\'  —  A filled triangle: printf '\\033P>g size 8 4, pen #4fd99a, trif 10 70 70 10 130 70\\033\\\\'. Note: a text command runs to the end of its line, so put text last — right before the ESC \\ terminator."
+            "text": "A whole drawing fits in one printf — commands are
+            comma-separated. A card: printf '\\033P>g size 20 6, bg
+            #101028, pen #ff5050, rrectf 10 10 130 50 12, pen #50d0ff,
+            circ 220 35 28, pen #ffffff, text 12 90 hello\\033\\\\'  —
+            Simple shapes: printf '\\033P>g size 10 4, pen #50d0ff,
+            thickness 3, line 10 10 180 60, circ 120 30 20, rectf 200
+            10 60 40\\033\\\\'  —  A filled triangle: printf '\\033P>g
+            size 8 4, pen #4fd99a, trif 10 70 70 10 130 70\\033\\\\'.
+            Note: a text command runs to the end of its line, so put
+            text last — right before the \033\\ terminator."
           }
         },
         {
@@ -675,7 +688,10 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
           "name": "Can I draw in the terminal?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Yes — drawing in the terminal is exactly what Shoe is for. Send ESC P > g followed by drawing commands (line, rect, circ, arc, tri, poly, bezier, text) and end with ESC \\. The commands run on a pixel canvas you size in cells, so you can sketch anything from a single line to a full interactive UI right where the cursor sits."
+            "text": "Yes — drawing in the terminal is exactly what
+            Shoe is for. Send \033P> g followed by drawing commands
+            (line, rect, circ, arc, tri, poly, bezier, text) and end
+            with \033\\. The commands run on a pixel canvas you size in cells, so you can sketch anything from a single line to a full interactive UI right where the cursor sits."
           }
         },
         {
@@ -691,7 +707,11 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
           "name": "Is there a way to do graphics or plotting from a shell script or command line?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Yes. Because Shoe is driven entirely by an escape sequence, any command-line program can draw. Pipe CSV or JSON numbers into shoelace to get a bar, line or pie chart; pipe text into shoestring or shoebling for gradient and ornate banners; or emit the ESC P > g sequence yourself from bash, awk, Python or C to plot and draw whatever you need."
+            "text": "Yes. Because Shoe is driven entirely by an escape
+            sequence, any command-line program can draw. Pipe CSV or
+            JSON numbers into shoelace to get a bar, line or pie
+            chart; pipe text into shoestring or shoebling for gradient
+            and ornate banners; or emit the \033P>g sequence yourself from bash, awk, Python or C to plot and draw whatever you need."
           }
         }
       ]
@@ -805,8 +825,10 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
       <div class="sec-head" style="margin-bottom:24px">
         <span class="eyebrow">One escape sequence</span>
         <h2 class="section-title">From a printf to pixels.</h2>
-        <p class="lead">A whole drawing is just a DCS escape — <code style="font-family:'JetBrains Mono';color:var(--cyan)">ESC P &gt; g</code>,
-          a handful of commands, then <code style="font-family:'JetBrains Mono';color:var(--cyan)">ESC \</code>. Size the canvas
+        <p class="lead">A whole drawing is just a DCS escape — <code style="font-family:'JetBrains Mono';color:var(--cyan)">
+            \033P&gt;g</code>,
+          a handful of commands, then <code style="font-family:'JetBrains Mono';color:var(--cyan)">
+              \033\\</code>. Size the canvas
           in cells, pick a pen, and draw. Here&rsquo;s a card — a rounded rectangle, a circle and the word
           <b style="color:var(--ink);font-weight:500">hello</b> — sent verbatim and rendered inline.</p>
       </div>
@@ -1058,8 +1080,9 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
       <div class="sec-head" style="margin-bottom:32px">
         <span class="eyebrow">How it works</span>
         <h2 class="section-title">One escape sequence.<br/>That’s the whole API.</h2>
-        <p class="lead">Open with <code style="font-family:'JetBrains Mono';color:var(--cyan)">ESC P &gt; g</code>, write
-          whitespace-separated drawing commands in pixels, close with <code style="font-family:'JetBrains Mono';color:var(--cyan)">ESC \</code>.
+        <p class="lead">Open with <code style="font-family:'JetBrains Mono';color:var(--cyan)"> \033P&gt;g</code>, write
+          comma-separated drawing commands in pixels, close with
+          <code style="font-family:'JetBrains Mono';color:var(--cyan)"> \033\\</code>.
           The canvas is sized in cells, so it lands exactly where your cursor is.</p>
       </div>
       <div class="proto-steps">
@@ -1089,7 +1112,7 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
       <div class="term">
         <div class="term-bar"><span class="t">Shoe — primitives</span><span class="ctl"><i></i><b></b><s></s></span></div>
         <div class="codecard"><div class="term-body" style="font-size:.82rem">
-<span class="ln"><span class="esc">ESC P &gt; g</span></span>
+<span class="ln"><span class="esc">\033P&gt;g</span></span>
 <span class="ln"><span class="kw">size</span> <span class="num">30 6</span></span>
 <span class="ln"><span class="kw">bg</span> #15162b</span>
 <span class="ln"><span class="cm"># a stroked path</span></span>
@@ -1100,11 +1123,11 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
 <span class="ln"><span class="kw">pen</span> #ff5050cc <span class="kw">circf</span> <span class="num">70 40 26</span></span>
 <span class="ln"><span class="kw">pen</span> #50d0ffcc <span class="kw">circf</span> <span class="num">100 40 26</span></span>
 <span class="ln"><span class="kw">pen</span> #ffffff   <span class="kw">text</span> <span class="num">12 96</span> shipped ✓</span>
-<span class="ln"><span class="esc">ESC \</span></span>
+<span class="ln"><span class="esc">\033\\</span></span>
       </div></div>
       </div>
       <p style="margin-top:18px;font-size:.84rem;color:var(--ink-faint);font-family:'JetBrains Mono'">
-        Newline- or whitespace-separated · <span style="color:var(--ink-dim)"># line comments</span> · origin top-left, y down
+        Newline- or comma-separated · <span style="color:var(--ink-dim)"># line comments</span> · origin top-left, y down
       </p>
     </div>
   </div>
@@ -1239,7 +1262,11 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         <a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code ↗</a>
       </div>
     </div>
-    <p class="foot-note">// Shoe — a vector-graphics terminal built on <a href="https://codeberg.org/dnkl/foot" target="_blank" rel="noopener" style="color:var(--ink-dim)">foot</a>, a fast, lightweight, Wayland-native terminal emulator. Drawn CPU-side via pixman. ESC P &gt; g … ESC \<br/>Thanks &amp; praise to Pimoroni&rsquo;s <a href="https://github.com/pimoroni/pimoroni-pico/blob/main/micropython/modules/picographics/README.md" target="_blank" rel="noopener" style="color:var(--ink-dim)">PicoGraphics</a> — the inspiration for this whole thing.<br/>Much of the vector-graphics layer, the userland tools and this site were built in collaboration with <a href="https://claude.com/claude-code" target="_blank" rel="noopener" style="color:var(--ink-dim)">Claude Code</a>.</p>
+    <p class="foot-note">// Shoe — a vector-graphics terminal built on
+    <a href="https://codeberg.org/dnkl/foot" target="_blank"
+        rel="noopener" style="color:var(--ink-dim)">foot</a>, a fast,
+    lightweight, Wayland-native terminal emulator. Drawn CPU-side via
+    pixman. \033P&gt;g … \033\\<br/>Thanks &amp; praise to Pimoroni&rsquo;s <a href="https://github.com/pimoroni/pimoroni-pico/blob/main/micropython/modules/picographics/README.md" target="_blank" rel="noopener" style="color:var(--ink-dim)">PicoGraphics</a> — the inspiration for this whole thing.<br/>Much of the vector-graphics layer, the userland tools and this site were built in collaboration with <a href="https://claude.com/claude-code" target="_blank" rel="noopener" style="color:var(--ink-dim)">Claude Code</a>.</p>
   </div>
 </footer>
 
