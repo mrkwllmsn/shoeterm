@@ -116,6 +116,8 @@ def draw_notepad(cv, d, win):
         s = st["lines"][idx]
         if len(s) > maxchars:
             s = s[:maxchars]
+        if cv.textmode and cv.textmode.startswith("pixel"):
+            s = "".join(c if 0x20 <= ord(c) <= 0x7e else " " for c in s)
         baseline = cy + r * LH
         if s:
             cv.text(cx, baseline, s)

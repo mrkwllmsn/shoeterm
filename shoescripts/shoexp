@@ -40,6 +40,8 @@
 # Env:  SHOEXP_FORCE=1     draw even if $TERM isn't foot-like
 #       SHOEXP_PLAIN=1     never draw (print a notice and exit)
 #       SHOEXP_SELFTEST=1  render one frame headless and exit (smoke check)
+#       SHOEXP_BITFONT=1   use the embedded 8x16 bitmap font (predictable layout)
+#                          set >1 to scale, e.g. SHOEXP_BITFONT=2
 #
 # Stdlib only; no dependencies.
 
@@ -74,6 +76,17 @@ def graphics_ok():
         return False
     term = os.environ.get("TERM", "")
     return "foot" in term or "ghostty" in term
+
+
+def text_mode():
+    v = os.environ.get("SHOEXP_BITFONT")
+    if not v or v == "0":
+        return None
+    try:
+        scale = int(v)
+    except ValueError:
+        scale = 1
+    return "pixel %d" % scale if scale > 1 else "pixel"
 
 
 # --------------------------------------------------------------------------- #
@@ -352,7 +365,9 @@ class Desktop:
         return (bx, self.H - self.taskbar_h + 4, 158, self.taskbar_h - 8)
 
     def start_menu_rect(self):
-        w = 280
+        labels = [lbl for _, lbl, sep in START_ITEMS if not sep]
+        max_label_w = max((len(l) for l in labels), default=10) * self.charw
+        w = max(200, max_label_w + 60)   # 44px icon offset + 16px right padding
         head_h = 54
         h = head_h + 6
         for _kind, _label, sep in START_ITEMS:
@@ -1170,6 +1185,10 @@ def selftest():
     cw, ch = 8, 16
     cols, rows = 160, 48
     d = Desktop(cols * cw, rows * ch, cw, ch)
+    tm = text_mode()
+    if tm:
+        scale = int(tm.split()[1]) if " " in tm else 1
+        d.charw = 8 * scale
     d.open_app("calc")
     d.open_app("mycomputer")
     d.open_app("explorer", os.path.expanduser("~"))
@@ -1178,7 +1197,7 @@ def selftest():
         if kind in WIN_SIZE:
             d.open_app(kind)
     d.start_open = True
-    cv = Canvas()
+    cv = Canvas(text_mode())
     draw_wallpaper(cv, d)
     draw_desktop_icons(cv, d)
     for win in d.wins:
@@ -1222,6 +1241,10 @@ def main():
         cw, ch = t.cw, t.ch
         cols, rows = term_cells()
         d = Desktop(cols * cw, rows * ch, cw, ch)
+        tm = text_mode()
+        if tm:
+            scale = int(tm.split()[1]) if " " in tm else 1
+            d.charw = 8 * scale
         buf = b""
         dirty = True
         running = [True]
@@ -1236,7 +1259,7 @@ def main():
             d.W, d.H = cols * cw, rows * ch
 
         def render():
-            cv = Canvas()
+            cv = Canvas(text_mode())
             if d.bsod:
                 draw_bsod(cv, d)
                 t.w(cv.dcs(cols, rows, "#0000aa"))
