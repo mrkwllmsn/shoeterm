@@ -28,13 +28,19 @@ from shoexp_ui import ESC, mix, lighten, darken, human, sanitize, Canvas  # noqa
 # --------------------------------------------------------------------------- #
 C = {
     # ----- Aurora wallpaper ------------------------------------------------ #
-    "wp0":      "#0b1026",   # sky, top (deep indigo)
-    "wp1":      "#2a1b4a",   # sky, mid (violet)
-    "wp2":      "#112233",   # sky, near bottom (a cold hint)
-    "aur0":     "#4fe0d0aa",  # aurora ribbon, cyan (translucent)
-    "aur1":     "#c060ffaa",  # aurora ribbon, magenta (translucent)
-    "aur2":     "#7fffd4aa",  # aurora ribbon, mint (translucent)
-    "star":     "#ffffffcc",
+    "wp0":      "#070a1e",   # sky, top (near-black indigo)
+    "wp1":      "#181140",   # sky, upper-mid (deep violet)
+    "wp2":      "#241a52",   # sky, mid (violet, where the aurora glows)
+    "wp3":      "#0e1430",   # sky, lower (cool blue)
+    "wp4":      "#080a1c",   # sky, bottom (settles dark for dock contrast)
+    "horizon":  "#1d3a4f",   # faint teal light-bleed near the aurora band
+    # aurora hues (solid; alpha is added per layer when drawn)
+    "aurgrn":   "#3dffae",   # green base of the curtain
+    "aurtea":   "#46e6ff",   # teal mid
+    "aurvio":   "#b884ff",   # violet tips
+    "aurstr":   "#8affd2",   # bright vertical striations
+    "star":     "#ffffff",
+    "starwarm": "#ffe9c4",   # a few warm stars for variety
 
     # ----- window chrome (brushed aluminium) ------------------------------- #
     "win":      "#ececec",   # window body grey
