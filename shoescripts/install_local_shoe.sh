@@ -10,7 +10,7 @@ for tool in shoelace shoestring shoetable shoetree shoebling shoom shuggy shoexp
   cp "$dir/$tool" "/usr/local/bin/$tool"
 done
 # shoexp imports these helper modules; they must sit next to it on PATH.
-for mod in shoexp_ui shoexp_minesweeper shoexp_notepad shoexp_paint shoexp_ie shoexp_imgview; do
+for mod in shoexp_ui shoexp_minesweeper shoexp_notepad shoexp_paint shoexp_ie shoexp_imgview shoexp_music; do
   cp "$dir/$mod.py" "/usr/local/bin/$mod.py"
 done
 # shoemac imports these helper modules; they must sit next to it on PATH.

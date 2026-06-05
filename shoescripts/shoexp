@@ -99,6 +99,14 @@ def is_image(name):
     return os.path.splitext(name)[1].lower() in IMAGE_EXTS
 
 
+AUDIO_EXTS = (".mp3", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus",
+              ".wav", ".wma", ".mpc", ".ape", ".aiff", ".aif")
+
+
+def _is_audio(name):
+    return os.path.splitext(name)[1].lower() in AUDIO_EXTS
+
+
 class Pane:
     def __init__(self, path):
         self.cwd = os.path.abspath(path)
@@ -202,6 +210,8 @@ APP_ICON16 = {}   # kind -> icon16(cv, x, y)
 APP_ICON48 = {}   # kind -> icon48(cv, cx, top)
 APP_INIT = {}     # kind -> init(win)  (set win.state)
 APP_OVERLAY = {}  # kind -> overlay(win, d) -> (col,row,bytes)|None  (sixel on top)
+APP_TICK = {}     # kind -> tick(win, d) -> bool  (per-frame poll; redraw if True)
+APP_CLOSE = {}    # kind -> close(win)  (teardown hook, e.g. kill a child process)
 
 
 def register_app(spec):
@@ -221,6 +231,10 @@ def register_app(spec):
         APP_INIT[k] = spec["init"]
     if spec.get("overlay"):
         APP_OVERLAY[k] = spec["overlay"]
+    if spec.get("tick"):
+        APP_TICK[k] = spec["tick"]
+    if spec.get("close"):
+        APP_CLOSE[k] = spec["close"]
     APP_ICON16[k] = spec["icon16"]
     if spec.get("icon48"):
         APP_ICON48[k] = spec["icon48"]
@@ -240,7 +254,8 @@ def register_app(spec):
 def _load_apps():
     import importlib
     for name in ("shoexp_minesweeper", "shoexp_notepad",
-                 "shoexp_paint", "shoexp_ie", "shoexp_imgview"):
+                 "shoexp_paint", "shoexp_ie", "shoexp_imgview",
+                 "shoexp_music"):
         try:
             register_app(importlib.import_module(name).make_app())
         except Exception as e:                       # noqa: BLE001
@@ -382,6 +397,11 @@ class Desktop:
 
     def close(self, win):
         if win in self.wins:
+            if win.kind in APP_CLOSE:
+                try:
+                    APP_CLOSE[win.kind](win)
+                except Exception:                        # noqa: BLE001
+                    pass
             self.wins.remove(win)
 
 
@@ -1083,7 +1103,7 @@ def selftest():
     d.open_app("mycomputer")
     d.open_app("explorer", os.path.expanduser("~"))
     d.open_app("recycle")
-    for kind in ("mines", "notepad", "paint", "ie"):
+    for kind in ("mines", "notepad", "paint", "ie", "music"):
         if kind in WIN_SIZE:
             d.open_app(kind)
     d.start_open = True
@@ -1231,6 +1251,8 @@ def main():
                                     win.pane.enter()
                             elif "imgview" in APP_DRAW and is_image(e.name):
                                 d.open_app("imgview", e.path)
+                            elif "music" in APP_DRAW and _is_audio(e.name):
+                                d.open_app("music", e.path)
                 return True
             return True
 
@@ -1365,6 +1387,16 @@ def main():
                 dirty = False
 
             r, _, _ = select.select([t.fd], [], [], 1.0)
+            # per-frame app ticks (animations / background polling, e.g. the
+            # Music player's progress bar + auto-advance) run off the 1 s
+            # select timeout, same cadence as the tray clock.
+            for win in d.wins:
+                if win.kind in APP_TICK:
+                    try:
+                        if APP_TICK[win.kind](win, d):
+                            dirty = True
+                    except Exception:                    # noqa: BLE001
+                        pass
             if not r:
                 continue
             try:
@@ -1409,6 +1441,13 @@ def main():
                     if key in ("q", "Q"):
                         running[0] = False
                         break
+        # teardown: let apps with a close hook (Music) kill their children.
+        for win in list(d.wins):
+            if win.kind in APP_CLOSE:
+                try:
+                    APP_CLOSE[win.kind](win)
+                except Exception:                        # noqa: BLE001
+                    pass
     return 0
 
 
