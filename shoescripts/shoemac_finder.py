@@ -322,12 +322,27 @@ def fin_click(win, px, py, d, btn):
         if idx < len(pane.entries):
             pane.sel = idx
             e = pane.entries[idx]
-            if _double(win, idx) and e.is_dir:
-                if e.name == "..":
-                    pane.up()
+            if _double(win, idx):
+                if e.is_dir:
+                    if e.name == "..":
+                        pane.up()
+                    else:
+                        pane.enter()
                 else:
-                    pane.enter()
+                    _open_file(e, d)
     return True
+
+
+def _open_file(e, d):
+    # Double-clicking a file: open images in the Preview viewer, ignore the rest
+    # (v1 has no other file-type handlers).  is_image() lives in the viewer
+    # module so the extension list stays in one place.
+    try:
+        from shoemac_imgview import is_image
+    except ImportError:
+        return
+    if is_image(e.path):
+        d.open_app("imgview", e.path)
 
 
 def fin_key(win, key, d):
@@ -352,6 +367,8 @@ def fin_key(win, key, d):
                 pane.up()
             else:
                 pane.enter()
+        elif e:
+            _open_file(e, d)
         return True
     if key in ("back", "left"):
         pane.up(); return True

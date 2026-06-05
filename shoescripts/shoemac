@@ -108,6 +108,7 @@ APP_WHEEL = {}    # kind -> wheel(win, px, py, up, d) -> bool
 APP_ICON16 = {}   # kind -> icon16(cv, x, y)            (optional, unused by chrome)
 APP_ICON48 = {}   # kind -> icon48(cv, cx, top)         (Dock / desktop icon)
 APP_INIT = {}     # kind -> init(win)                   (set win.state / win.pane)
+APP_OVERLAY = {}  # kind -> overlay(win, d) -> (col,row,bytes)|None  (sixel on top)
 
 
 def register_app(spec):
@@ -125,6 +126,8 @@ def register_app(spec):
         APP_WHEEL[k] = spec["wheel"]
     if spec.get("init"):
         APP_INIT[k] = spec["init"]
+    if spec.get("overlay"):
+        APP_OVERLAY[k] = spec["overlay"]
     if spec.get("icon16"):
         APP_ICON16[k] = spec["icon16"]
     if spec.get("icon48"):
@@ -142,7 +145,8 @@ def register_app(spec):
 def _load_apps():
     import importlib
     for name in ("shoemac_finder", "shoemac_calc",
-                 "shoemac_about", "shoemac_safari", "shoemac_terminal"):
+                 "shoemac_about", "shoemac_safari", "shoemac_terminal",
+                 "shoemac_imgview"):
         try:
             register_app(importlib.import_module(name).make_app())
         except Exception as e:                       # noqa: BLE001
@@ -1036,7 +1040,7 @@ def selftest():
     cw, ch = 8, 16
     cols, rows = 160, 48
     d = Desktop(cols * cw, rows * ch, cw, ch)
-    for kind in ("finder", "calc", "about", "safari", "terminal"):
+    for kind in ("finder", "calc", "about", "safari", "terminal", "imgview"):
         if kind in WIN_SIZE:
             d.open_app(kind)
     cv = Canvas(text_mode())
@@ -1062,10 +1066,12 @@ def main():
     if os.environ.get("SHOEMAC_SELFTEST"):
         return selftest()
     if any(a in ("-h", "--help") for a in sys.argv[1:]):
-        print("shoemac - a fake Mac OS X Snow Leopard desktop in foot vector "
-              "graphics.\nMouse-driven: click Dock tiles, drag windows, use the "
-              "traffic lights.\nApps: Finder, Calculator, About This Mac, "
-              "Safari.\nq / Ctrl-C to quit. Env: SHOEMAC_FORCE / SHOEMAC_PLAIN.")
+        print("shoemac [image] - a fake Mac OS X Snow Leopard desktop in foot "
+              "vector graphics.\nMouse-driven: click Dock tiles, drag windows, "
+              "use the traffic lights.\nApps: Finder, Calculator, About This "
+              "Mac, Safari, Terminal, Preview (image viewer).\nOpen an image: "
+              "pass a path (or set SHOEMAC_OPEN), or double-click one in "
+              "Finder.\nq / Ctrl-C to quit. Env: SHOEMAC_FORCE / SHOEMAC_PLAIN.")
         return 0
     if not graphics_ok():
         sys.stderr.write("shoemac needs a graphics-capable terminal (foot). "
@@ -1085,6 +1091,13 @@ def main():
         cw, ch = t.cw, t.ch
         cols, rows = term_cells()
         d = Desktop(cols * cw, rows * ch, cw, ch)
+        # `shoemac [image]` (or $SHOEMAC_OPEN) boots straight into the Preview
+        # viewer for that file -- handy for opening an image from the shell or
+        # for scripted/visual checks.
+        boot_img = next((a for a in sys.argv[1:] if not a.startswith("-")), None) \
+            or os.environ.get("SHOEMAC_OPEN")
+        if boot_img and "imgview" in WIN_SIZE:
+            d.open_app("imgview", os.path.abspath(os.path.expanduser(boot_img)))
         buf = b""
         dirty = True
         running = [True]
@@ -1110,6 +1123,19 @@ def main():
             draw_dock(cv, d, d.dock_hover_x)
             draw_menu_dropdown(cv, d)
             t.w(cv.dcs(cols, rows, C["wp1"]))
+            # Image overlay: an app may put a real sixel on top of the vector
+            # frame (the photo viewer).  A sixel always composites above the
+            # vector image regardless of window z-order, so we only blit for the
+            # topmost window, and skip it while a menu dropdown is open (the menu
+            # is in the vector frame and must stay on top).
+            top = d.top_win()
+            if (top is not None and d.open_menu is None and
+                    top.kind in APP_OVERLAY):
+                ov = APP_OVERLAY[top.kind](top, d)
+                if ov is not None:
+                    col, row, data = ov
+                    t.w("%s[%d;%dH" % (ESC, row, col))
+                    t.w(data)
 
         def in_rect(px, py, r):
             x, y, w, h = r[0], r[1], r[2], r[3]
