@@ -13,6 +13,14 @@
 #   My Computer      drive icons + a capacity bar; double-click C: to browse
 #   My Documents      a real file explorer rooted at your home folder
 #   Recycle Bin      (it's empty, obviously)
+#   Minesweeper      a real game (left reveal, right flag, smiley resets)
+#   Notepad      a plain-text editor that captures the keyboard
+#   Paint      drag to draw: pencil/line/rect/ellipse/eraser + palette
+#   Internet Explorer  a (lovingly fake) IE6 with clickable canned pages
+#
+# The extra apps (Minesweeper, Notepad, Paint, Internet Explorer) each live in
+# their own shoexp_<name>.py module and register through make_app(); the shared
+# Canvas/palette helpers live in shoexp_ui.py.
 #
 # The file explorer ports slippers' Entry/Pane scan model, so it walks your
 # ACTUAL filesystem - double-click folders to descend, ".." to go up.
@@ -26,7 +34,8 @@
 #         drag a window by its title bar;  click controls _ and X
 #         click Start for the menu;  click taskbar buttons to focus windows
 #         wheel scrolls the file explorer
-# Keys:   Esc closes the focused window (or the Start menu);  q / Ctrl-C quit
+# Keys:   Esc closes the focused window (or the Start menu);  Ctrl-C quits;
+#         q quits too unless a typing app (Notepad) has focus and eats it
 #
 # Env:  SHOEXP_FORCE=1     draw even if $TERM isn't foot-like
 #       SHOEXP_PLAIN=1     never draw (print a notice and exit)
@@ -46,83 +55,11 @@ import termios
 import time
 import tty
 
-ESC = "\033"
-
-# --------------------------------------------------------------------------- #
-#  palette (Luna blue, give or take)
-# --------------------------------------------------------------------------- #
-C = {
-    "sky0":     "#1f6fe5",   # wallpaper sky, top
-    "sky1":     "#3f8ff0",   # wallpaper sky, mid
-    "sky2":     "#a9d6ff",   # wallpaper sky, near horizon
-    "hill0":    "#9ccb50",   # hill crest highlight
-    "hill1":    "#6ba83a",   # hill body
-    "hill2":    "#3f7d27",   # hill shadow, bottom
-    "cloud":    "#ffffffcc",
-
-    "tb0":      "#3f8df4",   # taskbar gradient, top
-    "tb1":      "#1c50c9",   # taskbar gradient, bottom
-    "tbhi":     "#7fb6ff",   # taskbar top highlight line
-    "tray0":    "#1b53c9",   # tray well, top
-    "tray1":    "#1142a8",   # tray well, bottom
-
-    "start0":   "#5bbf3a",   # start button, top
-    "start1":   "#2f7d28",   # start button, bottom
-    "starttxt": "#ffffff",
-
-    "win":      "#ece9d8",   # XP window beige
-    "winframe": "#0831d9",   # active window frame blue
-    "winframei": "#9bb4d6",  # inactive frame
-    "ttl0":     "#3b8bf0",   # active title bar, top
-    "ttl1":     "#1c50c9",   # active title bar, bottom
-    "ttl0i":    "#9cb6df",   # inactive title bar, top
-    "ttl1i":    "#7f9cc8",   # inactive title bar, bottom
-    "ttltxt":   "#ffffff",
-    "closebtn": "#e0492f",
-    "closehi":  "#ff7a5f",
-    "ctrlbtn":  "#4f93f2",
-    "ctrlhi":   "#8fbcfb",
-
-    "ink":      "#10243f",
-    "dim":      "#5a6b86",
-    "white":    "#ffffff",
-    "sunken":   "#ffffff",
-    "sunkenbd": "#7f9db9",
-    "selrow0":  "#3a93ff",
-    "selrow1":  "#1f6fe0",
-
-    "dir":      "#f6c344",   # folder yellow
-    "diredge":  "#caa01f",
-    "file":     "#dfe3ea",
-    "fileink":  "#2a3a52",
-    "exec":     "#7ed957",
-    "link":     "#b69bff",
-
-    "iconlbl":  "#ffffff",
-    "iconsel":  "#3a6ea5aa",
-    "shadow":   "#00000040",
-}
-
-
-def _rgb(c):
-    c = c.lstrip("#")
-    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
-
-
-def mix(a, b, t):
-    ra, ga, ba = _rgb(a)
-    rb, gb, bb = _rgb(b)
-    return "#%02x%02x%02x" % (int(ra + (rb - ra) * t),
-                              int(ga + (gb - ga) * t),
-                              int(ba + (bb - ba) * t))
-
-
-def lighten(c, t):
-    return mix(c, "#ffffff", t)
-
-
-def darken(c, t):
-    return mix(c, "#000000", t)
+# The Luna palette, colour helpers, the Canvas drawing buffer and the small
+# formatting helpers live in shoexp_ui so the separate app modules
+# (shoexp_minesweeper, shoexp_notepad, ...) can share them without importing
+# this script.
+from shoexp_ui import ESC, C, lighten, darken, Canvas, human
 
 
 # --------------------------------------------------------------------------- #
@@ -137,96 +74,6 @@ def graphics_ok():
         return False
     term = os.environ.get("TERM", "")
     return "foot" in term or "ghostty" in term
-
-
-# --------------------------------------------------------------------------- #
-#  drawing-command buffer  (same discipline as slippers: comma-join geometry,
-#  flush before every text because `text` runs to end of line)
-# --------------------------------------------------------------------------- #
-class Canvas:
-    def __init__(self):
-        self.lines = []
-        self.geo = []
-
-    def _flush(self):
-        if self.geo:
-            self.lines.append(",".join(self.geo))
-            self.geo = []
-
-    def cmd(self, s):
-        self.geo.append(s)
-
-    def pen(self, color):
-        self.geo.append("pen " + color)
-
-    def thickness(self, n):
-        self.geo.append("thickness %d" % n)
-
-    def clip(self, x, y, w, h):
-        self.geo.append("clip %d %d %d %d" % (x, y, w, h))
-
-    def noclip(self):
-        self.geo.append("noclip")
-
-    def rectf(self, x, y, w, h):
-        self.geo.append("rectf %d %d %d %d" % (x, y, w, h))
-
-    def rect(self, x, y, w, h):
-        self.geo.append("rect %d %d %d %d" % (x, y, w, h))
-
-    def rrectf(self, x, y, w, h, r):
-        self.geo.append("rrectf %d %d %d %d %d" % (x, y, w, h, r))
-
-    def rrect(self, x, y, w, h, r):
-        self.geo.append("rrect %d %d %d %d %d" % (x, y, w, h, r))
-
-    def line(self, x0, y0, x1, y1):
-        self.geo.append("line %d %d %d %d" % (x0, y0, x1, y1))
-
-    def trif(self, x0, y0, x1, y1, x2, y2):
-        self.geo.append("trif %d %d %d %d %d %d" % (x0, y0, x1, y1, x2, y2))
-
-    def circf(self, cx, cy, r):
-        self.geo.append("circf %d %d %d" % (cx, cy, r))
-
-    def circ(self, cx, cy, r):
-        self.geo.append("circ %d %d %d" % (cx, cy, r))
-
-    def arc(self, cx, cy, r, a0, a1):
-        self.geo.append("arc %d %d %d %d %d" % (cx, cy, r, a0, a1))
-
-    def polyf(self, pts):
-        self.geo.append("polyf " + " ".join("%d" % v for v in pts))
-
-    def bezier(self, x0, y0, x1, y1, x2, y2, x3, y3):
-        self.geo.append("bezier %d %d %d %d %d %d %d %d" %
-                        (x0, y0, x1, y1, x2, y2, x3, y3))
-
-    def vgrad(self, x, y, w, h, c0, c1, steps=18):
-        if w <= 0 or h <= 0:
-            return
-        steps = max(1, min(steps, h))
-        for i in range(steps):
-            y0 = y + h * i // steps
-            y1 = y + h * (i + 1) // steps
-            if y1 <= y0:
-                continue
-            self.pen(mix(c0, c1, i / max(1, steps - 1)))
-            self.rectf(x, y0, w, y1 - y0)
-
-    def text(self, x, y, s):
-        self._flush()
-        self.lines.append("text %d %d %s" % (x, y, sanitize(s)))
-
-    def dcs(self, cols, rows, bg):
-        self._flush()
-        body = "\n".join(self.lines)
-        return "%s[H%sP>g\nsize %d %d\nbg %s\n%s\n%s\\" % (
-            ESC, ESC, cols, rows, bg, body, ESC)
-
-
-def sanitize(s):
-    return "".join(ch for ch in s if ch >= " " and ch != "," and ch != "\x7f")
 
 
 # --------------------------------------------------------------------------- #
@@ -315,16 +162,6 @@ class Pane:
             self.scan(keep=leaving)
 
 
-def human(n):
-    n = float(n)
-    for unit in ("B", "K", "M", "G", "T"):
-        if n < 1024 or unit == "T":
-            if unit == "B":
-                return "%d B" % int(n)
-            return "%.1f %s" % (n, unit)
-        n /= 1024.0
-
-
 # --------------------------------------------------------------------------- #
 #  windows
 # --------------------------------------------------------------------------- #
@@ -340,6 +177,61 @@ WIN_TITLE = {
     "explorer":   "Explorer",
     "recycle":    "Recycle Bin",
 }
+
+# --------------------------------------------------------------------------- #
+#  app registry  (the built-in apps above are dispatched inline; extra apps
+#  live in their own shoexp_<name>.py modules and register here via make_app()).
+#  An app spec is a dict; see _load_apps() for the recognised keys.
+# --------------------------------------------------------------------------- #
+APP_DRAW = {}     # kind -> draw(cv, d, win)
+APP_CLICK = {}    # kind -> click(win, px, py, d, btn) -> bool
+APP_MOUSE = {}    # kind -> mouse(win, phase, px, py, d, btn)  (drag-aware apps)
+APP_KEY = {}      # kind -> key(win, key, d) -> bool
+APP_WHEEL = {}    # kind -> wheel(win, px, py, up, d) -> bool
+APP_ICON16 = {}   # kind -> icon16(cv, x, y)
+APP_ICON48 = {}   # kind -> icon48(cv, cx, top)
+APP_INIT = {}     # kind -> init(win)  (set win.state)
+
+
+def register_app(spec):
+    k = spec["kind"]
+    WIN_SIZE[k] = tuple(spec["size"])
+    WIN_TITLE[k] = spec["title"]
+    APP_DRAW[k] = spec["draw"]
+    if spec.get("click"):
+        APP_CLICK[k] = spec["click"]
+    if spec.get("mouse"):
+        APP_MOUSE[k] = spec["mouse"]
+    if spec.get("key"):
+        APP_KEY[k] = spec["key"]
+    if spec.get("wheel"):
+        APP_WHEEL[k] = spec["wheel"]
+    if spec.get("init"):
+        APP_INIT[k] = spec["init"]
+    APP_ICON16[k] = spec["icon16"]
+    if spec.get("icon48"):
+        APP_ICON48[k] = spec["icon48"]
+    if spec.get("desktop"):
+        DESK_ICONS.append((k, spec.get("desktop_label", spec["title"])))
+    if spec.get("start"):
+        entry = (k, spec.get("start_label", spec["title"]), False)
+        # slot it above the first separator so "Turn Off Computer" stays last
+        for i, (_, _, sep) in enumerate(START_ITEMS):
+            if sep:
+                START_ITEMS.insert(i, entry)
+                break
+        else:
+            START_ITEMS.append(entry)
+
+
+def _load_apps():
+    import importlib
+    for name in ("shoexp_minesweeper", "shoexp_notepad",
+                 "shoexp_paint", "shoexp_ie"):
+        try:
+            register_app(importlib.import_module(name).make_app())
+        except Exception as e:                       # noqa: BLE001
+            sys.stderr.write("shoexp: skipping %s: %s\n" % (name, e))
 
 
 class Win:
@@ -359,6 +251,8 @@ class Win:
         elif kind == "explorer":
             self.pane = Pane(os.path.expanduser("~"))
             self.title = "Explorer"
+        elif kind in APP_INIT:
+            APP_INIT[kind](self)
 
     # window-local geometry helpers ----------------------------------------
     @property
@@ -428,7 +322,12 @@ class Desktop:
         return (bx, self.H - self.taskbar_h + 4, 158, self.taskbar_h - 8)
 
     def start_menu_rect(self):
-        w, h = 232, 300
+        w = 232
+        head_h = 54
+        h = head_h + 6
+        for _kind, _label, sep in START_ITEMS:
+            h += 12 if sep else 34
+        h += 10                      # bottom padding
         return (0, self.H - self.taskbar_h - h, w, h)
 
     # ----- window management ----------------------------------------------
@@ -548,6 +447,9 @@ def draw_label_centered(cv, d, cx, ty, label):
 
 def draw_big_icon(cv, kind, cx, top):
     # 48px-ish icons centered on cx, starting at y=top
+    if kind in APP_ICON48:
+        APP_ICON48[kind](cv, cx, top)
+        return
     if kind == "mycomputer":
         # CRT monitor
         cv.pen("#c9d2dc"); cv.rrectf(cx - 20, top, 40, 30, 4)
@@ -619,10 +521,15 @@ def draw_window(cv, d, win, focused):
         draw_explorer(cv, d, win)
     elif win.kind == "recycle":
         draw_recycle(cv, d, win)
+    elif win.kind in APP_DRAW:
+        APP_DRAW[win.kind](cv, d, win)
     cv.noclip()
 
 
 def draw_title_icon(cv, kind, x, y):
+    if kind in APP_ICON16:
+        APP_ICON16[kind](cv, x, y)
+        return
     if kind == "calc":
         cv.pen("#e8edf2"); cv.rrectf(x, y, 16, 16, 2)
         cv.pen("#2e6bd6"); cv.rectf(x + 2, y + 2, 12, 4)
@@ -1025,6 +932,11 @@ def draw_start_menu(cv, d):
         cv.pen(C["ink"]); cv.text(x + 36, y + 21, label)
 
 
+# load the external app modules now that the registry + desktop/start lists
+# they extend are all defined.
+_load_apps()
+
+
 # =========================================================================== #
 #  input parsing (ported from slippers)
 # =========================================================================== #
@@ -1032,6 +944,9 @@ MOUSE_RE = re.compile(rb"\[<(\d+);(\d+);(\d+)([Mm])")
 CSI_FINAL = {b"A": "up", b"B": "down", b"C": "right", b"D": "left",
              b"H": "home", b"F": "end"}
 TILDE = {3: "del", 5: "pgup", 6: "pgdn", 1: "home", 4: "end"}
+# named keys an app's key handler may receive (besides single printable chars)
+KEY_NAMES = ("enter", "back", "del", "tab", "up", "down", "left", "right",
+             "home", "end", "pgup", "pgdn")
 
 
 def parse_one(buf, i):
@@ -1041,6 +956,8 @@ def parse_one(buf, i):
             return ("enter", i + 1)
         if b in (0x7f, 0x08):
             return ("back", i + 1)
+        if b == 0x09:
+            return ("tab", i + 1)
         if b == 0x03:
             return ("quit", i + 1)
         return (("char", chr(b)), i + 1)
@@ -1152,6 +1069,9 @@ def selftest():
     d.open_app("mycomputer")
     d.open_app("explorer", os.path.expanduser("~"))
     d.open_app("recycle")
+    for kind in ("mines", "notepad", "paint", "ie"):
+        if kind in WIN_SIZE:
+            d.open_app(kind)
     d.start_open = True
     cv = Canvas()
     draw_wallpaper(cv, d)
@@ -1175,6 +1095,8 @@ def main():
     if any(a in ("-h", "--help") for a in sys.argv[1:]):
         print("shoexp - a fake Windows XP desktop in foot vector graphics.\n"
               "Mouse-driven: double-click icons, drag windows, use Start.\n"
+              "Apps: Calculator, My Computer, Explorer, Recycle Bin,\n"
+              "      Minesweeper, Notepad, Paint, Internet Explorer.\n"
               "q / Ctrl-C to quit. Env: SHOEXP_FORCE / SHOEXP_PLAIN.")
         return 0
     if not graphics_ok():
@@ -1199,6 +1121,7 @@ def main():
         dirty = True
         running = [True]
         drag = {"win": None, "dx": 0, "dy": 0}
+        body_drag = {"win": None}      # drag-aware app capturing the pointer
         last_click = {"t": 0.0, "tag": None}
         last_clock = ""
 
@@ -1249,8 +1172,10 @@ def main():
                     return True
             return False
 
-        def click_window_body(win, px, py):
+        def click_window_body(win, px, py, btn=0):
             # returns True if the click was consumed by the app
+            if win.kind in APP_CLICK:
+                return APP_CLICK[win.kind](win, px, py, d, btn)
             if win.kind == "calc":
                 for label, key, col, row, span in CALC_KEYS:
                     if in_rect(px, py, calc_btn_rect(win, col, row, span)):
@@ -1321,6 +1246,10 @@ def main():
                     drag["dx"] = px - win.x
                     drag["dy"] = py - win.y
                     return
+                if win.kind in APP_MOUSE:
+                    body_drag["win"] = win
+                    APP_MOUSE[win.kind](win, "press", px, py, d, 0)
+                    return
                 click_window_body(win, px, py)
                 return
             # desktop icons
@@ -1338,7 +1267,24 @@ def main():
             d.icon_sel = -1
             d.start_open = False
 
+        def on_right_press(px, py):
+            # right-click is routed to the focused app's body (e.g. flagging in
+            # Minesweeper); everything else ignores it.
+            if d.start_open:
+                return
+            win = d.win_at(px, py)
+            if win is not None and not win.in_title(px, py) and \
+                    win.kind in APP_CLICK:
+                d.focus(win)
+                bx, by, bw, bh = win.body_rect()
+                if bx <= px < bx + bw and by <= py < by + bh:
+                    click_window_body(win, px, py, 2)
+
         def on_motion(px, py):
+            if body_drag["win"] is not None:
+                w = body_drag["win"]
+                APP_MOUSE[w.kind](w, "drag", px, py, d, 0)
+                return
             if drag["win"] is not None:
                 w = drag["win"]
                 w.x = max(-w.w + 60, min(d.W - 40, px - drag["dx"]))
@@ -1346,7 +1292,12 @@ def main():
 
         def on_wheel(px, py, up):
             win = d.win_at(px, py)
-            if win is not None and win.kind == "explorer":
+            if win is None:
+                return
+            if win.kind in APP_WHEEL:
+                APP_WHEEL[win.kind](win, px, py, up, d)
+                return
+            if win.kind == "explorer":
                 win.pane.sel += -3 if up else 3
                 _, _, _, _, _, _, _, _, visible = explorer_geom(win)
                 win.pane.clamp(visible)
@@ -1362,8 +1313,14 @@ def main():
             if press:
                 if (btn & 0b11) == 0:
                     on_left_press(px, py)
+                elif (btn & 0b11) == 2:
+                    on_right_press(px, py)
                 return
             # release
+            if body_drag["win"] is not None:
+                w = body_drag["win"]
+                APP_MOUSE[w.kind](w, "release", px, py, d, 0)
+                body_drag["win"] = None
             drag["win"] = None
 
         while running[0]:
@@ -1394,7 +1351,12 @@ def main():
                 if ev == "quit":
                     running[0] = False
                     break
-                elif ev == "esc":
+                if isinstance(ev, tuple) and ev[0] == "mouse":
+                    _, btn, x, y, press = ev
+                    handle_mouse(btn, x, y, press)
+                    dirty = True
+                    continue
+                if ev == "esc":
                     if d.start_open:
                         d.start_open = False
                     else:
@@ -1402,14 +1364,23 @@ def main():
                         if w is not None:
                             d.close(w)
                     dirty = True
-                elif isinstance(ev, tuple) and ev[0] == "char":
-                    if ev[1] in ("q", "Q"):
+                    continue
+                # keyboard: hand to the focused app if it captures keys
+                # (e.g. Notepad typing), else fall back to the global q/Q quit.
+                key = None
+                if isinstance(ev, tuple) and ev[0] == "char":
+                    key = ev[1]
+                elif ev in KEY_NAMES:
+                    key = ev
+                if key is not None:
+                    w = d.top_win()
+                    if (not d.start_open and w is not None and
+                            w.kind in APP_KEY and APP_KEY[w.kind](w, key, d)):
+                        dirty = True
+                        continue
+                    if key in ("q", "Q"):
                         running[0] = False
                         break
-                elif isinstance(ev, tuple) and ev[0] == "mouse":
-                    _, btn, x, y, press = ev
-                    handle_mouse(btn, x, y, press)
-                    dirty = True
     return 0
 
 

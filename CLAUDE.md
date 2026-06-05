@@ -152,6 +152,36 @@ ones print the commands / input they send so usage is self-documenting.
   `SHOOM_SELFTEST=1` renders one frame headless (no GUI) for a smoke check. v1
   is one hand-built level + contact-damage imps + one weapon (no enemy
   projectiles / doors / texture-mapped walls yet).
+- **`shoexp`** — a (lovingly fake) **Windows XP desktop**, mouse-driven. The
+  "Bliss" wallpaper (sky gradient + bezier/polyf hill + cloud blobs), a
+  Luna-blue taskbar with a green Start button + live tray clock, a Start menu,
+  desktop icons, and a tiny **window manager**: draggable windows with XP title
+  bars (`_`/`X` controls), click-to-focus z-order, taskbar buttons. Apps:
+  a working **Calculator** (clickable grid + arithmetic state machine), **My
+  Computer** (drive rows with *real* `shutil.disk_usage` bars; double-click C:
+  opens the explorer), a **File Explorer** that browses the **real filesystem**
+  (ports slippers' `Entry`/`Pane` scan model, rooted at `$HOME`), and an empty
+  **Recycle Bin**. Four more apps live in their own modules and register through
+  a tiny app registry (`make_app()` → spec dict; see below): **Minesweeper**
+  (real 9×9/10-mine game, left-reveal/right-flag/flood-fill, smiley reset),
+  **Notepad** (a plain-text editor that captures the keyboard — the first app to
+  take key focus), **Paint** (drag-to-draw pencil/line/rect/ellipse/eraser +
+  palette, via a drag-aware `mouse` press/drag/release handler), and a fake
+  **Internet Explorer** (IE6 chrome + canned clickable pages, blue "e" drawn
+  from primitives). Same interactive scaffolding as slippers (Canvas DCS buffer,
+  raw-mode `Term`, SGR-pixel mouse, alt-screen teardown). `SHOEXP_FORCE`/
+  `_PLAIN`; `SHOEXP_SELFTEST=1` renders one headless frame for a smoke check.
+  v1: windows aren't resizable/maximizable and the Recycle Bin is decorative.
+  - **Structure:** shared drawing primitives (`Canvas`, the `C` palette,
+    `mix/lighten/darken`, `human`) live in **`shoexp_ui.py`**, imported by both
+    `shoexp` and each app module. Built-in apps (calc/mycomputer/explorer/
+    recycle) are still dispatched inline; the extra apps live in
+    **`shoexp_<name>.py`** and register via `register_app(make_app())` in
+    `_load_apps()`. A spec dict supplies `kind/title/size/draw/icon16` plus
+    optional `init/click/mouse/key/wheel/icon48/desktop/start`; the registry
+    (`APP_DRAW`, `APP_CLICK`, `APP_MOUSE`, `APP_KEY`, …) routes draw, clicks
+    (left **and** right via `btn`), drag (`mouse` press/drag/release), keys and
+    wheel. `install_local_shoe.sh` copies the modules next to `shoexp` on PATH.
 
 ### Graphics-or-plain detection (shoestring / shoelace / shoebling / slippers)
 
