@@ -105,9 +105,13 @@ def sanitize(s):
 #  flush before every text because `text` runs to end of line)
 # --------------------------------------------------------------------------- #
 class Canvas:
-    def __init__(self):
+    def __init__(self, textmode=None):
         self.lines = []
         self.geo = []
+        # Optional "pixel" / "pixel <scale>" to render `text` with the embedded
+        # 8x16 bitmap font instead of the default antialiased fcft font. None
+        # keeps the default smooth font (so existing callers are unaffected).
+        self.textmode = textmode
 
     def _flush(self):
         if self.geo:
@@ -182,5 +186,6 @@ class Canvas:
     def dcs(self, cols, rows, bg):
         self._flush()
         body = "\n".join(self.lines)
-        return "%s[H%sP>g\nsize %d %d\nbg %s\n%s\n%s\\" % (
-            ESC, ESC, cols, rows, bg, body, ESC)
+        tm = ("textmode %s\n" % self.textmode) if self.textmode else ""
+        return "%s[H%sP>g\nsize %d %d\nbg %s\n%s%s\n%s\\" % (
+            ESC, ESC, cols, rows, bg, tm, body, ESC)

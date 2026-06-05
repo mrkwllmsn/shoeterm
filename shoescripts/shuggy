@@ -1,0 +1,1013 @@
+#!/usr/bin/env python3
+# shuggy - a Buggy-Boy-style arcade racer drawn entirely with foot's
+# vector-graphics protocol. The cousin of `shoom`: where shoom raycasts a
+# first-person maze, shuggy renders a pseudo-3D *road*.
+#
+#   Run it:  ./bld/debug/foot sh -c 'python3 shoescripts/shuggy'
+#   or, installed on PATH inside foot:   shuggy
+#
+# The 3D is the classic OutRun / Pole-Position trick (no raycaster): the track
+# is a list of road *segments*, each with a curve and a height. Every frame we
+# walk the segments from near to far, perspective-project each to a screen
+# scanline (scale = cameraDepth / z), and draw the road surface between two
+# consecutive segments as one filled trapezoid (`polyf`). Alternating road /
+# grass / rumble shades striped by distance give the rushing-speed effect for
+# free; an accumulated x-offset bends the strip into curves. Roadside scenery
+# and rival buggies are flat sprites scaled by their segment's projection and
+# painted back-to-front, so they sort by depth with no z-buffer. The whole
+# scene is one comma-delimited DCS drawing program redrawn over itself at the
+# home position every frame - exactly like shoom / slippers / memtop.
+#
+# Controls (keyboard only):
+#   W / Up      accelerate          S / Down    brake / reverse
+#   A / Left    steer left          D / Right   steer right
+#   R           restart             Q / Esc     quit
+#
+# Goal: a time-attack. Beat the clock; every lap completed banks more time.
+# Stay on the tarmac - the grass is slow - and don't plough into trees, rocks
+# or the rival buggies, or you spin out and bleed speed.
+#
+# Env:  SHUGGY_FORCE=1     draw even if $TERM isn't foot-like
+#       SHUGGY_PLAIN=1     never draw (print a notice and exit)
+#       SHUGGY_SELFTEST=1  build one frame headless, print its size, exit (CI/smoke)
+#
+# Stdlib only; no dependencies.
+
+import math
+import os
+import re
+import select
+import signal
+import sys
+import time
+
+ESC = "\033"
+
+# --------------------------------------------------------------------------- #
+#  colours
+# --------------------------------------------------------------------------- #
+SKY_TOP = "#1f6fd0"        # sky gradient, top
+SKY_HOR = "#a6d8f2"        # sky gradient, at the horizon
+HAZE = "#bcd6ec"           # distant geometry fades toward this (aerial haze)
+HILL_FAR = "#5fa9c9"       # parallax hill silhouette (far)
+HILL_NEAR = "#3f8f5a"      # parallax hill silhouette (near, greener)
+
+COL_LIGHT = {"grass": "#1aa83a", "road": "#9aa0a6", "rumble": "#eef0f2", "lane": "#ffffff"}
+COL_DARK = {"grass": "#159230", "road": "#8b9197", "rumble": "#c5392c", "lane": None}
+
+FOG_DENSITY = 4.2          # how fast distance washes to HAZE
+
+
+def _rgb(c):
+    c = c.lstrip("#")
+    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+
+
+def mix(a, b, t):
+    t = 0.0 if t < 0 else 1.0 if t > 1 else t
+    ra, ga, ba = _rgb(a)
+    rb, gb, bb = _rgb(b)
+    return "#%02x%02x%02x" % (int(ra + (rb - ra) * t),
+                              int(ga + (gb - ga) * t),
+                              int(ba + (bb - ba) * t))
+
+
+def lighten(c, t):
+    return mix(c, "#ffffff", t)
+
+
+def darken(c, t):
+    return mix(c, "#000000", t)
+
+
+# --------------------------------------------------------------------------- #
+#  graphics-capable terminal detection (same contract as the other shoe tools)
+# --------------------------------------------------------------------------- #
+def graphics_ok():
+    if os.environ.get("SHUGGY_PLAIN"):
+        return False
+    if os.environ.get("SHUGGY_FORCE"):
+        return True
+    if not sys.stdout.isatty():
+        return False
+    return ("foot" in os.environ.get("TERM", "") or "ghostty" in os.environ.get("TERM", ""))
+
+
+# --------------------------------------------------------------------------- #
+#  drawing-command buffer (lifted from shoom; coords int-cast so callers can
+#  pass floats freely, and `text` always lands on its own physical line)
+# --------------------------------------------------------------------------- #
+def sanitize(s):
+    return "".join(ch for ch in s if ch >= " " and ch != "," and ch != "\x7f")
+
+
+class Canvas:
+    def __init__(self):
+        self.lines = []
+        self.geo = []
+
+    def _flush(self):
+        if self.geo:
+            self.lines.append(",".join(self.geo))
+            self.geo = []
+
+    def pen(self, color):
+        self.geo.append("pen " + color)
+
+    def thickness(self, n):
+        # hard cap: a near sprite can project to an absurd thickness, which makes
+        # foot's rasterizer crawl (looks like a lock-up). 64px is already plenty.
+        self.geo.append("thickness %d" % max(1, min(64, int(n))))
+
+    def rectf(self, x, y, w, h):
+        self.geo.append("rectf %d %d %d %d" % (int(x), int(y), int(w), int(h)))
+
+    def rect(self, x, y, w, h):
+        self.geo.append("rect %d %d %d %d" % (int(x), int(y), int(w), int(h)))
+
+    def rrectf(self, x, y, w, h, r):
+        self.geo.append("rrectf %d %d %d %d %d" % (int(x), int(y), int(w), int(h), int(r)))
+
+    def line(self, x0, y0, x1, y1):
+        self.geo.append("line %d %d %d %d" % (int(x0), int(y0), int(x1), int(y1)))
+
+    def trif(self, x0, y0, x1, y1, x2, y2):
+        self.geo.append("trif %d %d %d %d %d %d" % (
+            int(x0), int(y0), int(x1), int(y1), int(x2), int(y2)))
+
+    def circf(self, cx, cy, r):
+        self.geo.append("circf %d %d %d" % (int(cx), int(cy), int(r)))
+
+    def circ(self, cx, cy, r):
+        self.geo.append("circ %d %d %d" % (int(cx), int(cy), int(r)))
+
+    def arc(self, cx, cy, r, a0, a1):
+        self.geo.append("arc %d %d %d %d %d" % (int(cx), int(cy), int(r), int(a0), int(a1)))
+
+    def polyf(self, *pts):
+        self.geo.append("polyf " + " ".join("%d" % int(p) for p in pts))
+
+    def vgrad(self, x, y, w, h, c0, c1, steps=16):
+        if w <= 0 or h <= 0:
+            return
+        steps = max(1, min(steps, int(h)))
+        for i in range(steps):
+            y0 = y + h * i // steps
+            y1 = y + h * (i + 1) // steps
+            if y1 <= y0:
+                continue
+            self.pen(mix(c0, c1, i / max(1, steps - 1)))
+            self.rectf(x, y0, w, y1 - y0)
+
+    def text(self, x, y, s):
+        self._flush()
+        self.lines.append("text %d %d %s" % (int(x), int(y), sanitize(s)))
+
+    def dcs(self, cols, rows, bg="#000000"):
+        self._flush()
+        body = "\n".join(self.lines)
+        return "%s[H%sP>g\nsize %d %d\nbg %s\n%s\n%s\\" % (
+            ESC, ESC, cols, rows, bg, body, ESC)
+
+
+# --------------------------------------------------------------------------- #
+#  the track  (pseudo-3D segment road)
+# --------------------------------------------------------------------------- #
+SEG_LEN = 200             # world length of one road segment
+RUMBLE = 3                # segments per light/dark colour band
+ROAD_WIDTH = 2000         # half-width of the tarmac, world units
+LANES = 3
+DRAW_DIST = 150           # segments rendered ahead each frame
+CAM_HEIGHT = 1100         # eye height above the road
+CAM_DEPTH = 0.84          # 1/tan(fov/2); fov ~ 100 deg
+CENTRIFUGAL = 0.32        # how hard curves fling you outward
+
+
+def _ease_inout(a, b, p):
+    return a + (b - a) * (-2 * p * p * p + 3 * p * p)
+
+
+def _ease_in(a, b, p):
+    return a + (b - a) * p * p
+
+
+def _ease_out(a, b, p):
+    return a + (b - a) * (1 - (1 - p) * (1 - p))
+
+
+class Track:
+    """A looping list of road segments with curve + height per segment."""
+
+    def __init__(self):
+        self.seg = []
+        self._build()
+        self.length = len(self.seg) * SEG_LEN
+
+    def _last_y(self):
+        return self.seg[-1]["y2"] if self.seg else 0.0
+
+    def _add(self, curve, y):
+        n = len(self.seg)
+        self.seg.append({
+            "index": n, "curve": curve,
+            "y1": self._last_y(), "y2": y,
+            "z": n * SEG_LEN,
+            "sprites": [],            # roadside scenery: (offset, kind)
+            # per-frame scratch, filled by the projector:
+            "p1": {}, "p2": {}, "clip": 0,
+        })
+
+    def _road(self, enter, hold, leave, curve, height):
+        start_y = self._last_y()
+        end_y = start_y + height
+        total = enter + hold + leave
+        i = 0
+        for k in range(enter):
+            self._add(_ease_in(0, curve, k / enter),
+                      _ease_inout(start_y, end_y, i / total)); i += 1
+        for k in range(hold):
+            self._add(curve, _ease_inout(start_y, end_y, i / total)); i += 1
+        for k in range(leave):
+            self._add(_ease_inout(curve, 0, k / leave),
+                      _ease_inout(start_y, end_y, i / total)); i += 1
+
+    def _build(self):
+        # enter / hold / leave segment counts, curve strength, height delta
+        self._road(60, 30, 40, 0, 0)         # start straight
+        self._road(40, 40, 40, -3.2, 0)      # sweeping left
+        self._road(40, 50, 40, 0, 1400)      # climb
+        self._road(40, 40, 40, 4.2, 0)       # hard right at the crest
+        self._road(40, 40, 40, 2.5, -1400)   # plunge, still right
+        self._road(40, 40, 40, -4.5, 0)      # snap left
+        self._road(70, 30, 70, 0, 0)         # back straight (overtaking room)
+        self._road(40, 40, 40, 5.0, 900)     # tight right uphill
+        self._road(30, 40, 30, -5.5, -500)   # esses
+        self._road(30, 40, 30, 5.5, 0)
+        self._road(40, 40, 40, -3.0, -400)
+        self._road(80, 40, 80, 0, 0)         # home straight
+        self._scatter()
+
+    def _scatter(self):
+        # Deterministic roadside dressing (no RNG, so SELFTEST is stable).
+        kinds = ["tree", "tree", "rock", "tree", "sign", "tree", "rock"]
+        n = len(self.seg)
+        for i in range(24, n - 6):
+            if i % 6 == 0:
+                side = 1.0 if (i // 6) % 2 == 0 else -1.0
+                off = side * (1.5 + ((i * 7) % 5) * 0.22)
+                self.seg[i]["sprites"].append((off, kinds[(i // 6) % len(kinds)]))
+            if i % 13 == 0:                          # opposite-side filler
+                self.seg[i]["sprites"].append((-1.7, "tree"))
+
+    def at(self, z):
+        return self.seg[int(z // SEG_LEN) % len(self.seg)]
+
+
+def project(p, cam_x, cam_y, cam_z, W, H):
+    """Perspective-project one road point; fills its screen_x/y/w + scale."""
+    p["cz"] = max(1.0, p["world_z"] - cam_z)
+    sc = CAM_DEPTH / p["cz"]
+    p["scale"] = sc
+    p["sx"] = round(W / 2 + sc * (0 - cam_x) * W / 2)
+    p["sy"] = round(H / 2 - sc * (p["world_y"] - cam_y) * H / 2)
+    p["sw"] = round(sc * ROAD_WIDTH * W / 2)
+
+
+# --------------------------------------------------------------------------- #
+#  rival buggies (traffic)
+# --------------------------------------------------------------------------- #
+class Car:
+    __slots__ = ("z", "offset", "speed", "col")
+
+    def __init__(self, z, offset, speed, col):
+        self.z = z
+        self.offset = offset
+        self.speed = speed
+        self.col = col
+
+
+# --------------------------------------------------------------------------- #
+#  the game
+# --------------------------------------------------------------------------- #
+HOLD = 0.20               # seconds a key counts as "held" after its last byte
+MAXSPEED = SEG_LEN * 38   # top speed, world units / sec
+ACCEL = MAXSPEED / 4.5
+BRAKE = -MAXSPEED / 2.4
+DECEL = -MAXSPEED / 6.0   # coasting friction
+OFFROAD_MAX = MAXSPEED / 3.4
+OFFROAD_DECEL = -MAXSPEED / 1.6
+START_TIME = 45.0
+LAP_BONUS = 22.0
+
+
+class Game:
+    def __init__(self, cw, ch, cols, rows):
+        self.track = Track()
+        self.cw, self.ch = cw, ch
+        self.relayout(cols, rows)
+        self.reset()
+
+    def relayout(self, cols, rows):
+        self.cols, self.rows = cols, rows
+        self.Wpx = cols * self.cw
+        self.Hpx = rows * self.ch
+        self.hud_h = max(self.ch * 2, 38)
+        self.worldH = self.Hpx - self.hud_h
+        self.horizon = self.worldH // 2
+        # max world-unit->px scale a sprite may reach before we cull it; keeps
+        # very near scenery/cars from projecting to enormous (slow) shapes.
+        self.unit_max = max(2.0, self.worldH / 360.0)
+
+    def reset(self):
+        self.position = 0.0          # camera z along the track
+        self.playerX = 0.0           # lateral, in road half-widths (-1..1 = tarmac)
+        self.speed = 0.0
+        self.held = {}
+        self.lap = 1
+        self.time_left = START_TIME
+        self.elapsed = 0.0
+        self.best_lap = None
+        self.lap_start = 0.0
+        self.shake = 0.0             # crash shake timer
+        self.steer = 0.0             # smoothed steering for visual lean
+        self.bounce = 0.0
+        self.cars = self._spawn_traffic()
+        self.mode = "title"          # title | play | over
+
+    def _spawn_traffic(self):
+        cars = []
+        cols = ["#e8403a", "#f2b21a", "#3a7de8", "#9b4ff2", "#27b85a", "#e87a1a"]
+        nseg = len(self.track.seg)
+        for k in range(6):
+            z = (nseg * SEG_LEN) * (k + 1) / 8.0
+            offset = (-0.6, 0.0, 0.6)[k % 3]
+            cars.append(Car(z, offset, MAXSPEED * (0.42 + 0.06 * k) / 1.0, cols[k % len(cols)]))
+        return cars
+
+    # ---- input bookkeeping ------------------------------------------------- #
+    def press(self, token, now):
+        self.held[token] = now
+
+    def is_held(self, token, now):
+        return now - self.held.get(token, -9.0) < HOLD
+
+    # ---- physics ----------------------------------------------------------- #
+    def update(self, dt, now):
+        if self.mode != "play":
+            return
+        self.elapsed += dt
+        self.time_left -= dt
+        if self.time_left <= 0:
+            self.time_left = 0.0
+            self.mode = "over"
+            return
+
+        # longitudinal
+        if self.is_held("accel", now):
+            self.speed += ACCEL * dt
+        elif self.is_held("brake", now):
+            self.speed += BRAKE * dt
+        else:
+            self.speed += DECEL * dt
+        # off the tarmac? hard drag + capped top speed
+        offroad = abs(self.playerX) > 1.0
+        if offroad and self.speed > OFFROAD_MAX:
+            self.speed += OFFROAD_DECEL * dt
+        self.speed = max(0.0, min(MAXSPEED, self.speed))
+        speed_pct = self.speed / MAXSPEED
+
+        # steering (only bites while rolling)
+        dx = dt * 2.4 * speed_pct
+        tgt = 0.0
+        if self.is_held("left", now):
+            self.playerX -= dx; tgt = -1.0
+        if self.is_held("right", now):
+            self.playerX += dx; tgt = 1.0
+        self.steer += (tgt - self.steer) * min(1.0, dt * 9)
+
+        # centrifugal push on the current curve
+        seg = self.track.at(self.position)
+        self.playerX -= dx * speed_pct * seg["curve"] * CENTRIFUGAL
+        self.playerX = max(-2.4, min(2.4, self.playerX))
+
+        # advance along the track; bank time on lap completion
+        self.position += self.speed * dt
+        if self.position >= self.track.length:
+            self.position -= self.track.length
+            lap_time = self.elapsed - self.lap_start
+            if self.best_lap is None or lap_time < self.best_lap:
+                self.best_lap = lap_time
+            self.lap_start = self.elapsed
+            self.lap += 1
+            self.time_left += LAP_BONUS
+
+        # traffic
+        for c in self.cars:
+            c.z = (c.z + c.speed * dt) % self.track.length
+
+        # bounce/rumble feel
+        self.bounce = math.sin(self.position / 55.0) * (1.6 + 4.0 * speed_pct)
+        if offroad and self.speed > 60:
+            self.bounce += math.sin(self.position / 9.0) * 3.0
+        if self.shake > 0:
+            self.shake = max(0.0, self.shake - dt)
+
+        self._collisions()
+
+    def _collisions(self):
+        # rival buggies: overlapping z and lane
+        pz = self.position
+        for c in self.cars:
+            d = (c.z - pz) % self.track.length
+            if d < SEG_LEN * 1.6 and abs(c.offset - self.playerX) < 0.7:
+                if self.speed > c.speed:
+                    self._crash(0.32)
+                    c.z = (c.z + SEG_LEN * 2) % self.track.length
+        # roadside scenery (only reachable when running wide)
+        if abs(self.playerX) > 0.85:
+            base = self.track.at(pz)
+            for n in range(0, 4):
+                seg = self.track.seg[(base["index"] + n) % len(self.track.seg)]
+                for off, kind in seg["sprites"]:
+                    if abs(off - self.playerX) < 0.5:
+                        self._crash(0.45)
+                        return
+
+    def _crash(self, severity):
+        if self.shake > 0.25:
+            return                       # already mid-spin; don't double-hit
+        self.speed *= (1.0 - severity)
+        self.shake = 0.55
+
+    # ----------------------------------------------------------------------- #
+    #  rendering
+    # ----------------------------------------------------------------------- #
+    def render(self):
+        cv = Canvas()
+        W, H = self.Wpx, self.worldH
+        if self.shake > 0:
+            cv.geo.append("clip 0 0 %d %d" % (W, self.Hpx))
+
+        self._render_sky(cv)
+        self._render_hills(cv)
+        self._render_road(cv)
+        self._render_player(cv)
+        self._render_hud(cv)
+        if self.mode != "play":
+            self._render_overlay(cv)
+        return cv.dcs(self.cols, self.rows, bg="#0a0c10")
+
+    def _render_sky(self, cv):
+        cv.vgrad(0, 0, self.Wpx, self.horizon + 4, SKY_TOP, SKY_HOR, 18)
+
+    def _render_hills(self, cv):
+        # two parallax hill silhouettes that drift with the road curve / lap
+        W = self.Wpx
+        hy = self.horizon
+        drift = (self.position / 30.0) % W
+        for layer, (col, amp, k, sp) in enumerate(
+                [(HILL_FAR, 22, 0.9, 0.30), (HILL_NEAR, 34, 1.4, 0.6)]):
+            pts = []
+            shift = (drift * sp) % (W + 200)
+            step = max(8, W // 40)
+            x = -200
+            pts += [0, hy + 40]
+            while x <= W + 200:
+                yy = hy - amp - amp * math.sin((x + shift) * 0.011 * k) \
+                    - (amp * 0.5) * math.sin((x + shift) * 0.027 * k + layer)
+                pts += [x, yy]
+                x += step
+            pts += [W, hy + 40]
+            cv.pen(mix(col, HAZE, 0.15 * (1 - layer)))
+            cv.polyf(*pts)
+
+    def _render_road(self, cv):
+        W, H = self.Wpx, self.worldH
+        segs = self.track.seg
+        nseg = len(segs)
+        base = self.track.at(self.position)
+        base_pct = (self.position % SEG_LEN) / SEG_LEN
+        cam_y = CAM_HEIGHT + (base["y1"] + (base["y2"] - base["y1"]) * base_pct)
+
+        maxy = H
+        x = 0.0
+        dx = -(base["curve"] * base_pct)
+        drawn = []
+
+        for n in range(DRAW_DIST):
+            seg = segs[(base["index"] + n) % nseg]
+            looped = (base["index"] + n) >= nseg
+            cam_z = self.position - (self.track.length if looped else 0)
+
+            p1, p2 = seg["p1"], seg["p2"]
+            p1["world_y"], p1["world_z"] = seg["y1"], seg["z"]
+            p2["world_y"], p2["world_z"] = seg["y2"], seg["z"] + SEG_LEN
+            project(p1, self.playerX * ROAD_WIDTH - x, cam_y, cam_z, W, H)
+            project(p2, self.playerX * ROAD_WIDTH - x - dx, cam_y, cam_z, W, H)
+            x += dx
+            dx += seg["curve"]
+            seg["clip"] = maxy
+
+            if p1["cz"] <= CAM_DEPTH or p2["sy"] >= maxy or p2["sy"] >= p1["sy"]:
+                continue
+
+            light = (n + base["index"]) // RUMBLE % 2 == 0 \
+                if False else (seg["index"] // RUMBLE) % 2 == 0
+            self._draw_segment(cv, seg, light, n)
+            drawn.append(seg)
+            maxy = p2["sy"]
+
+        # sprites + rivals: far -> near so nearer overdraws
+        for seg in reversed(drawn):
+            for off, kind in seg["sprites"]:
+                self._draw_sprite(cv, seg["p1"], off, kind, seg["clip"])
+        for c in self.cars:
+            self._draw_car(cv, c, base, segs, nseg)
+
+    def _draw_segment(self, cv, seg, light, n):
+        p1, p2 = seg["p1"], seg["p2"]
+        fog = (n / DRAW_DIST)
+        fog = 1.0 - math.exp(-FOG_DENSITY * fog * fog)
+        pal = COL_LIGHT if light else COL_DARK
+        x1, y1, w1 = p1["sx"], p1["sy"], p1["sw"]
+        x2, y2, w2 = p2["sx"], p2["sy"], p2["sw"]
+
+        # grass band (full width)
+        cv.pen(mix(pal["grass"], HAZE, fog))
+        cv.rectf(0, y2, self.Wpx, y1 - y2 + 1)
+        # rumble strips
+        r1, r2 = w1 * 1.12, w2 * 1.12
+        rc = mix(pal["rumble"], HAZE, fog)
+        cv.pen(rc)
+        cv.polyf(x1 - r1, y1, x1 + r1, y1, x2 + r2, y2, x2 - r2, y2)
+        # tarmac
+        cv.pen(mix(pal["road"], HAZE, fog))
+        cv.polyf(x1 - w1, y1, x1 + w1, y1, x2 + w2, y2, x2 - w2, y2)
+        # lane markers on light bands
+        if pal["lane"] and w1 > 6:
+            cv.pen(mix(pal["lane"], HAZE, fog))
+            for lane in range(1, LANES):
+                cx1 = x1 - w1 + (2 * w1) * lane / LANES
+                cx2 = x2 - w2 + (2 * w2) * lane / LANES
+                lw1, lw2 = max(1, w1 * 0.04), max(1, w2 * 0.04)
+                cv.polyf(cx1 - lw1, y1, cx1 + lw1, y1, cx2 + lw2, y2, cx2 - lw2, y2)
+
+    def _draw_sprite(self, cv, p, offset, kind, clip):
+        sc = p["scale"]
+        if sc <= 0:
+            return
+        destx = p["sx"] + sc * (offset * ROAD_WIDTH) * self.Wpx / 2.0
+        desty = p["sy"]
+        if desty <= clip - 1:
+            return                       # hidden behind a hill crest
+        unit = sc * self.Wpx / 2.0       # world unit -> px at this depth
+        if unit > self.unit_max:
+            return                       # too close; would project huge -> cull
+        if kind == "tree":
+            self._art_tree(cv, destx, desty, unit)
+        elif kind == "rock":
+            self._art_rock(cv, destx, desty, unit)
+        elif kind == "sign":
+            self._art_sign(cv, destx, desty, unit)
+
+    def _art_tree(self, cv, x, y, u):
+        h = 720 * u
+        if h < 3:
+            return
+        tw = max(1, 70 * u)
+        cv.pen("#5a3a22")
+        cv.rectf(x - tw / 2, y - h * 0.30, tw, h * 0.30)
+        cv.pen("#1d7a32")
+        cv.trif(x, y - h, x - h * 0.32, y - h * 0.30, x + h * 0.32, y - h * 0.30)
+        cv.pen("#249a3e")
+        cv.trif(x, y - h * 0.82, x - h * 0.28, y - h * 0.20, x + h * 0.28, y - h * 0.20)
+
+    def _art_rock(self, cv, x, y, u):
+        h = 230 * u
+        if h < 2:
+            return
+        w = h * 1.3
+        cv.pen("#8a8276")
+        cv.polyf(x - w / 2, y, x - w * 0.30, y - h, x + w * 0.18, y - h * 0.92, x + w / 2, y)
+        cv.pen("#6f685e")
+        cv.polyf(x - w * 0.30, y - h, x + w * 0.18, y - h * 0.92, x + w * 0.10, y - h * 0.5)
+
+    def _art_sign(self, cv, x, y, u):
+        h = 360 * u
+        if h < 3:
+            return
+        pw = max(1, 26 * u)
+        cv.pen("#6b6b6b")
+        cv.rectf(x - pw / 2, y - h, pw, h)
+        bw, bh = h * 0.95, h * 0.55
+        cv.pen("#f2b21a")
+        cv.rectf(x - bw / 2, y - h, bw, bh)
+        cv.pen("#1a1a1a")
+        cv.rect(x - bw / 2, y - h, bw, bh)
+
+    def _draw_car(self, cv, c, base, segs, nseg):
+        d = (c.z - self.position) % self.track.length
+        if d <= 0 or d > DRAW_DIST * SEG_LEN:
+            return
+        seg = self.track.at(c.z)
+        p = seg["p1"]
+        if "scale" not in p or p["scale"] <= 0:
+            return
+        sc = p["scale"]
+        x = p["sx"] + sc * (c.offset * ROAD_WIDTH) * self.Wpx / 2.0
+        y = p["sy"]
+        if y <= seg["clip"] - 1:
+            return
+        u = sc * self.Wpx / 2.0
+        if u > self.unit_max:
+            return                       # too close; cull (collision is z-based)
+        self._art_buggy(cv, x, y, u, c.col)
+
+    def _art_buggy(self, cv, x, y, u, col, rear=True):
+        # a chunky rear-view dune buggy: two fat wheels, a bright body, cage
+        w = 560 * u
+        if w < 4:
+            return
+        h = w * 0.62
+        tw, th = w * 0.20, h * 0.74
+        for sx in (-1, 1):
+            wx = x + sx * w * 0.40
+            cv.pen("#1b1b1f")
+            cv.rrectf(wx - tw / 2, y - th, tw, th, tw * 0.32)
+            cv.pen("#3a3a40")
+            cv.rrectf(wx - tw * 0.26, y - th * 0.82, tw * 0.52, th * 0.5, tw * 0.18)
+        # body
+        by = y - h
+        cv.pen(col)
+        cv.polyf(x - w * 0.40, y - h * 0.18,
+                 x - w * 0.30, by,
+                 x + w * 0.30, by,
+                 x + w * 0.40, y - h * 0.18)
+        cv.pen(darken(col, 0.30))
+        cv.rectf(x - w * 0.40, y - h * 0.18, w * 0.80, max(1, h * 0.10))
+        # roll cage + driver
+        cv.pen("#222228")
+        cv.thickness(max(1, int(u * 40)))
+        cv.line(x - w * 0.24, by, x - w * 0.30, by - h * 0.30)
+        cv.line(x + w * 0.24, by, x + w * 0.30, by - h * 0.30)
+        cv.line(x - w * 0.30, by - h * 0.30, x + w * 0.30, by - h * 0.30)
+        cv.thickness(1)
+        cv.pen("#e8c089")
+        cv.circf(x, by - h * 0.10, max(1, w * 0.10))
+
+    # ---- the player's buggy (fixed near the bottom) ----------------------- #
+    def _render_player(self, cv):
+        W = self.Wpx
+        cx = W / 2 + self.steer * (W * 0.012)
+        baseY = self.worldH - max(8, self.ch // 2)
+        if self.shake > 0:
+            ph = self.shake * 60
+            cx += math.sin(ph) * 9
+            baseY += math.cos(ph * 1.3) * 4
+        baseY += self.bounce
+        u = (W / 2.0) * 0.00092            # buggy size; small enough to see the road
+        # shadow
+        cv.pen("#00000055")
+        cv.circf(cx, baseY + 6, 560 * u * 0.46)
+        # lean the whole buggy slightly into the steer by skewing x
+        self._art_player_buggy(cv, cx, baseY, u, self.steer)
+
+    def _art_player_buggy(self, cv, x, y, u, lean):
+        w = 560 * u
+        h = w * 0.66
+        lx = lean * w * 0.05
+        # rear tyres: seen tread-on (tall rounded rects), tucked at the corners
+        tw, th = w * 0.22, h * 0.78
+        for sx in (-1, 1):
+            wx = x + sx * w * 0.40
+            cv.pen("#16161a")
+            cv.rrectf(wx - tw / 2, y - th, tw, th, tw * 0.32)
+            cv.pen("#34343c")
+            cv.rrectf(wx - tw * 0.26, y - th * 0.82, tw * 0.52, th * 0.5, tw * 0.18)
+        by = y - h
+        col = "#f2c21a"
+        cv.pen(col)
+        cv.polyf(x - w * 0.42, y - h * 0.16,
+                 x - w * 0.30 + lx, by,
+                 x + w * 0.30 + lx, by,
+                 x + w * 0.42, y - h * 0.16)
+        cv.pen(darken(col, 0.28))
+        cv.rectf(x - w * 0.42, y - h * 0.16, w * 0.84, max(1, h * 0.12))
+        cv.pen("#d23a2e")                       # tail panel
+        cv.rectf(x - w * 0.30, by + h * 0.04, w * 0.60, max(1, h * 0.16))
+        # roll cage
+        cv.pen("#202026")
+        cv.thickness(max(2, int(w * 0.035)))
+        cv.line(x - w * 0.26, by, x - w * 0.22 + lx, by - h * 0.42)
+        cv.line(x + w * 0.26, by, x + w * 0.22 + lx, by - h * 0.42)
+        cv.line(x - w * 0.22 + lx, by - h * 0.42, x + w * 0.22 + lx, by - h * 0.42)
+        cv.thickness(1)
+        cv.pen("#e8c089")                       # driver helmet
+        cv.circf(x + lx, by - h * 0.14, max(2, w * 0.11))
+        cv.pen("#b23")
+        cv.rectf(x + lx - w * 0.10, by - h * 0.20, w * 0.20, max(1, w * 0.05))
+
+    # ---- HUD --------------------------------------------------------------- #
+    def _render_hud(self, cv):
+        W = self.Wpx
+        charw = max(5, self.cw)
+        hy = self.worldH
+        hh = self.hud_h
+        midy = hy + hh // 2
+        ty = midy + 5
+        cv.pen("#0c0e13")
+        cv.rectf(0, hy, W, hh)
+        cv.pen("#1b1f2a")
+        cv.rectf(0, hy, W, 2)
+
+        # --- speedo gauge (half ring + needle), left ---
+        gx, gy, gr = 26 + gauge_r(self), midy, gauge_r(self)
+        cv.thickness(max(2, gr // 7))
+        cv.pen("#2a2f3a")
+        cv.arc(gx, gy, gr, 180, 360)
+        spct = self.speed / MAXSPEED
+        cv.pen(mix("#39d36a", "#ff4040", spct))
+        cv.arc(gx, gy, gr, 180, 180 + int(180 * spct))
+        cv.thickness(1)
+        ang = math.radians(180 + 180 * spct)
+        cv.thickness(max(2, gr // 9))
+        cv.pen("#e6ebf2")
+        cv.line(gx, gy, gx + gr * 0.92 * math.cos(ang), gy + gr * 0.92 * math.sin(ang))
+        cv.thickness(1)
+        kmh = int(self.speed / MAXSPEED * 240)
+        cv.pen("#9fb0c4")
+        cv.text(gx - 3 * charw, gy + 10, "%3d" % kmh)
+        cv.pen("#62708a")
+        cv.text(gx + gr - charw, gy + 10, "KM/H")
+
+        # --- time, centred big ---
+        tcol = "#ff5454" if self.time_left < 10 else "#ffd23f"
+        tstr = "%05.1f" % self.time_left
+        cv.pen("#62708a")
+        cv.text(W // 2 - 5 * charw, midy - self.ch // 2 - 2, "TIME")
+        cv.pen(tcol)
+        cv.text(W // 2 - len(tstr) * charw // 2, ty + 3, tstr)
+
+        # --- lap / best, right ---
+        rx = W - 18 * charw
+        cv.pen("#62708a")
+        cv.text(rx, midy - self.ch // 2 - 2, "LAP")
+        cv.pen("#e6ebf2")
+        cv.text(rx + 4 * charw, midy - self.ch // 2 - 2, "%d" % self.lap)
+        best = "--:--" if self.best_lap is None else "%0.1fs" % self.best_lap
+        cv.pen("#62708a")
+        cv.text(rx, ty + 3, "BEST")
+        cv.pen("#8fd6a0")
+        cv.text(rx + 5 * charw, ty + 3, best)
+
+    # ---- overlays (title / over) ------------------------------------------ #
+    def _render_overlay(self, cv):
+        W = self.Wpx
+        charw = max(5, self.cw)
+        cv.pen("#04060bcc")
+        cv.rectf(0, 0, W, self.worldH)
+        ty = self.worldH // 2
+        if self.mode == "title":
+            title, col = "S H U G G Y", "#ffd23f"
+            sub = "press W or up arrow to start"
+            hint = "W/up accel   S/down brake   A/D or arrows steer   Q quit"
+        else:
+            title, col = "TIME UP", "#ff5454"
+            sub = "you reached lap %d   -   press R to race again" % self.lap
+            best = "no full lap" if self.best_lap is None else "best lap %0.1fs" % self.best_lap
+            hint = best + "    -    Q quit"
+        cv.pen(col)
+        cv.text((W - len(title) * charw) // 2, ty - 6, title)
+        cv.pen("#b9c2d4")
+        cv.text((W - len(sub) * charw) // 2, ty + self.ch + 6, sub)
+        cv.pen("#6c789a")
+        cv.text((W - len(hint) * charw) // 2, ty + 2 * self.ch + 14, hint)
+
+
+def gauge_r(g):
+    return max(14, g.hud_h // 2 - 6)
+
+
+# --------------------------------------------------------------------------- #
+#  input parsing (byte stream -> semantic events) - adapted from shoom
+# --------------------------------------------------------------------------- #
+CSI_FINAL = {b"A": "up", b"B": "down", b"C": "right", b"D": "left",
+             b"H": "home", b"F": "end"}
+SS3 = {b"A": "up", b"B": "down", b"C": "right", b"D": "left"}
+
+
+def parse_one(buf, i):
+    b = buf[i]
+    if b != 0x1b:
+        if b in (0x0d, 0x0a):
+            return ("enter", i + 1)
+        if b == 0x03:
+            return ("quit", i + 1)
+        if 0x21 <= b <= 0x7e:
+            return (("char", chr(b).lower()), i + 1)
+        return ("ignore", i + 1)
+    if i + 1 >= len(buf):
+        return (None, -1)
+    n = buf[i + 1]
+    if n == 0x5b:                                  # ESC [
+        j = i + 2
+        while j < len(buf) and (0x30 <= buf[j] <= 0x3f):
+            j += 1
+        if j >= len(buf):
+            return (None, -1)
+        final = buf[j:j + 1]
+        if final == b"~":
+            return ("ignore", j + 1)
+        return (CSI_FINAL.get(final, "ignore"), j + 1)
+    if n == 0x4f:                                  # ESC O (SS3)
+        if i + 2 >= len(buf):
+            return (None, -1)
+        return (SS3.get(buf[i + 2:i + 3], "ignore"), i + 3)
+    return ("esc", i + 1)
+
+
+def parse_events(buf):
+    events = []
+    i = 0
+    while i < len(buf):
+        ev, j = parse_one(buf, i)
+        if j < 0:
+            break
+        if ev not in (None, "ignore"):
+            events.append(ev)
+        i = j
+    return events, buf[i:]
+
+
+# --------------------------------------------------------------------------- #
+#  terminal session  (keyboard only - no mouse modes)
+# --------------------------------------------------------------------------- #
+class Term:
+    def __init__(self):
+        self.fd = sys.stdin.fileno()
+        self.old = None
+
+    def __enter__(self):
+        import termios
+        import tty
+        self.termios = termios
+        self.old = termios.tcgetattr(self.fd)
+        tty.setraw(self.fd)
+        self.cw, self.ch = self.query_cell()
+        self.w(ESC + "[?1049h" + ESC + "[2J" + ESC + "[?25l")
+        return self
+
+    def __exit__(self, *a):
+        self.w(ESC + "[?25h" + ESC + "[?1049l")
+        if self.old:
+            self.termios.tcsetattr(self.fd, self.termios.TCSADRAIN, self.old)
+
+    def w(self, s):
+        os.write(self.fd, s.encode() if isinstance(s, str) else s)
+
+    def query_cell(self):
+        try:
+            os.write(self.fd, (ESC + "[16t").encode())
+            buf = b""
+            deadline = time.monotonic() + 0.3
+            while time.monotonic() < deadline:
+                r, _, _ = select.select([self.fd], [], [], deadline - time.monotonic())
+                if not r:
+                    break
+                buf += os.read(self.fd, 64)
+                m = re.search(rb"\[6;(\d+);(\d+)t", buf)
+                if m:
+                    return int(m.group(2)), int(m.group(1))
+        except OSError:
+            pass
+        return 8, 16
+
+
+def term_cells():
+    try:
+        sz = os.get_terminal_size(sys.stdout.fileno())
+        return sz.columns, sz.lines
+    except OSError:
+        return 80, 24
+
+
+# --------------------------------------------------------------------------- #
+#  main
+# --------------------------------------------------------------------------- #
+HELP = """shuggy - a Buggy-Boy-style arcade racer in foot vector graphics.
+Usage: shuggy            (run inside foot)
+Keys:  W/up accelerate, S/down brake, A/D or left/right steer,
+       R restart, Q/Esc quit. Beat the clock; laps bank time."""
+
+
+def selftest():
+    g = Game(8, 16, 120, 36)
+    g.mode = "play"
+    g.speed = MAXSPEED * 0.6
+    frame = g.render()
+    print("shuggy selftest OK: %d bytes, %d lines" % (len(frame), frame.count("\n")))
+    return 0
+
+
+def dispatch(g, ev, now):
+    if ev == "up":
+        g.press("accel", now)
+    elif ev == "down":
+        g.press("brake", now)
+    elif ev == "left":
+        g.press("left", now)
+    elif ev == "right":
+        g.press("right", now)
+    elif isinstance(ev, tuple) and ev[0] == "char":
+        c = ev[1]
+        if c == "w":
+            g.press("accel", now)
+        elif c == "s":
+            g.press("brake", now)
+        elif c == "a":
+            g.press("left", now)
+        elif c == "d":
+            g.press("right", now)
+
+
+def main():
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print(HELP)
+        return 0
+    if os.environ.get("SHUGGY_SELFTEST"):
+        return selftest()
+    if not graphics_ok():
+        sys.stderr.write(
+            "shuggy needs a graphics-capable terminal (foot). "
+            "Run it inside foot, or set SHUGGY_FORCE=1.\n")
+        return 1
+
+    resized = {"flag": False}
+
+    def on_winch(_s, _f):
+        resized["flag"] = True
+    try:
+        signal.signal(signal.SIGWINCH, on_winch)
+    except (ValueError, OSError):
+        pass
+
+    with Term() as t:
+        cols, rows = term_cells()
+        g = Game(t.cw, t.ch, cols, rows)
+        buf = b""
+        last = time.monotonic()
+        running = True
+        while running:
+            if resized["flag"]:
+                resized["flag"] = False
+                cols, rows = term_cells()
+                g.relayout(cols, rows)
+
+            t.w(g.render())
+
+            r, _, _ = select.select([t.fd], [], [], 0.033)
+            now = time.monotonic()
+            dt = min(0.05, now - last)
+            last = now
+
+            if r:
+                try:
+                    data = os.read(t.fd, 8192)
+                except OSError:
+                    break
+                if data:
+                    buf += data
+                    events, buf = parse_events(buf)
+                    for ev in events:
+                        if ev == "quit":
+                            running = False
+                            break
+                        if isinstance(ev, tuple) and ev[0] == "char" and ev[1] == "q":
+                            running = False
+                            break
+                        if ev == "esc":
+                            if g.mode == "play":
+                                g.mode = "title"
+                            else:
+                                running = False
+                            break
+                        if g.mode != "play":
+                            if isinstance(ev, tuple) and ev[0] == "char" and ev[1] == "r":
+                                g.reset(); g.mode = "play"
+                            elif ev in ("up", "enter") or (isinstance(ev, tuple)
+                                                           and ev[0] == "char" and ev[1] == "w"):
+                                if g.mode == "over":
+                                    g.reset()
+                                g.mode = "play"
+                                g.press("accel", now)
+                            continue
+                        dispatch(g, ev, now)
+            g.update(dt, now)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

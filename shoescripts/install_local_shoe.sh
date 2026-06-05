@@ -6,7 +6,7 @@ dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)   # this script's dir (shoescri
 root=$(CDPATH= cd -- "$dir/.." && pwd)             # repo root
 
 cp "$root/bld/debug/foot" /usr/local/bin/shoe
-for tool in shoelace shoestring shoetable shoebling shoom shoexp shoemac; do
+for tool in shoelace shoestring shoetable shoetree shoebling shoom shoexp shoemac; do
   cp "$dir/$tool" "/usr/local/bin/$tool"
 done
 # shoexp imports these helper modules; they must sit next to it on PATH.
