@@ -228,19 +228,39 @@ ones print the commands / input they send so usage is self-documenting.
   shoexp's Notepad): a translucent charcoal Terminal.app that runs a small set of
   *real* commands against the live filesystem — `ls`/`pwd`/`cd`/`cat`/`echo`/
   `date`/`whoami`/`uname`/`clear`/`help` — with a coloured prompt, `ls -F`-style
-  colour-coded columns, and up/down command history. Reuses shoexp's interactive
-  scaffolding (Canvas DCS buffer,
+  colour-coded columns, and up/down command history, a **Preview** image viewer
+  (real photos via a sixel overlaid on the vector frame), and a **Music** player
+  (the first app to drive a real background process — it plays actual audio
+  through an external CLI player, `$SHOEMAC_PLAYER`, default `mpg321`). Reuses
+  shoexp's interactive scaffolding (Canvas DCS buffer,
   raw-mode `Term`, SGR-pixel mouse, alt-screen teardown). `SHOEMAC_FORCE`/
   `_PLAIN`; `SHOEMAC_SELFTEST=1` renders one headless frame for a smoke check.
+  - **Music (`shoemac_music.py`):** iTunes-ish window — transport bar (prev /
+    play-pause / next drawn from primitives, an "LCD" title display, a seek bar)
+    over a `Pane`-based file browser; double-click an audio file (in Finder, via
+    `is_audio()`, or in the window) to play, and the current folder's audio
+    files form the auto-advance playlist. **Hybrid playback control:** when the
+    player is the bare `mpg321`/`mpg123` binary it runs the `-R -` *remote*
+    protocol (LOAD/PAUSE/STOP/JUMP/QUIT in on stdin; `@F`/`@P` status back — note
+    those go to **stderr**, merged via `stderr=STDOUT`; `@P 3`/`@P 0` = track
+    end → auto-advance) giving real elapsed time + seek; any other command (e.g.
+    `ffplay -nodisp -autoexit`, `cvlc --play-and-exit {}`) is run generically as
+    `<cmd> <file>` with pause = OS `SIGSTOP`/`SIGCONT`, stop = `SIGTERM`, elapsed
+    on a wall clock, no seek. Children spawn in their own session and are killed
+    on window-close / app-exit. Needs the host hooks `tick` (per-frame poll off
+    the 1 s select; animates the bar + drives auto-advance) and `close`
+    (teardown).
   - **Structure:** shared primitives (`Canvas`, the `C` Aqua palette,
     `mix/lighten/darken`, `human`, and `Entry`/`Pane` for Finder) live in
     **`shoemac_ui.py`**, imported by both `shoemac` and each app module. Every
     app lives in its own **`shoemac_<name>.py`** and registers via
     `register_app(make_app())` in `_load_apps()`; the only built-in window is
     the decorative Trash. A spec dict supplies `kind/title/size/draw` plus
-    optional `init/click/mouse/key/wheel/icon16/icon48/dock/desktop`; the
-    registry routes draw, clicks (left **and** right via `btn`), drag, keys and
-    wheel — same contract as shoexp. `install_local_shoe.sh` copies the modules
+    optional `init/click/mouse/key/wheel/tick/close/overlay/icon16/icon48/dock/
+    desktop`; the registry routes draw, clicks (left **and** right via `btn`),
+    drag, keys and wheel — same contract as shoexp. (`tick(win,d)->bool` is
+    polled every frame off the main loop's 1 s `select` timeout for animating
+    apps; `close(win)` is a teardown hook — both added for Music.) `install_local_shoe.sh` copies the modules
     next to `shoemac` on PATH. v1: windows aren't resizable/maximizable, zoom
     light + Trash are decorative, Safari's pages are canned, and the Terminal's
     command set is the fixed list above (no pipes/globs/external programs).

@@ -250,6 +250,10 @@ section{position:relative}
   .galrow .cap{margin-top:0}
   .galrow.rev .term{order:2}
 }
+/* full-width banner showcase: a wide-and-short image reads as a strip,
+   so keep its caption to a readable measure instead of sprawling edge-to-edge */
+.g-banner{grid-column:span 12}
+.g-banner .cap{max-width:760px}
 
 /* protocol / how it works */
 .proto{display:grid;gap:42px;align-items:start}
@@ -750,29 +754,12 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
     </div>
 
     <div class="codecard reveal" style="transition-delay:.12s">
-      <span class="float-badge fb-1">● rrectf 10 10 130 50 <b>12</b></span>
-      <span class="float-badge fb-2">● circ 220 35 <b>28</b></span>
+      <span class="float-badge fb-1">● flowing <b>rainbow</b></span>
+      <span class="float-badge fb-2">● pulsing <b>border</b></span>
       <div class="term">
-        <div class="term-bar"><span class="t">Shoe — hello-card.sh</span>
+        <div class="term-bar"><span class="t">Shoe — shoeshine</span>
           <span class="ctl"><i></i><b></b><s></s></span></div>
-        <div class="term-body">
-<button class="copy" id="copyBtn">Copy</button>
-<span class="ln"><span class="cm"># draw a card: rounded rect + circle + text</span></span>
-<span class="ln"><span class="esc">ESC P &gt; g</span></span>
-<span class="ln"><span class="kw">size</span> <span class="num">20 6</span></span>
-<span class="ln"><span class="kw">bg</span>   #101028</span>
-<span class="ln"><span class="kw">pen</span>  #ff5050</span>
-<span class="ln"><span class="kw">rrectf</span> <span class="num">10 10 130 50 12</span></span>
-<span class="ln"><span class="kw">pen</span>  #50d0ff</span>
-<span class="ln"><span class="kw">circ</span> <span class="num">220 35 28</span></span>
-<span class="ln"><span class="kw">pen</span>  #ffffff</span>
-<span class="ln"><span class="kw">text</span> <span class="num">12 90</span> hello</span>
-<span class="ln"><span class="esc">ESC \</span></span>
-        </div>
-      </div>
-      <div class="preview pv-shot">
-        <img src="assets/hello.png" alt="The hello-card.sh script rendered in Shoe: a red rounded rectangle, a cyan circle outline and the word hello below"/>
-        <span class="cap">↑ rendered output</span>
+        <img src="assets/shoeshine.png" alt="The shoeshine banner rendered in Shoe: the word RAINBOW in chunky bitmap letters, each character a different colour of the rainbow, with a drop shadow, a pulsing rainbow border and a sweeping gleam across the letters"/>
       </div>
     </div>
   </div>
@@ -780,6 +767,50 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
   <!-- marquee -->
   <div class="strip reveal">
     <div class="marquee" id="marquee"></div>
+  </div>
+</section>
+
+<!-- ONE ESCAPE SEQUENCE -->
+<section class="sec" id="one-escape" style="padding-bottom:0">
+  <div class="wrap proto">
+
+    <div class="codecard reveal" style="transition-delay:.1s">
+        <div class="term">
+            <div class="term-bar"><span class="t">Shoe — hello-card.sh</span>
+                <span class="ctl"><i></i><b></b><s></s></span></div>
+            <div class="term-body">
+
+                <span class="ln"><span class="cm"># draw a card: rounded rect + circle + text</span></span>
+                <hr/>
+                <button class="copy" id="copyBtn">Copy</button>
+                <span class="ln"><span class="esc">printf '\033P&gt;g</span></span>
+                <span class="ln"><span class="kw">size</span> <span class="num">40 6</span></span>,
+ <span class="ln"><span class="kw">bg</span> #101028</span>,
+ <span class="ln"><span class="kw">pen</span> #ff5050</span>,
+ <span class="ln"><span class="kw">rrectf</span> <span class="num">10 10 130 50 12</span></span>,
+ <span class="ln"><span class="kw">pen</span> #50d0ff</span>,
+ <span class="ln"><span class="kw">circ</span> <span class="num">220 35 28</span></span>,
+ <span class="ln"><span class="kw">pen</span> #ffffff</span>,
+ <span class="ln"><span class="kw">text</span> <span class="num">12 90</span> hello</span>
+ <span class="ln"><span class="esc">\033\\'</span></span>
+            </div>
+        </div>
+        <div class="preview pv-shot">
+            <img src="assets/hello.png" alt="The hello-card.sh script rendered in Shoe: a red rounded rectangle, a cyan circle outline and the word hello below"/>
+            <span class="cap">↑ rendered output</span>
+        </div>
+    </div>
+
+    <div class="reveal">
+      <div class="sec-head" style="margin-bottom:24px">
+        <span class="eyebrow">One escape sequence</span>
+        <h2 class="section-title">From a printf to pixels.</h2>
+        <p class="lead">A whole drawing is just a DCS escape — <code style="font-family:'JetBrains Mono';color:var(--cyan)">ESC P &gt; g</code>,
+          a handful of commands, then <code style="font-family:'JetBrains Mono';color:var(--cyan)">ESC \</code>. Size the canvas
+          in cells, pick a pen, and draw. Here&rsquo;s a card — a rounded rectangle, a circle and the word
+          <b style="color:var(--ink);font-weight:500">hello</b> — sent verbatim and rendered inline.</p>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -795,7 +826,7 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
     </div>
 
     <div class="gallery">
-      <!-- slippers -->
+      <!-- slippers — feature row, image left -->
       <div class="shot g-wide reveal galrow">
         <div class="term">
           <div class="term-bar"><span class="t">Shoe — slippers</span><span class="ctl"><i></i><b></b><s></s></span></div>
@@ -819,7 +850,7 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         </div>
       </div>
 
-      <!-- hero shot wide (reversed: text left, image right) -->
+      <!-- draw-demo — feature row, image right -->
       <div class="shot g-wide reveal galrow rev">
         <div class="term">
           <div class="term-bar"><span class="t">Shoe — draw-demo.sh</span><span class="ctl"><i></i><b></b><s></s></span></div>
@@ -835,7 +866,7 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         </div>
       </div>
 
-      <!-- chart -->
+      <!-- chart + banners — matched pair (both 1.76:1, equal height) -->
       <div class="shot g-7 reveal">
         <div class="term">
           <div class="term-bar"><span class="t">Shoe — shoelace bar</span><span class="ctl"><i></i><b></b><s></s></span></div>
@@ -851,7 +882,6 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         </div>
       </div>
 
-      <!-- banners -->
       <div class="shot g-5 reveal" style="transition-delay:.08s">
         <div class="term">
           <div class="term-bar"><span class="t">Shoe — shoebling · shoestring</span><span class="ctl"><i></i><b></b><s></s></span></div>
@@ -867,8 +897,8 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         </div>
       </div>
 
-      <!-- shoestring in action -->
-      <div class="shot g-wide reveal">
+      <!-- free — full-width banner strip -->
+      <div class="shot g-banner reveal">
         <div class="term">
           <div class="term-bar"><span class="t">Shoe — free -m | shoestring</span><span class="ctl"><i></i><b></b><s></s></span></div>
           <img src="assets/free.png" alt="The output of free -m piped into shoestring: a blue gradient banner showing the memory table — total, used, free, shared, buff/cache and available — drawn in the terminal"/>
@@ -883,24 +913,8 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         </div>
       </div>
 
-      <!-- memtop -->
-      <div class="shot g-7 reveal">
-        <div class="term">
-          <div class="term-bar"><span class="t">Shoe — memtop.sh</span><span class="ctl"><i></i><b></b><s></s></span></div>
-          <img src="assets/memtop.png" alt="A live memory dashboard with a half-ring usage gauge reading 84% in use, stacked RAM and swap bars, and a history graph"/>
-        </div>
-        <div class="cap">
-          <span class="k">memtop.sh</span>
-          <div>
-            <h3>A live dashboard, redrawn in place</h3>
-            <p>A half-ring usage gauge, stacked RAM/swap bars and a history graph — refreshed
-              from <code style="font-family:'JetBrains Mono';color:var(--cyan)">/proc/meminfo</code>, font-size independent, all in the terminal.</p>
-          </div>
-        </div>
-      </div>
-
-      <!-- frogger -->
-      <div class="shot g-5 reveal" style="transition-delay:.08s">
+      <!-- frogger — feature row, image left -->
+      <div class="shot g-wide reveal galrow">
         <div class="term">
           <div class="term-bar"><span class="t">Shoe — frogger.sh</span><span class="ctl"><i></i><b></b><s></s></span></div>
           <video src="assets/frogger.webm" poster="assets/frogger.png" autoplay loop muted playsinline
@@ -921,7 +935,7 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         </div>
       </div>
 
-      <!-- shoom -->
+      <!-- shoom — feature row, image right -->
       <div class="shot g-wide reveal galrow rev">
         <div class="term">
           <div class="term-bar"><span class="t">Shoe — shoom</span><span class="ctl"><i></i><b></b><s></s></span></div>
@@ -943,7 +957,23 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         </div>
       </div>
 
-      <!-- shoexp -->
+      <!-- memtop — full-width banner strip -->
+      <div class="shot g-banner reveal">
+        <div class="term">
+          <div class="term-bar"><span class="t">Shoe — memtop.sh</span><span class="ctl"><i></i><b></b><s></s></span></div>
+          <img src="assets/memtop.png" alt="A live memory dashboard with a half-ring usage gauge reading 84% in use, stacked RAM and swap bars, and a history graph"/>
+        </div>
+        <div class="cap">
+          <span class="k">memtop.sh</span>
+          <div>
+            <h3>A live dashboard, redrawn in place</h3>
+            <p>A half-ring usage gauge, stacked RAM/swap bars and a history graph — refreshed
+              from <code style="font-family:'JetBrains Mono';color:var(--cyan)">/proc/meminfo</code>, font-size independent, all in the terminal.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- shoexp — feature row, image left -->
       <div class="shot g-wide reveal galrow">
         <div class="term">
           <div class="term-bar"><span class="t">Shoe — shoexp</span><span class="ctl"><i></i><b></b><s></s></span></div>
@@ -971,8 +1001,8 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         </div>
       </div>
 
-      <!-- shoeshine -->
-      <div class="shot g-7 reveal">
+      <!-- shoeshine — feature row, image right (finale) -->
+      <div class="shot g-wide reveal galrow rev">
         <div class="term">
           <div class="term-bar"><span class="t">Shoe — shoeshine</span><span class="ctl"><i></i><b></b><s></s></span></div>
           <video src="assets/shoeshine.webm" poster="assets/shoeshine.png" autoplay loop muted playsinline
@@ -1234,7 +1264,7 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
 // copy hero snippet
 (function(){
   const btn=document.getElementById('copyBtn');
-  const snippet="printf '\\033P>g,size 20 6,bg #101028,pen #ff5050,rrectf 10 10 130 50 12,pen #50d0ff,circ 220 35 28,pen #ffffff,text 12 90 hello\\033\\\\'";
+  const snippet="printf '\\033P>g,size 40 6,bg #101028,pen #ff5050,rrectf 10 10 130 50 12,pen #50d0ff,circ 220 35 28,pen #ffffff,text 12 90 hello\\033\\\\'";
   btn.addEventListener('click',async()=>{
     try{await navigator.clipboard.writeText(snippet);btn.textContent='Copied ✓';}
     catch(e){btn.textContent='Copy failed';}

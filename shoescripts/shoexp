@@ -91,6 +91,14 @@ class Entry:
         self.size = st.st_size if st else 0
 
 
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ppm", ".pgm",
+              ".pnm", ".tga", ".webp", ".tiff", ".tif")
+
+
+def is_image(name):
+    return os.path.splitext(name)[1].lower() in IMAGE_EXTS
+
+
 class Pane:
     def __init__(self, path):
         self.cwd = os.path.abspath(path)
@@ -110,6 +118,8 @@ class Pane:
         try:
             with os.scandir(self.cwd) as it:
                 for de in it:
+                    if de.name.startswith("."):
+                        continue
                     try:
                         st = de.stat(follow_symlinks=True)
                     except OSError:
@@ -191,6 +201,7 @@ APP_WHEEL = {}    # kind -> wheel(win, px, py, up, d) -> bool
 APP_ICON16 = {}   # kind -> icon16(cv, x, y)
 APP_ICON48 = {}   # kind -> icon48(cv, cx, top)
 APP_INIT = {}     # kind -> init(win)  (set win.state)
+APP_OVERLAY = {}  # kind -> overlay(win, d) -> (col,row,bytes)|None  (sixel on top)
 
 
 def register_app(spec):
@@ -208,6 +219,8 @@ def register_app(spec):
         APP_WHEEL[k] = spec["wheel"]
     if spec.get("init"):
         APP_INIT[k] = spec["init"]
+    if spec.get("overlay"):
+        APP_OVERLAY[k] = spec["overlay"]
     APP_ICON16[k] = spec["icon16"]
     if spec.get("icon48"):
         APP_ICON48[k] = spec["icon48"]
@@ -227,7 +240,7 @@ def register_app(spec):
 def _load_apps():
     import importlib
     for name in ("shoexp_minesweeper", "shoexp_notepad",
-                 "shoexp_paint", "shoexp_ie"):
+                 "shoexp_paint", "shoexp_ie", "shoexp_imgview"):
         try:
             register_app(importlib.import_module(name).make_app())
         except Exception as e:                       # noqa: BLE001
@@ -237,7 +250,7 @@ def _load_apps():
 class Win:
     _seq = 0
 
-    def __init__(self, kind, x, y):
+    def __init__(self, kind, x, y, path=None):
         Win._seq += 1
         self.id = Win._seq
         self.kind = kind
@@ -245,6 +258,7 @@ class Win:
         self.w, self.h = WIN_SIZE[kind]
         self.title = WIN_TITLE[kind]
         self.minimized = False
+        self.open_path = path        # apps that browse/open a path read this in init
         self.state = {}
         if kind == "calc":
             self.state = {"cur": "0", "acc": None, "op": None, "fresh": True}
@@ -360,7 +374,7 @@ class Desktop:
         x = 70 + (self.cascade % 6) * 28
         y = 40 + (self.cascade % 6) * 24
         self.cascade += 1
-        win = Win(kind, x, y)
+        win = Win(kind, x, y, path)
         if kind == "explorer" and path:
             win.pane = Pane(path)
         self.wins.append(win)
@@ -1141,6 +1155,18 @@ def main():
             if d.start_open:
                 draw_start_menu(cv, d)
             t.w(cv.dcs(cols, rows, C["sky1"]))
+            # Image overlay: an app may put a real sixel on top of the vector
+            # frame (the photo viewer).  A sixel always composites above the
+            # vector image regardless of window z-order, so we only blit for the
+            # topmost window, and skip it while the Start menu is open.
+            top = d.top_win()
+            if (top is not None and not d.start_open and
+                    not top.minimized and top.kind in APP_OVERLAY):
+                ov = APP_OVERLAY[top.kind](top, d)
+                if ov is not None:
+                    col, row, data = ov
+                    t.w("%s[%d;%dH" % (ESC, row, col))
+                    t.w(data)
 
         def in_rect(px, py, r):
             x, y, w, h = r[0], r[1], r[2], r[3]
@@ -1203,6 +1229,8 @@ def main():
                                     win.pane.up()
                                 else:
                                     win.pane.enter()
+                            elif "imgview" in APP_DRAW and is_image(e.name):
+                                d.open_app("imgview", e.path)
                 return True
             return True
 

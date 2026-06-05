@@ -139,6 +139,8 @@ class Pane:
         try:
             with os.scandir(self.cwd) as it:
                 for de in it:
+                    if de.name.startswith("."):
+                        continue
                     try:
                         st = de.stat(follow_symlinks=True)
                     except OSError:

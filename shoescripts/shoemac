@@ -109,6 +109,8 @@ APP_ICON16 = {}   # kind -> icon16(cv, x, y)            (optional, unused by chr
 APP_ICON48 = {}   # kind -> icon48(cv, cx, top)         (Dock / desktop icon)
 APP_INIT = {}     # kind -> init(win)                   (set win.state / win.pane)
 APP_OVERLAY = {}  # kind -> overlay(win, d) -> (col,row,bytes)|None  (sixel on top)
+APP_TICK = {}     # kind -> tick(win, d) -> bool        (per-frame poll; True=redraw)
+APP_CLOSE = {}    # kind -> close(win)                  (teardown, e.g. kill a child)
 
 
 def register_app(spec):
@@ -128,6 +130,10 @@ def register_app(spec):
         APP_INIT[k] = spec["init"]
     if spec.get("overlay"):
         APP_OVERLAY[k] = spec["overlay"]
+    if spec.get("tick"):
+        APP_TICK[k] = spec["tick"]
+    if spec.get("close"):
+        APP_CLOSE[k] = spec["close"]
     if spec.get("icon16"):
         APP_ICON16[k] = spec["icon16"]
     if spec.get("icon48"):
@@ -146,7 +152,7 @@ def _load_apps():
     import importlib
     for name in ("shoemac_finder", "shoemac_calc",
                  "shoemac_about", "shoemac_safari", "shoemac_terminal",
-                 "shoemac_imgview"):
+                 "shoemac_imgview", "shoemac_music"):
         try:
             register_app(importlib.import_module(name).make_app())
         except Exception as e:                       # noqa: BLE001
@@ -341,6 +347,11 @@ class Desktop:
 
     def close(self, win):
         if win in self.wins:
+            if win.kind in APP_CLOSE:
+                try:
+                    APP_CLOSE[win.kind](win)
+                except Exception:                # noqa: BLE001  (teardown best-effort)
+                    pass
             self.wins.remove(win)
 
     # ----- zoom / maximise ------------------------------------------------
@@ -1040,7 +1051,8 @@ def selftest():
     cw, ch = 8, 16
     cols, rows = 160, 48
     d = Desktop(cols * cw, rows * ch, cw, ch)
-    for kind in ("finder", "calc", "about", "safari", "terminal", "imgview"):
+    for kind in ("finder", "calc", "about", "safari", "terminal", "imgview",
+                 "music"):
         if kind in WIN_SIZE:
             d.open_app(kind)
     cv = Canvas(text_mode())
@@ -1069,9 +1081,10 @@ def main():
         print("shoemac [image] - a fake Mac OS X Snow Leopard desktop in foot "
               "vector graphics.\nMouse-driven: click Dock tiles, drag windows, "
               "use the traffic lights.\nApps: Finder, Calculator, About This "
-              "Mac, Safari, Terminal, Preview (image viewer).\nOpen an image: "
-              "pass a path (or set SHOEMAC_OPEN), or double-click one in "
-              "Finder.\nq / Ctrl-C to quit. Env: SHOEMAC_FORCE / SHOEMAC_PLAIN.")
+              "Mac, Safari, Terminal, Preview (image viewer), Music.\nOpen an "
+              "image: pass a path (or set SHOEMAC_OPEN), or double-click one in "
+              "Finder.\nq / Ctrl-C to quit. Env: SHOEMAC_FORCE / SHOEMAC_PLAIN; "
+              "SHOEMAC_PLAYER sets the Music player binary (default mpg321).")
         return 0
     if not graphics_ok():
         sys.stderr.write("shoemac needs a graphics-capable terminal (foot). "
@@ -1329,6 +1342,16 @@ def main():
             if now_clk != last_clock:
                 last_clock = now_clk
                 dirty = True
+            # per-frame poll for animating apps (e.g. the Music player's
+            # progress/auto-advance); rides the 1 s select timeout below.
+            if APP_TICK:
+                for w in d.wins:
+                    if w.kind in APP_TICK:
+                        try:
+                            if APP_TICK[w.kind](w, d):
+                                dirty = True
+                        except Exception:        # noqa: BLE001
+                            pass
             if dirty:
                 render()
                 dirty = False
@@ -1378,6 +1401,13 @@ def main():
                     if key in ("q", "Q"):
                         running[0] = False
                         break
+        # teardown: let animating/child-owning apps clean up (kill players, etc.)
+        for w in list(d.wins):
+            if w.kind in APP_CLOSE:
+                try:
+                    APP_CLOSE[w.kind](w)
+                except Exception:                    # noqa: BLE001
+                    pass
     return 0
 
 

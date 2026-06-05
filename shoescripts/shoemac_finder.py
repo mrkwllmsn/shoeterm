@@ -340,9 +340,16 @@ def _open_file(e, d):
     try:
         from shoemac_imgview import is_image
     except ImportError:
-        return
+        is_image = lambda _p: False              # noqa: E731
     if is_image(e.path):
         d.open_app("imgview", e.path)
+        return
+    try:
+        from shoemac_music import is_audio
+    except ImportError:
+        return
+    if is_audio(e.path):
+        d.open_app("music", e.path)
 
 
 def fin_key(win, key, d):
