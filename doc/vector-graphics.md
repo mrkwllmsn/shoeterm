@@ -115,7 +115,17 @@ cell tall, matching the current font size.
 
 The bitmap font covers **printable ASCII only** (`0x20`–`0x7E`). Any other
 codepoint — accented letters, box-drawing, emoji — renders as **blank** (the pen
-just advances) in pixel mode; use `textmode smooth` when you need full Unicode.
+just advances) in pixel mode.
+
+> **`text` is ASCII-only in practice — for *both* modes.** foot's VT parser
+> never decodes UTF-8 inside a DCS string: while a DCS is open, lead bytes are
+> dropped and any continuation byte in `0x80`–`0x9F` is treated as an (8-bit)
+> C1 control, which **aborts the DCS** — the rest of the drawing then spills
+> onto the screen as literal text. Since most multibyte UTF-8 sequences contain
+> such a byte, you cannot deliver a non-ASCII codepoint to `text` at all,
+> regardless of `textmode`. Keep `text` strings to printable ASCII
+> (`0x20`–`0x7E`); sanitize any interpolated data (filenames, container names,
+> user input) before drawing it.
 
 This reproduces the chunky, retro bitmap-font look natively: where ghostty
 needed a bundled bitmap font to get this look for vector text, foot draws it
@@ -387,6 +397,9 @@ headless and exits, for CI). Stdlib-only Python.
   batch.
 - Drawing commands before a `size` command (other than `size`/`bg`/`pen`/
   `thickness`) are ignored, since there is no canvas yet.
+- `text` is **ASCII-only** (`0x20`–`0x7E`) in both text modes — a non-ASCII
+  byte in the DCS body aborts the whole sequence (see *Text rendering modes*).
+  Sanitize interpolated strings before drawing.
 
 ## Implementation
 
