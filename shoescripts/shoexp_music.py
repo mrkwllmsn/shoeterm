@@ -53,6 +53,15 @@ AUDIO_EXTS = (
 # to the generic SIGSTOP/SIGCONT strategy.
 REMOTE_BINS = ("mpg321", "mpg123")
 
+# Formats that REMOTE_BINS can't decode — routed to a separate PCM player.
+WAV_EXTS = (".wav", ".aiff", ".aif")
+
+
+def _wav_player_cmd():
+    return (os.environ.get("SHOEXP_WAV_PLAYER")
+            or os.environ.get("SHOEMAC_WAV_PLAYER")
+            or "aplay").strip() or "aplay"
+
 
 def is_audio(path):
     return os.path.splitext(path)[1].lower() in AUDIO_EXTS
@@ -229,6 +238,14 @@ class Player:
         # generic timing (seconds)
         self._t0 = 0.0
         self._acc = 0.0
+        # wav/PCM subprocess (used when remote player can't decode PCM)
+        wav_cmd = _wav_player_cmd()
+        try:
+            self.wav_tokens = shlex.split(wav_cmd) or ["aplay"]
+        except ValueError:
+            self.wav_tokens = ["aplay"]
+        self._wav_proc = None
+        self._wav_playing = False
 
     # ---- spawning --------------------------------------------------------- #
     def _ensure_remote(self):
@@ -264,11 +281,56 @@ class Player:
             return [path if t == "{}" else t for t in self.tokens]
         return self.tokens + [path]
 
+    def _wav_argv(self, path):
+        if any(t == "{}" for t in self.wav_tokens):
+            return [path if t == "{}" else t for t in self.wav_tokens]
+        return self.wav_tokens + [path]
+
+    def _kill_wav(self):
+        self._wav_playing = False
+        if not (self._wav_proc and self._wav_proc.poll() is None):
+            self._wav_proc = None
+            return
+        try:
+            os.killpg(self._wav_proc.pid, signal.SIGCONT)
+        except OSError:
+            pass
+        try:
+            os.killpg(self._wav_proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        try:
+            self._wav_proc.wait(timeout=0.5)
+        except Exception:                               # noqa: BLE001
+            pass
+        self._wav_proc = None
+
     # ---- transport -------------------------------------------------------- #
     def play(self, path):
         self.ended = False
         self.err = None
-        if self.remote:
+        ext = os.path.splitext(path)[1].lower()
+        if self.remote and ext in WAV_EXTS:
+            # mpg321/mpg123 can't decode PCM — route to the wav player
+            if self.state == "playing":
+                self._send("STOP")
+            self._kill_wav()
+            try:
+                self._wav_proc = subprocess.Popen(
+                    self._wav_argv(path),
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, start_new_session=True)
+            except OSError:
+                self.err = "wav player not found: " + self.wav_tokens[0]
+                self._wav_proc = None
+                self.state = "stopped"
+                return
+            self._wav_playing = True
+            self.state = "playing"
+            self._acc = 0.0
+            self._t0 = time.monotonic()
+        elif self.remote:
+            self._kill_wav()
             if not self._ensure_remote():
                 return
             self._user_stop = False
@@ -278,6 +340,7 @@ class Player:
             self.dur = 0.0
             self._ftot = 0
         else:
+            self._kill_wav()
             self._kill()            # stop whatever was playing
             try:
                 self.proc = subprocess.Popen(
@@ -295,6 +358,21 @@ class Player:
 
     def toggle_pause(self):
         if self.state == "stopped":
+            return
+        if self._wav_playing:
+            if not (self._wav_proc and self._wav_proc.poll() is None):
+                return
+            try:
+                if self.state == "playing":
+                    os.killpg(self._wav_proc.pid, signal.SIGSTOP)
+                    self._acc += time.monotonic() - self._t0
+                    self.state = "paused"
+                else:
+                    os.killpg(self._wav_proc.pid, signal.SIGCONT)
+                    self._t0 = time.monotonic()
+                    self.state = "playing"
+            except OSError:
+                pass
             return
         if self.remote:
             self._send("PAUSE")
@@ -315,6 +393,7 @@ class Player:
             pass
 
     def stop(self):
+        self._kill_wav()
         if self.remote and self.proc and self.proc.poll() is None:
             self._user_stop = True
             self._send("STOP")
@@ -334,6 +413,15 @@ class Player:
     # ---- per-frame poll (called from the app's tick) ---------------------- #
     def poll(self):
         changed = False
+        if self._wav_playing:
+            if self._wav_proc is not None and self._wav_proc.poll() is not None:
+                self._wav_proc = None
+                self._wav_playing = False
+                if self.state != "stopped":
+                    self.ended = True
+                self.state = "stopped"
+                changed = True
+            return changed
         if self.remote:
             if self.proc is None:
                 return False
@@ -390,14 +478,14 @@ class Player:
 
     # ---- timing readouts -------------------------------------------------- #
     def elapsed(self):
-        if self.remote:
+        if self.remote and not self._wav_playing:
             return self.pos
         if self.state == "playing":
             return self._acc + (time.monotonic() - self._t0)
         return self._acc
 
     def duration(self):
-        return self.dur if self.remote else 0.0
+        return self.dur if (self.remote and not self._wav_playing) else 0.0
 
     # ---- teardown --------------------------------------------------------- #
     def _kill(self):
@@ -419,6 +507,7 @@ class Player:
         self.proc = None
 
     def shutdown(self):
+        self._kill_wav()
         if self.proc and self.proc.poll() is None:
             if self.remote:
                 self._send("QUIT")
