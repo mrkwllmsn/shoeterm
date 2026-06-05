@@ -520,7 +520,25 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         "priceCurrency": "USD"
       },
       "isAccessibleForFree": true,
-      "author": { "@id": "https://mrkwllmsn.github.io/shoeterm/#org" }
+      "author": { "@id": "https://mrkwllmsn.github.io/shoeterm/#org" },
+      "contributor": [
+        {
+          "@type": "Person",
+          "name": "Mark Williamson"
+        },
+        {
+          "@type": "SoftwareApplication",
+          "name": "Claude Code",
+          "applicationCategory": "DeveloperApplication",
+          "url": "https://claude.com/claude-code",
+          "description": "Anthropic's agentic command-line coding tool, used to help build Shoe's vector-graphics layer, userland tools and website.",
+          "author": {
+            "@type": "Organization",
+            "name": "Anthropic",
+            "url": "https://www.anthropic.com"
+          }
+        }
+      ]
     },
     {
       "@type": "FAQPage",
@@ -1114,9 +1132,10 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
         <a href="https://github.com/mrkwllmsn/shoeterm" target="_blank" rel="noopener">GitHub ↗</a>
         <a href="https://codeberg.org/dnkl/foot" target="_blank" rel="noopener">foot source ↗</a>
         <a href="https://github.com/pimoroni/pimoroni-pico/blob/main/micropython/modules/picographics/README.md" target="_blank" rel="noopener">PicoGraphics ↗</a>
+        <a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code ↗</a>
       </div>
     </div>
-    <p class="foot-note">// Shoe — a vector-graphics terminal built on <a href="https://codeberg.org/dnkl/foot" target="_blank" rel="noopener" style="color:var(--ink-dim)">foot</a>, a fast, lightweight, Wayland-native terminal emulator. Drawn CPU-side via pixman. ESC P &gt; g … ESC \<br/>Thanks &amp; praise to Pimoroni&rsquo;s <a href="https://github.com/pimoroni/pimoroni-pico/blob/main/micropython/modules/picographics/README.md" target="_blank" rel="noopener" style="color:var(--ink-dim)">PicoGraphics</a> — the inspiration for this whole thing.</p>
+    <p class="foot-note">// Shoe — a vector-graphics terminal built on <a href="https://codeberg.org/dnkl/foot" target="_blank" rel="noopener" style="color:var(--ink-dim)">foot</a>, a fast, lightweight, Wayland-native terminal emulator. Drawn CPU-side via pixman. ESC P &gt; g … ESC \<br/>Thanks &amp; praise to Pimoroni&rsquo;s <a href="https://github.com/pimoroni/pimoroni-pico/blob/main/micropython/modules/picographics/README.md" target="_blank" rel="noopener" style="color:var(--ink-dim)">PicoGraphics</a> — the inspiration for this whole thing.<br/>Much of the vector-graphics layer, the userland tools and this site were built in collaboration with <a href="https://claude.com/claude-code" target="_blank" rel="noopener" style="color:var(--ink-dim)">Claude Code</a>.</p>
   </div>
 </footer>
 
