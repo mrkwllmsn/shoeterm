@@ -14,7 +14,7 @@ for mod in shoexp_ui shoexp_minesweeper shoexp_notepad shoexp_paint shoexp_ie; d
   cp "$dir/$mod.py" "/usr/local/bin/$mod.py"
 done
 # shoemac imports these helper modules; they must sit next to it on PATH.
-for mod in shoemac_ui shoemac_finder shoemac_calc shoemac_about shoemac_safari; do
+for mod in shoemac_ui shoemac_finder shoemac_calc shoemac_about shoemac_safari shoemac_terminal; do
   cp "$dir/$mod.py" "/usr/local/bin/$mod.py"
 done
 echo "Installed to /usr/local/bin/shoe"

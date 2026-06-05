@@ -127,7 +127,7 @@ def register_app(spec):
 def _load_apps():
     import importlib
     for name in ("shoemac_finder", "shoemac_calc",
-                 "shoemac_about", "shoemac_safari"):
+                 "shoemac_about", "shoemac_safari", "shoemac_terminal"):
         try:
             register_app(importlib.import_module(name).make_app())
         except Exception as e:                       # noqa: BLE001
@@ -792,7 +792,7 @@ def selftest():
     cw, ch = 8, 16
     cols, rows = 160, 48
     d = Desktop(cols * cw, rows * ch, cw, ch)
-    for kind in ("finder", "calc", "about", "safari"):
+    for kind in ("finder", "calc", "about", "safari", "terminal"):
         if kind in WIN_SIZE:
             d.open_app(kind)
     cv = Canvas()
