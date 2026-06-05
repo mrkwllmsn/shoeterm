@@ -837,6 +837,11 @@ keyword *none* (fully transparent).
 :  Set the current drawing color.
 |  thickness _n_
 :  Set line/outline thickness, in pixels (default: *1*).
+|  textmode smooth\|pixel _[scale]_
+:  Select how _text_ is rendered: *smooth* (antialiased font, full Unicode,
+   the default) or *pixel* (embedded 8x16 bitmap font, printable ASCII only).
+   For *pixel*, the optional integer _scale_ magnifies each font pixel to a
+   _scale_ x _scale_ block; omitted or *0* auto-sizes to about one cell tall.
 |  clip _x_ _y_ _w_ _h_
 :  Restrict subsequent drawing to a rectangle.
 |  noclip

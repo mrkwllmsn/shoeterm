@@ -106,6 +106,18 @@ text 12 30 Vector text — sharp & UTF-8 ✓
 pen #ffd166
 text 12 56 colour set with: pen #ffd166'
 
+demo 'textmode pixel — embedded 8x16 bitmap font (chunky, scalable)' \
+'size 40 6
+bg #15162b
+pen #cfe8ff
+text 12 26 smooth (default): fcft antialiased
+textmode pixel
+pen #7fe0ff
+text 12 58 pixel: ASCII 0123 ?&@ at 1x
+textmode pixel 2
+pen #ffd166
+text 12 104 PIXEL 2x  g j p q y'
+
 demo 'alpha blending (#rrggbbaa) — translucent circles over white' \
 'size 30 9
 bg #ffffff

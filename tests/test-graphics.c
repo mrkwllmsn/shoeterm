@@ -4,6 +4,7 @@
 #include <stdlib.h>
 
 #include "../graphics_draw.h"
+#include "../graphics_font8x16.h"
 
 static struct canvas
 mk(int w, int h)
@@ -45,6 +46,34 @@ expect_stroke(struct canvas *c, int x, int y, enum chan dom, const char *what)
                 what, x, y, got);
         failures++;
     }
+}
+
+/* Render one 8x16 glyph as solid scale*scale blocks, mirroring the block
+ * logic in graphics.c:draw_text_bitmap(). top is the y of the glyph cell. */
+static void
+blit_glyph8x16(struct canvas *c, char32_t cp, int x, int top, int scale,
+               uint32_t pen)
+{
+    const uint8_t *g = gfx_glyph8x16(cp);
+    if (g == NULL)
+        return;
+    for (int r = 0; r < GFX_FONT_H; r++) {
+        uint8_t byte = g[r];
+        for (int b = 0; b < GFX_FONT_W; b++) {
+            if (byte & (0x80 >> b))
+                fill_rect(c, x + b * scale, top + r * scale, scale, scale, pen);
+        }
+    }
+}
+
+static int
+count_set_pixels(const struct canvas *c)
+{
+    int n = 0;
+    for (int i = 0; i < c->w * c->h; i++)
+        if ((c->data[i] >> 24) != 0)
+            n++;
+    return n;
 }
 
 int
@@ -120,6 +149,58 @@ main(void)
     free(cc.data);
 
     free(c.data);
+
+    /* --- Bitmap 8x16 font (graphics_font8x16.h, pixel text mode) --- */
+
+    /* space: present, fully blank (16 zero rows) */
+    const uint8_t *sp = gfx_glyph8x16(' ');
+    if (sp == NULL) {
+        fprintf(stderr, "FAIL bitmap: space glyph is NULL\n");
+        failures++;
+    } else {
+        for (int r = 0; r < 16; r++)
+            if (sp[r] != 0) {
+                fprintf(stderr, "FAIL bitmap: space row %d not blank (%02x)\n",
+                        r, sp[r]);
+                failures++;
+            }
+    }
+
+    /* 'A': present and has ink (at least one non-zero row) */
+    const uint8_t *gA = gfx_glyph8x16('A');
+    if (gA == NULL) {
+        fprintf(stderr, "FAIL bitmap: 'A' glyph is NULL\n");
+        failures++;
+    } else {
+        bool any = false;
+        for (int r = 0; r < 16; r++)
+            if (gA[r] != 0) any = true;
+        if (!any) {
+            fprintf(stderr, "FAIL bitmap: 'A' has no ink\n");
+            failures++;
+        }
+    }
+
+    /* non-ASCII (emoji) has no glyph */
+    if (gfx_glyph8x16(0x1F600) != NULL) {
+        fprintf(stderr, "FAIL bitmap: emoji 0x1F600 should return NULL\n");
+        failures++;
+    }
+
+    /* scale: rendering 'A' at scale 2 sets exactly 4x the pixels of scale 1 */
+    struct canvas g1 = mk(8, 16);
+    struct canvas g2 = mk(16, 32);
+    blit_glyph8x16(&g1, 'A', 0, 0, 1, red);
+    blit_glyph8x16(&g2, 'A', 0, 0, 2, red);
+    int n1 = count_set_pixels(&g1);
+    int n2 = count_set_pixels(&g2);
+    if (n1 <= 0 || n2 != n1 * 4) {
+        fprintf(stderr, "FAIL bitmap scale: n1=%d n2=%d (expected n2==4*n1)\n",
+                n1, n2);
+        failures++;
+    }
+    free(g1.data);
+    free(g2.data);
 
     if (failures > 0) {
         fprintf(stderr, "%d failures\n", failures);

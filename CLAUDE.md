@@ -58,8 +58,9 @@ a whole drawing fit on one line, e.g. a single `printf`). `#` line comments and
 **pixels** (origin top-left, y down); the **canvas is sized in cells**
 (`size <cols> <rows>` → pixel size `cols*cell_width × rows*cell_height`).
 Colors are `#rrggbb`, `#rrggbbaa`, or `none`. Commands: `size, bg, pen,
-thickness, clip/noclip, clear, pixel, line, rect/rectf, rrect/rrectf,
-circ/circf, arc, tri/trif, poly/polyf, bezier, text`.
+thickness, textmode, clip/noclip, clear, pixel, line, rect/rectf, rrect/rrectf,
+circ/circf, arc, tri/trif, poly/polyf, bezier, text`. (`textmode smooth|pixel
+[scale]` switches `text` between the fcft font and an embedded 8×16 bitmap font.)
 
 ### Design (the important bit)
 
@@ -131,6 +132,15 @@ ones print the commands / input they send so usage is self-documenting.
   JSON parser is pure awk). `TH` is the title-band height (kept large so the
   title clears the top axis label).
 - **`chart-demo.sh`** — shoelace demo: shows the input + command for each chart.
+- **`shoetree`** — `… | shoetree "Title"` → a themed table drawn at the cursor
+  from whitespace/CSV/TSV/JSON (Python, stdlib only; the richer successor to the
+  shell/awk `shoetable`). Header-driven whitespace split keeps the last column's
+  spaces (`ps aux`'s `COMMAND`), numeric columns right-align. **Tree mode** (auto;
+  `SHOETREE_TREE=0|1`) nests rows into a forest from `PID`+`PPID` columns *or*
+  from `ps axf`-style indentation, drawing connector elbows/guides. Cell size via
+  `ESC[16t` over **`/dev/tty`** (stdin is the data pipe). Plain unicode-box
+  fallback (ASCII `|--`/`` `-- `` tree connectors). `SHOETREE_THEME=0..8`,
+  `SHOETREE_PLAIN`/`_FORCE`; `SHOETREE_SELFTEST=1` renders one headless frame.
 - **`memtop.sh`** — live memory dashboard (half-ring `% used` gauge, stacked
   RAM/swap bars, history area graph) redrawn in place from `/proc/meminfo`.
   `memtop.sh [interval]` for live mode, `memtop.sh once` for a single frame at
@@ -183,6 +193,40 @@ ones print the commands / input they send so usage is self-documenting.
     (left **and** right via `btn`), drag (`mouse` press/drag/release), keys and
     wheel. `install_local_shoe.sh` copies the modules next to `shoexp` on PATH.
 
+- **`shoemac`** — a (lovingly fake) **Mac OS X Snow Leopard (10.6 / Aqua)
+  desktop**, the cousin of `shoexp`. An **Aurora** wallpaper (indigo→violet
+  gradient + faint stars + soft translucent aurora ribbons), a translucent
+  **global menu bar** across the top (Apple logo drawn from primitives + app
+  menus + live clock + a Spotlight magnifier), and a glossy **Dock** pinned to
+  the bottom with proper **magnification** on hover (`?1003h` motion tracking).
+  The window manager draws brushed-aluminium windows with **traffic-light**
+  controls (close/minimise/zoom) and click-to-focus z-order. Apps:
+  **Finder** (ports slippers'/shoexp's `Entry`/`Pane` real-filesystem browser
+  with a FAVORITES sidebar + brushed-metal toolbar; double-click to enter,
+  in-place nav), a working **Calculator** (graphite reskin of shoexp's calc),
+  **About This Mac** (real CPU/RAM via /proc + `shutil.disk_usage` Startup Disk
+  bar), a fake **Safari** (canned clickable pages, compass logo from
+  primitives), and a **Terminal** (the first key-capturing shoemac app, like
+  shoexp's Notepad): a translucent charcoal Terminal.app that runs a small set of
+  *real* commands against the live filesystem — `ls`/`pwd`/`cd`/`cat`/`echo`/
+  `date`/`whoami`/`uname`/`clear`/`help` — with a coloured prompt, `ls -F`-style
+  colour-coded columns, and up/down command history. Reuses shoexp's interactive
+  scaffolding (Canvas DCS buffer,
+  raw-mode `Term`, SGR-pixel mouse, alt-screen teardown). `SHOEMAC_FORCE`/
+  `_PLAIN`; `SHOEMAC_SELFTEST=1` renders one headless frame for a smoke check.
+  - **Structure:** shared primitives (`Canvas`, the `C` Aqua palette,
+    `mix/lighten/darken`, `human`, and `Entry`/`Pane` for Finder) live in
+    **`shoemac_ui.py`**, imported by both `shoemac` and each app module. Every
+    app lives in its own **`shoemac_<name>.py`** and registers via
+    `register_app(make_app())` in `_load_apps()`; the only built-in window is
+    the decorative Trash. A spec dict supplies `kind/title/size/draw` plus
+    optional `init/click/mouse/key/wheel/icon16/icon48/dock/desktop`; the
+    registry routes draw, clicks (left **and** right via `btn`), drag, keys and
+    wheel — same contract as shoexp. `install_local_shoe.sh` copies the modules
+    next to `shoemac` on PATH. v1: windows aren't resizable/maximizable, zoom
+    light + Trash are decorative, Safari's pages are canned, and the Terminal's
+    command set is the fixed list above (no pipes/globs/external programs).
+
 ### Graphics-or-plain detection (shoestring / shoelace / shoebling / slippers)
 
 All emit graphics only to a graphics-capable terminal, else fall back to plain
@@ -205,3 +249,12 @@ text (so they're safe when piped to a file or run elsewhere). `graphics_ok()`:
 - Deterministic visual checks without the GUI: compile a tiny C harness that
   `#include`s `graphics_draw.h`, render to a PPM, `convert` to PNG, and view.
   (This is how the rasterizers and layouts were verified.)
+
+## IMPORTANT NOTE
+do not cd into directories when you don't need to. don't do this:
+    cd /tmp; convert shoemac_shot.png -crop 1700x1150+150+430 +repage shoemac_crop.png && identify shoemac_crop.png
+
+use paths and do it something like this instead
+    convert /tmp/shoemac_shot.png -crop 1700x1150+150+430 +repage /tmp/shoemac_crop.png && identify /tmp/shoemac_crop.png
+This is important because it imeans you don't get stuck at prompting me for permission so much
+

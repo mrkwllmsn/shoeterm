@@ -10,6 +10,7 @@
 #include "log.h"
 #include "debug.h"
 #include "graphics_draw.h"
+#include "graphics_font8x16.h"
 #include "sixel.h"
 #include "util.h"
 #include "xmalloc.h"
@@ -42,6 +43,9 @@
  *   trif  <x0> <y0> <x1> <y1> <x2> <y2>     filled
  *   poly  <x0> <y0> <x1> <y1> ...           closed outline
  *   polyf <x0> <y0> <x1> <y1> ...           filled
+ *   textmode <smooth|pixel> [scale]         text renderer (default smooth;
+ *                                           pixel = embedded 8x16 bitmap font,
+ *                                           optional integer pixel scale)
  *   text  <x> <y> <utf-8 string...>         (string = rest of line)
  *
  * All state (canvas, pen, clip, ...) is local to graphics_unhook(): the
@@ -345,6 +349,50 @@ draw_text(struct terminal *term, struct canvas *c, uint32_t pen,
     pixman_region32_fini(&clip);
 }
 
+/*
+ * Bitmap text: render the embedded 8x16 pixel font as solid blocks (no
+ * fcft, no antialiasing). Each font pixel becomes a scale*scale device
+ * pixel. fill_rect() clips, so no extra clip handling is needed.
+ */
+static void
+draw_text_bitmap(struct canvas *c, uint32_t pen, int x, int baseline,
+                 const char *str, size_t slen, int scale)
+{
+    if (scale < 1)
+        scale = 1;
+
+    const int top = baseline - GFX_FONT_BASELINE * scale;
+    const int tab = 4 * GFX_FONT_W * scale;
+    int pen_x = x;
+
+    size_t i = 0;
+    while (i < slen) {
+        char32_t cp;
+        i += utf8_next(str + i, slen - i, &cp);
+
+        if (cp == '\t') {
+            if (tab > 0)
+                pen_x = x + ((pen_x - x) / tab + 1) * tab;
+            continue;
+        }
+        if (cp < 0x20 || cp == 0x7f)
+            continue;        /* drop other controls */
+
+        const uint8_t *g = gfx_glyph8x16(cp);
+        if (g != NULL) {
+            for (int r = 0; r < GFX_FONT_H; r++) {
+                uint8_t byte = g[r];
+                for (int b = 0; b < GFX_FONT_W; b++) {
+                    if (byte & (0x80 >> b))
+                        fill_rect(c, pen_x + b * scale, top + r * scale,
+                                  scale, scale, pen);
+                }
+            }
+        }
+        pen_x += GFX_FONT_W * scale;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* DCS handlers                                                        */
 /* ------------------------------------------------------------------ */
@@ -396,6 +444,8 @@ graphics_unhook(struct terminal *term)
     uint32_t bg = 0;             /* premultiplied; 0 => transparent */
     bool transparent_bg = true;
     int thickness = 1;
+    int text_mode = 0;           /* 0 = smooth (fcft), 1 = pixel (bitmap) */
+    int text_scale = 0;          /* 0 = auto */
 
     while (p < end) {
         const char *nl = memchr(p, '\n', end - p);
@@ -477,6 +527,18 @@ graphics_unhook(struct terminal *term)
             int t;
             if (next_int(&lp, lend, &t))
                 thickness = t < 1 ? 1 : (t > GFX_MAX_THICKNESS ? GFX_MAX_THICKNESS : t);
+        }
+
+        else if (CMD("textmode")) {
+            const char *w; size_t wlen;
+            if (next_word(&lp, lend, &w, &wlen)) {
+                if (wlen == 5 && memcmp(w, "pixel", 5) == 0) {
+                    text_mode = 1;
+                    int s; if (next_int(&lp, lend, &s)) text_scale = s < 1 ? 0 : s;
+                } else if (wlen == 6 && memcmp(w, "smooth", 6) == 0) {
+                    text_mode = 0;
+                }
+            }
         }
 
         else if (CMD("clear")) {
@@ -634,8 +696,14 @@ graphics_unhook(struct terminal *term)
             if (!next_int(&lp, lend, &x) || !next_int(&lp, lend, &y))
                 continue;
             skip_spaces(&lp, lend);
-            if (lp < lend)
-                draw_text(term, &c, pen, x, y, lp, lend - lp);
+            if (lp < lend) {
+                if (text_mode == 1) {
+                    int scale = text_scale > 0 ? text_scale
+                                               : ((term->cell_height + 8) / 16 < 1 ? 1 : (term->cell_height + 8) / 16);
+                    draw_text_bitmap(&c, pen, x, y, lp, lend - lp, scale);
+                } else
+                    draw_text(term, &c, pen, x, y, lp, lend - lp);
+            }
         }
 
         #undef CMD

@@ -60,6 +60,7 @@ seams where coverage overlaps.
 | `bg <color>` | Fill the canvas background (default: `none`). |
 | `pen <color>` | Set the current drawing color. |
 | `thickness <n>` | Line/outline thickness in pixels (default `1`). |
+| `textmode smooth\|pixel [scale]` | Select how `text` is rendered: smooth antialiased font (default) or an embedded 8×16 bitmap font. See below. |
 | `clip <x> <y> <w> <h>` | Restrict subsequent drawing to a rectangle. |
 | `noclip` | Remove the clip rectangle. |
 | `clear` | Reset the whole canvas to the background color. |
@@ -92,6 +93,43 @@ Angles are in **degrees**, measured clockwise (because the y axis points down):
 ```
 
 `arc 100 100 40 0 90` draws the quarter from east round to south.
+
+### Text rendering modes
+
+By default `text` is drawn with the configured font — smooth, antialiased
+glyphs with full Unicode coverage. `textmode` switches `text` between that and
+an embedded 8×16 **bitmap** font that draws each glyph as solid pixel blocks:
+
+```
+textmode smooth          # default: antialiased font (full Unicode)
+textmode pixel [scale]   # bitmap font: each glyph is solid 8x16 blocks
+```
+
+`textmode` sets the mode for subsequent `text` commands in the same drawing
+(it lives alongside `pen`/`thickness` and resets per DCS sequence).
+
+With `textmode pixel`, the optional `scale` is an integer magnification: each
+font pixel becomes a `scale × scale` block of device pixels (so `scale 2` draws
+text at 16×32). Omitting `scale` (or `scale 0`) **auto-sizes** it to roughly one
+cell tall, matching the current font size.
+
+The bitmap font covers **printable ASCII only** (`0x20`–`0x7E`). Any other
+codepoint — accented letters, box-drawing, emoji — renders as **blank** (the pen
+just advances) in pixel mode; use `textmode smooth` when you need full Unicode.
+
+This reproduces the chunky, retro bitmap-font look natively: where ghostty
+needed a bundled bitmap font to get this look for vector text, foot draws it
+straight from the embedded `graphics_font8x16.h`.
+
+```sh
+printf '\033P>g
+size 24 4
+bg #101028
+pen #50ff90
+textmode pixel 2
+text 8 30 PIXEL TEXT
+\033\\'
+```
 
 ## Examples
 
