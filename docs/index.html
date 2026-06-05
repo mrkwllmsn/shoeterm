@@ -539,7 +539,7 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
           "name": "How do you draw graphics in the terminal with Shoe?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Send a DCS escape sequence of the form ESC P > g <commands> ESC \\. Commands are separated by newlines or commas — for example: size 20 6; pen #ff5050; rrectf 10 10 130 50 12; text 12 90 hello. The whole drawing can fit in one printf."
+            "text": "Send a DCS escape sequence of the form ESC P > g <commands> ESC \\. Commands are separated by newlines or commas — for example: size 40 6, pen #ff5050, rrectf 10 10 130 50 12, text 12 90 hello. The whole drawing can fit in one printf."
           }
         },
         {
@@ -563,7 +563,7 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
           "name": "Show me a Shoe printf one-liner example.",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "A whole drawing fits in one printf — commands are comma-separated. A card: printf '\\033P>g size 20 6, bg #101028, pen #ff5050, rrectf 10 10 130 50 12, pen #50d0ff, circ 220 35 28\\npen #ffffff\\ntext 12 90 hello\\n\\033\\\\'  —  Simple shapes: printf '\\033P>g size 10 4, pen #50d0ff, thickness 3, line 10 10 180 60, circ 120 30 20, rectf 200 10 60 40\\n\\033\\\\'  —  A filled triangle: printf '\\033P>g size 8 4, pen #4fd99a, trif 10 70 70 10 130 70\\n\\033\\\\'. Note: commands split on commas or newlines, but a text command runs to the end of its line, so put text last and end that line with a real newline."
+            "text": "A whole drawing fits in one printf — commands are comma-separated. A card: printf '\\033P>g size 20 6, bg #101028, pen #ff5050, rrectf 10 10 130 50 12, pen #50d0ff, circ 220 35 28, pen #ffffff, text 12 90 hello\\033\\\\'  —  Simple shapes: printf '\\033P>g size 10 4, pen #50d0ff, thickness 3, line 10 10 180 60, circ 120 30 20, rectf 200 10 60 40\\033\\\\'  —  A filled triangle: printf '\\033P>g size 8 4, pen #4fd99a, trif 10 70 70 10 130 70\\033\\\\'. Note: a text command runs to the end of its line, so put text last — right before the ESC \\ terminator."
           }
         },
         {

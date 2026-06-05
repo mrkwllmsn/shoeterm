@@ -47,6 +47,17 @@ OY = 8
 PADBOTTOM = 18
 TREEW = 14   # px of indent per tree depth level
 
+# foot discards a graphics canvas whose pixel width or height exceeds this
+# (graphics.c: GFX_MAX_DIM). Stay safely under it or nothing renders at all.
+GFX_MAX_DIM = 10000
+
+
+def max_table_rows(ch_px):
+    """Largest data-row count whose canvas stays under foot's height limit."""
+    usable = GFX_MAX_DIM - 2 * ch_px          # margin for the ceil + spare cell
+    body = usable - 2 * OY - TH - ROWH - PADBOTTOM
+    return max(1, body // ROWH)
+
 NUM_RE = re.compile(r'^-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?%?$')
 
 # gradient(12 ints) | accent | title | subtitle | name
@@ -522,6 +533,8 @@ def last_child_flags(depths):
 # --------------------------------------------------------------------------- #
 def fit_columns(headers, rows, depths, label_col, term_cols, numeric):
     ncols = len(headers)
+
+    # natural width (chars) of each column from headers + data
     cw = [len(h) for h in headers]
     for row in rows:
         for c in range(ncols):
@@ -529,29 +542,53 @@ def fit_columns(headers, rows, depths, label_col, term_cols, numeric):
             if len(v) > cw[c]:
                 cw[c] = len(v)
 
-    MAXW = (term_cols - 2) * CHARW if term_cols > 10 else 960
-    avail = MAXW - 2 * OX - 2 * TPAD - (ncols - 1 if ncols > 1 else 0)
-    if ncols > 0:
-        fit_cw = int((avail // ncols - CELLPADL - CELLPADR) / CHARW)
-    else:
-        fit_cw = MAXCW
-    local_max = fit_cw if fit_cw < MAXCW else MAXCW
-    if local_max < 4:
-        local_max = 4
-
-    for c in range(ncols):
-        if cw[c] > local_max:
-            cw[c] = local_max
-
     max_depth = max(depths) if depths else 0
+
+    # Cap the *non-label* columns so one stray wide field can't crowd out the
+    # rest; the label/command column is left at its natural width and may use
+    # whatever horizontal space the terminal allows.
+    for c in range(ncols):
+        if c != label_col and cw[c] > MAXCW:
+            cw[c] = MAXCW
+
+    def cell_px(width, c):
+        px = width * CHARW + CELLPADL + CELLPADR
+        if depths is not None and c == label_col:
+            px += max_depth * TREEW
+        return px
+
+    # Horizontal budget = terminal width (the table may grow up to here, but
+    # never wider). Fall back to a roomy default if the size is unknown.
+    budget_px = (term_cols - 2) * CHARW if term_cols > 10 else 1400
+    budget_px = min(budget_px, GFX_MAX_DIM - 4 * OX - 2 * TPAD)
+    inner_px = budget_px - 2 * OX - 2 * TPAD - (ncols - 1 if ncols > 1 else 0)
+    if inner_px < 200:
+        inner_px = 200
+
+    total = sum(cell_px(cw[c], c) for c in range(ncols))
+
+    # Only shrink if the natural table is wider than the terminal. Take it out
+    # of the label column first (it holds the long strings), then trim the
+    # widest remaining columns one char at a time until it fits.
+    if total > inner_px and ncols > 0:
+        over = total - inner_px
+        if label_col < ncols and cw[label_col] > 6:
+            drop = min(cw[label_col] - 6, (over + CHARW - 1) // CHARW)
+            cw[label_col] -= drop
+            over -= drop * CHARW
+        while over > 0:
+            cand = [c for c in range(ncols) if cw[c] > 4]
+            if not cand:
+                break
+            c = max(cand, key=lambda c: cw[c])
+            cw[c] -= 1
+            over -= CHARW
 
     cpx = [0] * ncols
     cx0 = [0] * ncols
     tabw = 0
     for c in range(ncols):
-        cpx[c] = cw[c] * CHARW + CELLPADL + CELLPADR
-        if depths is not None and c == label_col:
-            cpx[c] += max_depth * TREEW
+        cpx[c] = cell_px(cw[c], c)
         cx0[c] = tabw
         tabw += cpx[c] + (1 if c < ncols - 1 else 0)
 
@@ -588,7 +625,7 @@ def pick_theme(ncols, nrows):
 #  graphics rendering
 # --------------------------------------------------------------------------- #
 def render_graphics(headers, rows, depths, label_col, title, theme,
-                    model, cw_px, ch_px):
+                    model, cw_px, ch_px, note=None):
     g, accent, tcol, scol, tname = theme
     cw = model["cw"]
     cpx = model["cpx"]
@@ -613,8 +650,9 @@ def render_graphics(headers, rows, depths, label_col, title, theme,
         sys.stdout.flush()
         return
 
+    note_h = ROWH if note else 0
     CW = max(tabw + 2 * TPAD, 380)
-    CH = TH + ROWH + nrows * ROWH + PADBOTTOM
+    CH = TH + ROWH + nrows * ROWH + note_h + PADBOTTOM
     W = OX + CW + OX
     H = OY + CH + OY
     TOFF = OX + TPAD
@@ -747,6 +785,15 @@ def render_graphics(headers, rows, depths, label_col, title, theme,
                 c.line(e, mid, e + TREEW - 4, mid)
                 if not last_child[ri]:
                     c.line(e, mid, e, ry + ROWH)
+
+    # truncation footer (kept ASCII; the vector `text` halts on a missing glyph)
+    if note:
+        total = note + nrows
+        msg = "+ %d more rows (%d total) -- pipe through `head` to narrow" % (
+            note, total)
+        c.pen("#" + accent)
+        c.text(TOFF + CELLPADL, TBOT + ROWH - 6,
+               clip_cell(msg, (CW - 2 * TPAD) // CHARW))
 
     cols_c = (W + cw_px - 1) // cw_px + 1
     rows_c = (H + ch_px - 1) // ch_px + 1
@@ -937,14 +984,25 @@ def main():
     numeric = detect_numeric_cols(headers, rows)
     numeric.discard(label_col)
 
+    def cap_rows(rows, depths, ch_px):
+        # foot drops a canvas taller than GFX_MAX_DIM; keep the table under it
+        # and surface the omitted count via a footer row instead of vanishing.
+        cap = max_table_rows(ch_px)
+        if len(rows) <= cap:
+            return rows, depths, None
+        keep = max(1, cap - 1)            # reserve a line for the footer
+        note = len(rows) - keep
+        return rows[:keep], (depths[:keep] if depths is not None else None), note
+
     if selftest:
         if want_gfx:
             cw_px, ch_px = 8, 16
             term_cols = 120
+            rows, depths, note = cap_rows(rows, depths, ch_px)
             model = fit_columns(headers, rows, depths, label_col,
                                 term_cols, numeric)
             render_graphics(headers, rows, depths, label_col, title, theme,
-                            model, cw_px, ch_px)
+                            model, cw_px, ch_px, note)
         else:
             render_plain(headers, rows, depths, label_col, title, numeric)
         return 0
@@ -958,10 +1016,11 @@ def main():
             except ValueError:
                 term_cols = 120
         cw_px, ch_px = query_cell_via_tty()
+        rows, depths, note = cap_rows(rows, depths, ch_px)
         model = fit_columns(headers, rows, depths, label_col,
                             term_cols, numeric)
         render_graphics(headers, rows, depths, label_col, title, theme,
-                        model, cw_px, ch_px)
+                        model, cw_px, ch_px, note)
     else:
         render_plain(headers, rows, depths, label_col, title, numeric)
     return 0

@@ -35,6 +35,9 @@
 # Env:  SHOEMAC_FORCE=1     draw even if $TERM isn't foot-like
 #       SHOEMAC_PLAIN=1     never draw (print a notice and exit)
 #       SHOEMAC_SELFTEST=1  render one frame headless and exit (smoke check)
+#       SHOEMAC_PIXELFONT=1 render all text with the embedded 8x16 bitmap font
+#                           instead of the default antialiased font (set to an
+#                           integer >1 to scale the bitmap font, e.g. =2)
 #
 # Stdlib only; no dependencies.
 
@@ -59,6 +62,18 @@ from shoemac_ui import ESC, C, mix, lighten, darken, Canvas, human  # noqa: F401
 # --------------------------------------------------------------------------- #
 #  graphics-capable terminal detection
 # --------------------------------------------------------------------------- #
+def text_mode():
+    """SHOEMAC_PIXELFONT → "pixel" / "pixel <scale>" for the bitmap font, else None."""
+    v = os.environ.get("SHOEMAC_PIXELFONT")
+    if not v or v == "0":
+        return None
+    try:
+        scale = int(v)
+    except ValueError:
+        scale = 1
+    return "pixel %d" % scale if scale > 1 else "pixel"
+
+
 def graphics_ok():
     if os.environ.get("SHOEMAC_PLAIN"):
         return False
@@ -148,6 +163,8 @@ class Win:
         self.w, self.h = WIN_SIZE[kind]
         self.title = WIN_TITLE[kind]
         self.minimized = False
+        self.zoomed = False          # maximised? (zoom traffic light / Window menu)
+        self.restore = None          # saved (x, y, w, h) to un-zoom back to
         self.open_path = path        # apps that browse a path read this in init
         self.state = {}
         if kind in APP_INIT:
@@ -195,6 +212,8 @@ class Desktop:
         self.icon_sel = -1
         self.cascade = 0
         self.dock_hover_x = None       # last pointer x over the Dock (or None)
+        self.open_menu = None          # currently-dropped menu id, or None
+        self.menu_sel = -1             # hovered item index in the open menu
         self.user = os.environ.get("USER") or os.environ.get("USERNAME") or "user"
         try:
             self.host = socket.gethostname()
@@ -319,6 +338,45 @@ class Desktop:
     def close(self, win):
         if win in self.wins:
             self.wins.remove(win)
+
+    # ----- zoom / maximise ------------------------------------------------
+    def zoom_rect(self):
+        """The maximised window rectangle: fill the desktop between the menu
+        bar and the Dock shelf, with a small margin."""
+        m = 6
+        _sx, sy, _sw, _sh = self.dock_shelf_rect()
+        top = self.menubar_h + m
+        bottom = sy - 8                       # clear the Dock's magnified overhang
+        return (m, top, self.W - 2 * m, max(140, bottom - top))
+
+    def toggle_zoom(self, win):
+        if win.zoomed and win.restore:
+            win.x, win.y, win.w, win.h = win.restore
+            win.zoomed = False
+            win.restore = None
+        else:
+            win.restore = (win.x, win.y, win.w, win.h)
+            win.x, win.y, win.w, win.h = self.zoom_rect()
+            win.zoomed = True
+
+    def refit_zoomed(self):
+        """Re-maximise any zoomed window after a resize."""
+        for w in self.wins:
+            if w.zoomed:
+                w.x, w.y, w.w, w.h = self.zoom_rect()
+
+    # ----- menu bar -------------------------------------------------------
+    def menubar_hit(self, px):
+        """Which menu id sits under px on the menu bar (or None)."""
+        apple, items, _name = menubar_layout(self)
+        ax, _ay, aw, _ah = apple
+        if ax <= px < ax + aw:
+            return "apple"
+        for (mid, label, x) in items:
+            rx, _ry, rw, _rh = menu_item_rect(self, x, label)
+            if rx <= px < rx + rw:
+                return mid
+        return None
 
 
 # =========================================================================== #
@@ -578,26 +636,66 @@ def draw_trash_window(cv, d, win):
 
 
 # ----- menu bar ------------------------------------------------------------ #
+#  The bar's clickable geometry lives in menubar_layout() so draw + hit-test
+#  agree; menu_contents() supplies each dropdown's items.  An item is either
+#  None (a separator) or (label, action): a falsy action draws greyed/disabled
+#  (decorative), a truthy one is live and handled by do_menu_action() in main.
+MENU_IDS = ("File", "Edit", "View", "Window", "Help")
+MENU_ROWH = 20
+
+
+def active_app_name(d):
+    top = d.top_win()
+    return top.title if top is not None else "Finder"
+
+
+def menubar_layout(d):
+    """Returns (apple_rect, items, app_name).  items = [(menu_id, label, x)],
+    starting with the bold ("app") application name then the standard menus."""
+    cw = d.charw
+    apple = (0, 0, 26, d.menubar_h)
+    name = active_app_name(d)
+    if len(name) > 18:
+        name = name[:17] + "~"
+    items = []
+    nx = 30
+    items.append(("app", name, nx))
+    nx += (len(name) + 2) * cw
+    for m in MENU_IDS:
+        items.append((m, m, nx))
+        nx += (len(m) + 2) * cw
+    return apple, items, name
+
+
+def menu_item_rect(d, x, label):
+    """Highlight / hit rectangle for a menu-bar title drawn at x."""
+    cw = d.charw
+    return (x - 5, 0, len(label) * cw + 10, d.menubar_h)
+
+
 def draw_menubar(cv, d):
     W, mh = d.W, d.menubar_h
     cv.pen(C["menubg"]); cv.rectf(0, 0, W, mh)
     cv.pen(C["menuline"]); cv.rectf(0, mh - 1, W, 1)
     # Apple logo (drawn from primitives, ASCII-free)
-    _apple_logo(cv, 12, mh // 2)
-    # active app name (bold) + faux menus
-    top = d.top_win()
-    name = top.title if top is not None else "Finder"
-    if len(name) > 18:
-        name = name[:17] + "~"
+    if d.open_menu == "apple":
+        cv.pen(C["menuhi"]); cv.rectf(0, 0, 26, mh)
+        _apple_logo(cv, 12, mh // 2, C["menuhitxt"], C["menuhi"])
+    else:
+        _apple_logo(cv, 12, mh // 2)
     cw = d.charw
-    nx = 28
-    cv.pen(C["menuink"])
-    cv.text(nx, mh - 7, name)
-    cv.text(nx + 1, mh - 7, name)        # fake-bold (double strike)
-    nx += (len(name) + 2) * cw
-    for m in ("File", "Edit", "View", "Window", "Help"):
-        cv.pen(C["menuink"]); cv.text(nx, mh - 7, m)
-        nx += (len(m) + 2) * cw
+    _apple, items, name = menubar_layout(d)
+    for (mid, label, x) in items:
+        bold = (mid == "app")
+        if d.open_menu == mid:
+            rx, ry, rw, rh = menu_item_rect(d, x, label)
+            cv.pen(C["menuhi"]); cv.rectf(rx, ry, rw, rh)
+            cv.pen(C["menuhitxt"])
+        else:
+            cv.pen(C["menuink"])
+        cv.text(x, mh - 7, label)
+        if bold:
+            cv.text(x + 1, mh - 7, label)     # fake-bold (double strike)
     # right side: Spotlight magnifier (far right) + live clock
     spx = W - 16
     cv.pen(C["menuink"]); cv.thickness(2)
@@ -609,8 +707,154 @@ def draw_menubar(cv, d):
     cv.pen(C["menuink"]); cv.text(tx, mh - 7, clk)
 
 
-def _apple_logo(cv, cx, cy):
-    cv.pen(C["menuink"])
+# ----- menu dropdowns ------------------------------------------------------- #
+def menu_contents(d, mid, app):
+    """The item list for an open menu.  None = separator; (label, action)
+    otherwise (falsy action == greyed/decorative)."""
+    if mid == "apple":
+        return [("About This Mac", "about"),
+                None,
+                ("System Preferences...", None),
+                ("App Store...", None),
+                ("Force Quit...", None),
+                None,
+                ("Sleep", None),
+                ("Restart...", None),
+                ("Shut Down...", None),
+                None,
+                ("Log Out %s..." % d.user, "quit")]
+    if mid == "app":
+        return [("About %s" % app, None),
+                None,
+                ("Preferences...", None),
+                ("Services", None),
+                None,
+                ("Hide %s" % app, "hide"),
+                ("Hide Others", None),
+                ("Show All", None),
+                None,
+                ("Quit %s" % app, "closewin")]
+    if mid == "File":
+        return [("New Finder Window", "newfinder"),
+                ("New Folder", None),
+                ("Open", None),
+                None,
+                ("Close Window", "closewin"),
+                ("Save...", None),
+                ("Print...", None)]
+    if mid == "Edit":
+        return [("Undo", None), ("Redo", None), None,
+                ("Cut", None), ("Copy", None), ("Paste", None),
+                ("Select All", None)]
+    if mid == "View":
+        return [("as Icons", None), ("as List", None), ("as Columns", None),
+                None, ("Hide Toolbar", None), ("Show Path Bar", None)]
+    if mid == "Window":
+        items = [("Minimize", "minimize"), ("Zoom", "zoom"), None,
+                 ("Bring All to Front", None)]
+        wins = [w for w in d.wins if not w.minimized]
+        if wins:
+            items.append(None)
+            top = d.top_win()
+            for w in wins:
+                items.append((w.title[:26], ("focus", w.id, w is top)))
+        return items
+    if mid == "Help":
+        return [("shoemac Help", None), ("Keyboard Shortcuts", None)]
+    return []
+
+
+def menu_panel_geom(d):
+    """Returns (x, y, w, h, items) for the open dropdown, or None."""
+    mid = d.open_menu
+    if not mid:
+        return None
+    items = menu_contents(d, mid, active_app_name(d))
+    if not items:
+        return None
+    cw = d.charw
+    labels = [it[0] for it in items if it]
+    body = max((len(l) for l in labels), default=8)
+    w = max(150, body * cw + 40)
+    h = sum(8 if it is None else MENU_ROWH for it in items) + 8
+    if mid == "apple":
+        ax = 2
+    else:
+        ax = 2
+        for (m, label, x) in menubar_layout(d)[1]:
+            if m == mid:
+                ax = x - 8
+                break
+    ax = max(2, min(ax, d.W - w - 4))
+    return (ax, d.menubar_h, w, h, items)
+
+
+def _menu_rows(geom):
+    """Yield (idx, item, row_y, row_h) for a panel geom (shared draw/hit)."""
+    _x, y, _w, _h, items = geom
+    iy = y + 4
+    for idx, it in enumerate(items):
+        if it is None:
+            yield idx, None, iy, 8
+            iy += 8
+        else:
+            yield idx, it, iy, MENU_ROWH
+            iy += MENU_ROWH
+
+
+def menu_row_at(d, px, py):
+    """Index of the item under (px, py) inside the open panel, or None."""
+    geom = menu_panel_geom(d)
+    if not geom:
+        return None
+    x, _y, w, _h, _items = geom
+    if not (x <= px < x + w):
+        return None
+    for idx, it, iy, rh in _menu_rows(geom):
+        if it is not None and iy <= py < iy + rh:
+            return idx
+    return None
+
+
+def point_in_panel(d, px, py):
+    geom = menu_panel_geom(d)
+    if not geom:
+        return False
+    x, y, w, h, _items = geom
+    return x <= px < x + w and y <= py < y + h
+
+
+def draw_menu_dropdown(cv, d):
+    geom = menu_panel_geom(d)
+    if not geom:
+        return
+    x, y, w, h, items = geom
+    cw = d.charw
+    cv.pen(C["shadow"]); cv.rrectf(x + 3, y + 3, w, h, 6)
+    cv.pen("#fbfbfbf7"); cv.rrectf(x, y, w, h, 6)
+    cv.pen("#0000002a"); cv.rrect(x, y, w, h, 6)
+    for idx, it, iy, rh in _menu_rows(geom):
+        if it is None:
+            cv.pen("#0000001c"); cv.rectf(x + 10, iy + 3, w - 20, 1)
+            continue
+        label, action = it[0], it[1]
+        enabled = bool(action)
+        checked = isinstance(action, tuple) and len(action) > 2 and action[2]
+        hot = enabled and idx == d.menu_sel
+        if hot:
+            cv.vgrad(x + 3, iy, w - 6, rh, C["menuhi"], "#1456c8", 5)
+            ink = C["menuhitxt"]
+        else:
+            ink = C["menuink"] if enabled else "#b4b4b4"
+        if checked:
+            cv.pen(ink); cv.circf(x + 12, iy + rh // 2, 2)
+        cv.pen(ink); cv.text(x + 22, iy + rh - 6, label)
+
+
+def _apple_logo(cv, cx, cy, ink=None, bg=None):
+    ink = ink or C["menuink"]
+    bg = bg or C["menubg"]
+    cv.pen(ink)
     # body: two overlapping lobes + filler
     cv.circf(cx - 3, cy + 1, 4)
     cv.circf(cx + 3, cy + 1, 4)
@@ -618,9 +862,9 @@ def _apple_logo(cv, cx, cy):
     # top dimple (notch between the lobes)
     cv.circf(cx, cy - 3, 2)
     # bite out of the right edge (punch with the bar background)
-    cv.pen(C["menubg"]); cv.circf(cx + 6, cy + 1, 3)
+    cv.pen(bg); cv.circf(cx + 6, cy + 1, 3)
     # leaf
-    cv.pen(C["menuink"]); cv.trif(cx + 1, cy - 6, cx + 4, cy - 8, cx + 4, cy - 4)
+    cv.pen(ink); cv.trif(cx + 1, cy - 6, cx + 4, cy - 8, cx + 4, cy - 4)
 
 
 # ----- dock ----------------------------------------------------------------- #
@@ -795,13 +1039,16 @@ def selftest():
     for kind in ("finder", "calc", "about", "safari", "terminal"):
         if kind in WIN_SIZE:
             d.open_app(kind)
-    cv = Canvas()
+    cv = Canvas(text_mode())
     draw_wallpaper(cv, d)
     draw_desktop_icons(cv, d)
     for win in d.wins:
         draw_window(cv, d, win, win is d.top_win())
     draw_menubar(cv, d)
     draw_dock(cv, d, None)
+    d.open_menu = "Window"           # exercise the dropdown path in the smoke test
+    draw_menu_dropdown(cv, d)
+    d.open_menu = None
     out = cv.dcs(cols, rows, C["wp1"])
     sys.stdout.write("shoemac selftest ok: %d windows, %d bytes, %d draw lines\n"
                      % (len(d.wins), len(out), len(cv.lines)))
@@ -850,9 +1097,10 @@ def main():
             nonlocal cols, rows
             cols, rows = term_cells()
             d.W, d.H = cols * cw, rows * ch
+            d.refit_zoomed()
 
         def render():
-            cv = Canvas()
+            cv = Canvas(text_mode())
             draw_wallpaper(cv, d)
             draw_desktop_icons(cv, d)
             for win in d.wins:
@@ -860,6 +1108,7 @@ def main():
                     draw_window(cv, d, win, win is d.top_win())
             draw_menubar(cv, d)
             draw_dock(cv, d, d.dock_hover_x)
+            draw_menu_dropdown(cv, d)
             t.w(cv.dcs(cols, rows, C["wp1"]))
 
         def in_rect(px, py, r):
@@ -884,9 +1133,48 @@ def main():
                 return APP_CLICK[win.kind](win, px, py, d, btn)
             return True
 
+        def do_menu_action(action):
+            if action == "about":
+                launch("about")
+            elif action == "newfinder":
+                launch("finder", os.path.expanduser("~"))
+            elif action == "quit":
+                running[0] = False
+            elif action in ("closewin", "minimize", "hide", "zoom"):
+                w = d.top_win()
+                if w is None:
+                    return
+                if action == "closewin":
+                    d.close(w)
+                elif action in ("minimize", "hide"):
+                    w.minimized = True
+                elif action == "zoom":
+                    d.toggle_zoom(w)
+            elif isinstance(action, tuple) and action[0] == "focus":
+                for w in d.wins:
+                    if w.id == action[1]:
+                        d.focus(w)
+                        break
+
         def on_left_press(px, py):
-            # global menu bar (decorative in v1) swallows clicks
+            # global menu bar: click a title to drop its menu (toggle/switch)
             if py < d.menubar_h:
+                mid = d.menubar_hit(px)
+                d.open_menu = None if d.open_menu == mid else mid
+                d.menu_sel = -1
+                return
+            # an open dropdown captures the next click (item -> action, else
+            # the click just dismisses the menu)
+            if d.open_menu:
+                if point_in_panel(d, px, py):
+                    idx = menu_row_at(d, px, py)
+                    if idx is not None:
+                        geom = menu_panel_geom(d)
+                        it = geom[4][idx]
+                        if it and it[1]:
+                            do_menu_action(it[1])
+                d.open_menu = None
+                d.menu_sel = -1
                 return
             # Dock
             if d.in_dock_zone(py):
@@ -905,8 +1193,12 @@ def main():
                     win.minimized = True
                     return
                 if in_rect(px, py, zoom_btn_rect(win)):
-                    return                       # zoom is decorative in v1
+                    d.toggle_zoom(win)           # maximise / restore
+                    return
                 if win.in_title(px, py):
+                    if win.zoomed:               # dragging un-maximises
+                        win.zoomed = False
+                        win.restore = None
                     drag["win"] = win
                     drag["dx"] = px - win.x
                     drag["dy"] = py - win.y
@@ -941,6 +1233,19 @@ def main():
 
         def on_motion(px, py):
             nonlocal dirty
+            # while a menu is open: slide between titles, highlight items
+            if d.open_menu is not None:
+                if py < d.menubar_h:
+                    mid = d.menubar_hit(px)
+                    if mid is not None and mid != d.open_menu:
+                        d.open_menu = mid
+                        d.menu_sel = -1
+                        dirty = True
+                else:
+                    sel = menu_row_at(d, px, py)
+                    if sel != d.menu_sel:
+                        d.menu_sel = sel if sel is not None else -1
+                        dirty = True
             # track Dock hover for magnification
             new_hover = px if d.in_dock_zone(py) else None
             if new_hover != d.dock_hover_x:
@@ -1022,9 +1327,13 @@ def main():
                     handle_mouse(btn, x, y, press)
                     continue
                 if ev == "esc":
-                    w = d.top_win()
-                    if w is not None:
-                        d.close(w)
+                    if d.open_menu is not None:
+                        d.open_menu = None      # Esc closes an open menu first
+                        d.menu_sel = -1
+                    else:
+                        w = d.top_win()
+                        if w is not None:
+                            d.close(w)
                     dirty = True
                     continue
                 # keyboard: hand to the focused app if it captures keys,
