@@ -1,0 +1,430 @@
+#!/usr/bin/env python3
+"""shoestat — a polished system-status card drawn with foot's vector graphics.
+
+Gathers live data from /proc and shutil and draws a framed dashboard:
+a CPU-load half-ring gauge, RAM/Swap/disk progress bars, load averages,
+and a header band with host / OS / uptime / clock.
+
+  shoestat            one frame at the cursor (banner-friendly)
+  shoestat live [N]   redraw in place every N seconds (default 2)
+
+Font-size independent: queries the cell size via ESC[16t and the terminal
+size via ESC[18t, then sizes the canvas to fill the window. stdlib only.
+SHOESTAT_PLAIN forces a plain-text fallback; SHOESTAT_FORCE forces graphics.
+"""
+import os, sys, time, shutil, termios, tty, select, re, subprocess
+
+# ---------- capability detection ----------
+def graphics_ok():
+    if os.environ.get("SHOESTAT_PLAIN"): return False
+    if os.environ.get("SHOESTAT_FORCE"): return True
+    if not sys.stdout.isatty(): return False
+    return "foot" in os.environ.get("TERM", "")
+
+# ---------- terminal queries ----------
+def _query(seq, term_char):
+    """Send a query to /dev/tty and read the CSI reply, return the digits."""
+    try:
+        tfd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return None
+    old = termios.tcgetattr(tfd)
+    try:
+        tty.setraw(tfd)
+        os.write(tfd, seq.encode())
+        buf = b""
+        while True:
+            r, _, _ = select.select([tfd], [], [], 0.3)
+            if not r: break
+            c = os.read(tfd, 1)
+            if not c: break
+            buf += c
+            if c == term_char.encode(): break
+    finally:
+        termios.tcsetattr(tfd, termios.TCSADRAIN, old)
+        os.close(tfd)
+    return buf.decode(errors="ignore")
+
+def cell_size():
+    # ESC[16t -> ESC[6;<h>;<w>t
+    s = _query("\033[16t", "t") or ""
+    try:
+        parts = s.strip("\033[t").split(";")
+        return int(parts[2]), int(parts[1])     # (w, h)
+    except Exception:
+        return 8, 16
+
+def term_cells():
+    # ioctl is the reliable path; fall back to ESC[18t, then a default.
+    for f in (sys.stdout, sys.stdin):
+        try:
+            ts = os.get_terminal_size(f.fileno())
+            if ts.columns > 0 and ts.lines > 0:
+                return ts.columns, ts.lines
+        except Exception:
+            pass
+    s = _query("\033[18t", "t") or ""          # ESC[8;<rows>;<cols>t
+    try:
+        parts = s.strip("\033[t").split(";")
+        return int(parts[2]), int(parts[1])
+    except Exception:
+        return 80, 24
+
+# ---------- data ----------
+def read_meminfo():
+    d = {}
+    with open("/proc/meminfo") as f:
+        for ln in f:
+            k, _, v = ln.partition(":")
+            d[k] = int(v.split()[0]) * 1024       # bytes
+    return d
+
+def stat():
+    mi = read_meminfo()
+    mem_total = mi.get("MemTotal", 1)
+    mem_used  = mem_total - mi.get("MemAvailable", mem_total)
+    swap_total = mi.get("SwapTotal", 0)
+    swap_used  = swap_total - mi.get("SwapFree", swap_total)
+    with open("/proc/loadavg") as f:
+        la = f.read().split()
+    load = [float(la[0]), float(la[1]), float(la[2])]
+    ncpu = os.cpu_count() or 1
+    with open("/proc/uptime") as f:
+        up = float(f.read().split()[0])
+    cpu_model = "CPU"
+    try:
+        with open("/proc/cpuinfo") as f:
+            for ln in f:
+                if ln.startswith("model name"):
+                    cpu_model = ln.split(":", 1)[1].strip(); break
+    except Exception:
+        pass
+    try:    host = os.uname().nodename
+    except Exception: host = "host"
+    osname = " ".join(os.uname().sysname.split()) + " " + os.uname().release
+    disks = []
+    for label, path in (("/", "/"), ("~", os.path.expanduser("~"))):
+        try:
+            du = shutil.disk_usage(path)
+            disks.append((label, du.used, du.total))
+        except Exception:
+            pass
+    return dict(mem=(mem_used, mem_total), swap=(swap_used, swap_total),
+                load=load, ncpu=ncpu, up=up, cpu=cpu_model, host=host,
+                os=osname, disks=disks, docker=get_docker())
+
+def get_docker():
+    dk = shutil.which("docker")
+    if not dk:
+        return None
+    def run(args):
+        return subprocess.run([dk] + args, capture_output=True, text=True, timeout=6)
+    try:
+        info = run(["info", "--format",
+                    "{{.ContainersRunning}}|{{.Containers}}|{{.Images}}|{{.ServerVersion}}"])
+        if info.returncode != 0:
+            return None
+        running, total, images, ver = info.stdout.strip().split("|")
+        ps = run(["ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}"])
+        conts = []
+        for ln in ps.stdout.splitlines():
+            p = ln.split("\t")
+            if len(p) >= 4:
+                conts.append(dict(name=p[0], image=p[1], status=p[2], state=p[3]))
+        return dict(running=int(running), total=int(total), images=int(images),
+                    ver=ver, conts=conts)
+    except Exception:
+        return None
+
+def short_image(img):
+    img = img.split("@")[0]                 # drop digest
+    base = img.rsplit("/", 1)[-1]           # drop registry/namespace
+    return base
+
+def short_up(status):
+    m = re.search(r'up\s+(\d+)\s+(second|minute|hour|day|week|month)', status.lower())
+    if not m:
+        return status.split("(")[0].strip()[:6]
+    units = {"second": "s", "minute": "m", "hour": "h", "day": "d",
+             "week": "w", "month": "mo"}
+    return m.group(1) + units[m.group(2)]
+
+def cont_color(c):
+    st = c["status"].lower()
+    if "unhealthy" in st:
+        return RED
+    if c["state"] == "running":
+        return GREEN
+    if c["state"] in ("restarting", "paused", "created"):
+        return AMBER
+    return RED
+
+def human(n):
+    for u in ("B", "K", "M", "G", "T"):
+        if n < 1024: return f"{n:.0f}{u}" if u == "B" else f"{n:.1f}{u}"
+        n /= 1024
+    return f"{n:.1f}P"
+
+def dur(sec):
+    d = int(sec // 86400); h = int(sec % 86400 // 3600); m = int(sec % 3600 // 60)
+    if d: return f"{d}d {h}h {m}m"
+    if h: return f"{h}h {m}m"
+    return f"{m}m"
+
+# ---------- palette ----------
+BG0   = "#0d1228"; BG1 = "#171f3e"
+PANEL = "#1a2244"; PANEL_HI = "#2a3666"; TRACK = "#10162e"
+TEXT  = "#e9edff"; MUTED = "#8b97cc"; FAINT = "#5a6498"
+CYAN  = "#4fd2ff"; GREEN = "#5ef0a8"; AMBER = "#ffcf5a"; RED = "#ff6b6b"; VIOLET = "#b58bff"
+
+def usage_color(frac):
+    return GREEN if frac < 0.6 else AMBER if frac < 0.85 else RED
+
+# ---------- canvas ----------
+class Canvas:
+    def __init__(self, cols, rows, cw, ch):
+        self.cols, self.rows = cols, rows
+        self.cw, self.ch = cw, ch
+        self.w, self.h = cols * cw, rows * ch
+        self.buf = [f"size {cols} {rows}"]
+    def tw(self, s): return len(s) * self.cw          # rendered text width (monospace)
+    def cmd(self, s): self.buf.append(s)
+    def pen(self, c): self.buf.append(f"pen {c}")
+    def thick(self, n): self.buf.append(f"thickness {n}")
+    def rectf(self, x, y, w, h): self.buf.append(f"rectf {x:.0f} {y:.0f} {w:.0f} {h:.0f}")
+    def rrectf(self, x, y, w, h, r): self.buf.append(f"rrectf {x:.0f} {y:.0f} {w:.0f} {h:.0f} {r:.0f}")
+    def rrect(self, x, y, w, h, r): self.buf.append(f"rrect {x:.0f} {y:.0f} {w:.0f} {h:.0f} {r:.0f}")
+    def line(self, x0, y0, x1, y1): self.buf.append(f"line {x0:.0f} {y0:.0f} {x1:.0f} {y1:.0f}")
+    def arc(self, cx, cy, r, a0, a1): self.buf.append(f"arc {cx:.0f} {cy:.0f} {r:.0f} {a0:.0f} {a1:.0f}")
+    def circf(self, cx, cy, r): self.buf.append(f"circf {cx:.0f} {cy:.0f} {r:.0f}")
+    def text(self, x, y, s):
+        # foot ends the DCS on any 0x80-0x9f byte, which UTF-8 multibyte chars
+        # contain — so graphics text must be plain ASCII. Sanitize defensively.
+        s = "".join(c if 0x20 <= ord(c) <= 0x7e else "?" for c in s)
+        self.buf.append(f"text {x:.0f} {y:.0f} {s}")                # last on line
+    def emit(self):
+        # text commands must end their line; everything else comma-joined.
+        out = []
+        line = []
+        for c in self.buf:
+            if c.startswith("text "):
+                if line: out.append(", ".join(line)); line = []
+                out.append(c)
+            else:
+                line.append(c)
+        if line: out.append(", ".join(line))
+        body = "\n".join(out)
+        return "\033P>g " + body + "\n\033\\"
+
+# ---------- drawing helpers ----------
+def gradient_bg(cv, x, y, w, h, c0, c1, bands=22):
+    r0,g0,b0 = (int(c0[i:i+2],16) for i in (1,3,5))
+    r1,g1,b1 = (int(c1[i:i+2],16) for i in (1,3,5))
+    bh = h / bands
+    for i in range(bands):
+        t = i/(bands-1)
+        r=int(r0+(r1-r0)*t); g=int(g0+(g1-g0)*t); b=int(b0+(b1-b0)*t)
+        cv.pen(f"#{r:02x}{g:02x}{b:02x}")
+        cv.rectf(x, y+i*bh, w, bh+1)
+
+def panel(cv, x, y, w, h, r=12, fill=PANEL, border=PANEL_HI):
+    cv.pen("#00000055"); cv.rrectf(x+3, y+5, w, h, r)        # drop shadow
+    cv.pen(fill); cv.rrectf(x, y, w, h, r)                   # body
+    cv.pen("#ffffff14"); cv.line(x+r, y+1, x+w-r, y+1)       # top highlight
+    cv.pen(border); cv.thick(1); cv.rrect(x, y, w, h, r)     # border
+
+def bar(cv, x, y, w, h, frac, color, label, value):
+    frac = max(0.0, min(1.0, frac))
+    cv.pen(TEXT); cv.text(x, y - 6, label)
+    cv.pen(MUTED); cv.text(x + w - cv.tw(value), y - 6, value)
+    cv.pen(TRACK); cv.rrectf(x, y, w, h, h//2)              # track
+    fw = max(h, w * frac)
+    cv.pen(color); cv.rrectf(x, y, fw, h, h//2)             # fill
+    cv.pen("#ffffff22"); cv.line(x + h//2, y+1, x + fw - h//2, y+1)  # gloss
+
+def gauge(cv, cx, cy, r, frac, color, big, small):
+    """Top half-ring gauge: 180deg (west) -> 360 (east), filled by frac."""
+    frac = max(0.0, min(1.0, frac))
+    cv.thick(max(6, r//5))
+    cv.pen(TRACK); cv.arc(cx, cy, r, 180, 360)             # track
+    cv.pen(color); cv.arc(cx, cy, r, 180, 180 + 180*frac)  # value
+    cv.thick(1)
+    cv.pen(TEXT); cv.text(cx - cv.tw(big)//2, cy - 16, big)
+    cv.pen(MUTED); cv.text(cx - cv.tw(small)//2, cy + 6, small)
+
+# ---------- compose ----------
+def render(cv, s):
+    W, H = cv.w, cv.h
+    gradient_bg(cv, 0, 0, W, H, BG0, BG1)
+    M = 18
+    x0, y0 = M, M
+    iw = W - 2*M
+
+    # --- header band ---
+    hh = 52
+    panel(cv, x0, y0, iw, hh, 12, "#141b3a", PANEL_HI)
+    cv.pen(GREEN); cv.circf(x0+24, y0+hh//2, 6)
+    cv.pen("#ffffff66"); cv.circf(x0+22, y0+hh//2-2, 2)
+    cv.pen(TEXT);  cv.text(x0+40, y0+22, s["host"])
+    cv.pen(MUTED); cv.text(x0+40, y0+41, s["os"])
+    clock = time.strftime("%a %d %b  %H:%M:%S")
+    cv.pen(CYAN);  cv.text(x0+iw-cv.tw(clock)-18, y0+22, clock)
+    upt = "up " + dur(s["up"])
+    cv.pen(MUTED); cv.text(x0+iw-cv.tw(upt)-18, y0+41, upt)
+
+    cy0 = y0 + hh + M
+    bottom = H - M
+
+    # leave the lower portion for a Docker panel when docker is present
+    d = s.get("docker")
+    if d:
+        mid_h = int((bottom - cy0 - M) * 0.46)
+    else:
+        mid_h = bottom - cy0
+    mid_bottom = cy0 + mid_h
+
+    # --- left: CPU load gauge ---
+    gw = min(int(iw*0.34), 280)
+    gh = mid_h
+    panel(cv, x0, cy0, gw, gh, 14)
+    load1 = s["load"][0]; ncpu = s["ncpu"]
+    frac = load1 / ncpu
+    col = usage_color(frac)
+    cv.pen(TEXT); cv.text(x0+16, cy0+24, "CPU LOAD")
+    # load averages anchored to the panel bottom; gauge fills the space above
+    ly = cy0 + gh - 3*24 - 14
+    gtop = cy0 + 42
+    gcx = x0 + gw//2
+    gcy = (gtop + ly)//2 + 8
+    gr  = min(gw//2 - 28, int((ly - gtop)*0.46))
+    gauge(cv, gcx, gcy, gr, frac, col, f"{load1:.2f}", f"of {ncpu} cores")
+    labels = ["1m", "5m", "15m"]
+    lx = x0 + 16 + cv.tw("15m") + 8          # bar start clears the label
+    vx = x0 + gw - 16 - cv.tw("0.00")        # value right-aligned
+    bw = vx - lx - 10
+    for i, lv in enumerate(s["load"]):
+        by = ly + i*24
+        f = min(1.0, lv/ncpu)
+        cv.pen(MUTED); cv.text(x0+16, by+12, labels[i])
+        cv.pen(TRACK); cv.rrectf(lx, by+2, bw, 8, 4)
+        cv.pen(usage_color(f)); cv.rrectf(lx, by+2, max(8, bw*f), 8, 4)
+        cv.pen(TEXT); cv.text(vx, by+12, f"{lv:.2f}")
+
+    # --- right: stacked resource bars ---
+    rx = x0 + gw + M
+    rw = (x0 + iw) - rx
+    panel(cv, rx, cy0, rw, gh, 14)
+    px = rx + 24
+    pw = rw - 48
+    rows = []
+    mu, mt = s["mem"];  rows.append(("Memory", mu, mt, CYAN))
+    su, st = s["swap"]
+    if st > 0: rows.append(("Swap", su, st, VIOLET))
+    for lbl, used, total in s["disks"]:
+        rows.append((f"Disk {lbl}", used, total, None))
+    cv.pen(TEXT); cv.text(rx+16, cy0+24, "RESOURCES")
+    avail = gh - 56
+    step = avail / len(rows)
+    bh = max(14, min(22, int(step*0.42)))
+    for i, (lbl, used, total, color) in enumerate(rows):
+        frac = used/total if total else 0
+        c = color or usage_color(frac)
+        by = cy0 + 50 + int(i*step) + int((step-bh)//2)
+        val = f"{human(used)} / {human(total)}  {frac*100:.0f}%"
+        bar(cv, px, by, pw, bh, frac, c, lbl, val)
+
+    # --- bottom: Docker panel (full width) ---
+    if d:
+        draw_docker(cv, x0, mid_bottom + M, iw, bottom - (mid_bottom + M), d)
+
+def draw_docker(cv, x, y, w, h, d):
+    panel(cv, x, y, w, h, 14)
+    cv.pen(CYAN); cv.text(x + 16, y + 24, "DOCKER")
+    summary = (f"{d['running']} running   {d['total']} total   "
+               f"{d['images']} images   v{d['ver']}")
+    cv.pen(MUTED); cv.text(x + w - cv.tw(summary) - 16, y + 24, summary)
+    cv.pen(PANEL_HI); cv.thick(1); cv.line(x + 16, y + 34, x + w - 16, y + 34)
+
+    conts = sorted(d["conts"], key=lambda c: c["name"])
+    if not conts:
+        cv.pen(FAINT); cv.text(x + 16, y + 60, "no running containers")
+        return
+    top = y + 48
+    avail_h = (y + h - 14) - top
+    ncol = 2 if len(conts) > 6 else 1
+    percol = (len(conts) + ncol - 1) // ncol
+    colw = (w - 32) // ncol
+    rowh = max(int(cv.ch * 1.25), min(int(cv.ch * 1.9), avail_h // max(1, percol)))
+    for i, c in enumerate(conts):
+        col, row = i // percol, i % percol
+        cx = x + 16 + col * colw
+        cyl = top + row * rowh
+        baseline = cyl + rowh // 2 + 5
+        cv.pen(cont_color(c)); cv.circf(cx + 7, cyl + rowh // 2, 5)
+        up = short_up(c["status"])
+        ux = cx + colw - cv.tw(up) - 16
+        cv.pen(GREEN if c["state"] == "running" else AMBER); cv.text(ux, baseline, up)
+        nx = cx + 22
+        name = c["name"]
+        maxn = max(6, int((colw * 0.52) / cv.cw))
+        if len(name) > maxn:
+            name = name[:maxn - 1] + "~"
+        cv.pen(TEXT); cv.text(nx, baseline, name)
+        ix = nx + cv.tw(name) + cv.cw
+        room = ux - ix - cv.cw
+        if room > 4 * cv.cw:
+            img = short_image(c["image"])
+            mi = int(room / cv.cw)
+            if len(img) > mi:
+                img = img[:mi - 1] + "~"
+            cv.pen(FAINT); cv.text(ix, baseline, img)
+
+def plain(s):
+    out = [f"{s['host']}  —  {s['os']}  —  up {dur(s['up'])}"]
+    mu, mt = s["mem"]
+    out.append(f"  Memory  {human(mu)} / {human(mt)}  ({mu/mt*100:.0f}%)")
+    su, st = s["swap"]
+    if st: out.append(f"  Swap    {human(su)} / {human(st)}  ({su/st*100:.0f}%)")
+    for lbl, used, total in s["disks"]:
+        out.append(f"  Disk {lbl:<2} {human(used)} / {human(total)}  ({used/total*100:.0f}%)")
+    out.append(f"  Load    {s['load'][0]:.2f} {s['load'][1]:.2f} {s['load'][2]:.2f}  ({s['ncpu']} cores)")
+    d = s.get("docker")
+    if d:
+        out.append(f"  Docker  {d['running']} running / {d['total']} total, "
+                   f"{d['images']} images (v{d['ver']})")
+        for c in sorted(d["conts"], key=lambda c: c["name"]):
+            mark = "x" if cont_color(c) == RED else ("!" if cont_color(c) == AMBER else "*")
+            out.append(f"    {mark} {c['name']:<28} {short_image(c['image']):<20} "
+                       f"{short_up(c['status'])}")
+    return "\n".join(out)
+
+def main():
+    argv = sys.argv[1:]
+    if not graphics_ok():
+        print(plain(stat())); return
+    cw, ch = cell_size()
+    cols, rows = term_cells()
+    # leave a small margin of cells; cap so an inline frame stays card-like
+    cols = max(40, min(cols - 2, 120))
+    rows = max(14, min(rows - 2, 30))
+
+    if argv and argv[0] in ("live", "-l"):
+        interval = float(argv[1]) if len(argv) > 1 else 2.0
+        sys.stdout.write("\033[?25l")  # hide cursor
+        try:
+            while True:
+                cv = Canvas(cols, rows, cw, ch)
+                render(cv, stat())
+                sys.stdout.write("\033[H" + cv.emit()); sys.stdout.flush()
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            sys.stdout.write("\033[?25h\n")
+    else:
+        cv = Canvas(cols, rows, cw, ch)
+        render(cv, stat())
+        sys.stdout.write(cv.emit() + "\n"); sys.stdout.flush()
+
+if __name__ == "__main__":
+    main()
