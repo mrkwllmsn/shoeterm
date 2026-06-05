@@ -328,6 +328,7 @@ class Desktop:
             self.host = socket.gethostname()
         except OSError:
             self.host = "localhost"
+        self.bsod = None             # set to app label string to show BSOD
 
     # ----- icon hit boxes (top-left column) -------------------------------
     def icon_rect(self, i):
@@ -351,7 +352,7 @@ class Desktop:
         return (bx, self.H - self.taskbar_h + 4, 158, self.taskbar_h - 8)
 
     def start_menu_rect(self):
-        w = 232
+        w = 280
         head_h = 54
         h = head_h + 6
         for _kind, _label, sep in START_ITEMS:
@@ -581,6 +582,21 @@ def draw_title_icon(cv, kind, x, y):
         cv.pen("#bcd3c2"); cv.polyf([x + 2, y + 2, x + 14, y + 2,
                                      x + 12, y + 15, x + 4, y + 15])
         cv.pen("#5aa05a"); cv.rectf(x + 7, y + 4, 2, 10)
+    elif kind == "bsod_word":
+        cv.pen("#2b579a"); cv.rrectf(x, y, 16, 16, 2)
+        cv.pen("#ffffff"); cv.text(x + 3, y + 12, "W")
+    elif kind == "bsod_excel":
+        cv.pen("#217346"); cv.rrectf(x, y, 16, 16, 2)
+        cv.pen("#ffffff"); cv.text(x + 4, y + 12, "X")
+    elif kind == "bsod_access":
+        cv.pen("#a4373a"); cv.rrectf(x, y, 16, 16, 2)
+        cv.pen("#ffffff"); cv.text(x + 4, y + 12, "A")
+    elif kind == "bsod_ppt":
+        cv.pen("#d24726"); cv.rrectf(x, y, 16, 16, 2)
+        cv.pen("#ffffff"); cv.text(x + 4, y + 12, "P")
+    elif kind == "bsod_outlook":
+        cv.pen("#0078d4"); cv.rrectf(x, y, 16, 16, 2)
+        cv.pen("#ffffff"); cv.text(x + 4, y + 12, "O")
 
 
 def close_btn_rect(win):
@@ -863,6 +879,55 @@ def draw_recycle(cv, d, win):
     cv.text(cx - len(msg) * d.charw // 2, cy + 40, msg)
 
 
+# ----- BSOD --------------------------------------------------------------- #
+_BSOD_EXE = {
+    "bsod_word":    ("WINWORD.EXE",    "0xBF802000", "WORD_KERNEL_CORRUPT"),
+    "bsod_excel":   ("EXCEL.EXE",      "0xBF804000", "EXCEL_DIVIDE_BY_ZERO"),
+    "bsod_access":  ("MSACCESS.EXE",   "0xBF806000", "ACCESS_DATABASE_FAULT"),
+    "bsod_ppt":     ("POWERPNT.EXE",   "0xBF808000", "SLIDE_SHOW_MEMORY_ERROR"),
+    "bsod_outlook": ("OUTLOOK.EXE",    "0xBF80A000", "MAIL_DELIVERY_EXCEPTION"),
+}
+
+
+def draw_bsod(cv, d):
+    kind = d.bsod
+    exe, addr, stop_sym = _BSOD_EXE.get(kind, ("UNKNOWN.EXE", "0xBF800000", "UNKNOWN_CRASH"))
+    cv.pen("#0000aa"); cv.rectf(0, 0, d.W, d.H)
+    lh = d.ch
+    lx = max(20, d.W // 8)
+    ly = max(20, (d.H - lh * 22) // 2)
+
+    def ln(text, bold=False, gap=0):
+        nonlocal ly
+        if text:
+            cv.pen("#ffffff"); cv.text(lx, ly + lh - 2, text)
+        ly += lh + gap
+
+    ln("A problem has been detected and Windows has been shut down to prevent damage")
+    ln("to your computer.")
+    ln("")
+    ln(stop_sym, bold=True, gap=4)
+    ln("If this is the first time you've seen this Stop error screen,")
+    ln("restart your computer. If this screen appears again, follow")
+    ln("these steps:")
+    ln("")
+    ln("Check for viruses on your computer. Remove any newly installed")
+    ln("hard drives or hard drive controllers. Check your hard drive")
+    ln("to make sure it is properly configured and terminated.")
+    ln("Run CHKDSK /F to check for hard drive corruption, and then")
+    ln("restart your computer.")
+    ln("")
+    ln("Technical information:")
+    ln("")
+    ln("*** STOP: 0x0000007E (0xC0000005, %s, 0xF54B9C34, 0xF54B9930)" % addr)
+    ln("")
+    ln("%s - Address %s base at %s, DateStamp 3d6dd67c" % (exe, addr, addr))
+    ln("")
+    ln("")
+    cv.pen("#aaaaff")
+    cv.text(lx, ly + lh - 2, "Press any key or click to return to Windows...")
+
+
 # ----- taskbar + start menu ------------------------------------------------ #
 def draw_taskbar(cv, d):
     W, H, tbh = d.W, d.H, d.taskbar_h
@@ -915,6 +980,12 @@ START_ITEMS = [
     ("calc", "Calculator", False),
     ("mycomputer", "My Computer", False),
     ("explorer", "My Documents", False),
+    ("sep", "", True),
+    ("bsod_word",    "Microsoft Word",       False),
+    ("bsod_excel",   "Microsoft Excel",      False),
+    ("bsod_access",  "Microsoft Access",     False),
+    ("bsod_ppt",     "Microsoft PowerPoint", False),
+    ("bsod_outlook", "Microsoft Outlook",    False),
     ("sep", "", True),
     ("quit", "Turn Off Computer", False),
 ]
@@ -1166,6 +1237,10 @@ def main():
 
         def render():
             cv = Canvas()
+            if d.bsod:
+                draw_bsod(cv, d)
+                t.w(cv.dcs(cols, rows, "#0000aa"))
+                return
             draw_wallpaper(cv, d)
             draw_desktop_icons(cv, d)
             for win in d.wins:
@@ -1202,6 +1277,9 @@ def main():
         def launch(kind, path=None):
             if kind == "quit":
                 running[0] = False
+                return
+            if kind.startswith("bsod_"):
+                d.bsod = kind
                 return
             d.open_app(kind, path)
 
@@ -1411,6 +1489,15 @@ def main():
                 if ev == "quit":
                     running[0] = False
                     break
+                # any key or mouse press dismisses the BSOD (ignore release so
+                # the release from the opening click doesn't clear it instantly)
+                if d.bsod:
+                    is_release = (isinstance(ev, tuple) and ev[0] == "mouse"
+                                  and not ev[4])
+                    if not is_release:
+                        d.bsod = None
+                        dirty = True
+                    continue
                 if isinstance(ev, tuple) and ev[0] == "mouse":
                     _, btn, x, y, press = ev
                     handle_mouse(btn, x, y, press)

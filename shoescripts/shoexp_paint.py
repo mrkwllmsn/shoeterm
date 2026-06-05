@@ -305,6 +305,7 @@ def make_app():
         "mouse": mouse_fn,
         "icon16": icon16_fn,
         "start": True,
+        "start_label": "Paint",
     }
 
 

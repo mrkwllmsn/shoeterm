@@ -284,6 +284,7 @@ def make_app():
         "key": key_notepad,
         "icon16": icon16_notepad,
         "start": True,
+        "start_label": "Notepad",
     }
 
 
