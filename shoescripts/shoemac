@@ -1,0 +1,991 @@
+#!/usr/bin/env python3
+# shoemac - a (lovingly fake) Mac OS X Snow Leopard (10.6 / Aqua) desktop drawn
+# entirely with foot's vector-graphics protocol, driven by the mouse.
+#
+#   Run it:   ./bld/debug/foot sh -c 'python3 shoescripts/shoemac'
+#   or, installed on PATH inside foot:   shoemac
+#
+# It's a joke demo, the Aqua cousin of shoexp: an Aurora wallpaper, a
+# translucent global menu bar across the top (Apple logo + app menus + live
+# clock + Spotlight), a glossy magnifying Dock pinned to the bottom, and a tiny
+# window manager with brushed-aluminium windows, traffic-light controls and
+# click-to-focus z-order.
+#
+# All the real apps live in their own shoemac_<name>.py module and register
+# through make_app(); the shared Canvas/palette/Pane helpers live in
+# shoemac_ui.py.  The four apps are:
+#
+#   finder    a real-filesystem browser (ports the Entry/Pane scan model)
+#   calc      a working clickable calculator
+#   about     an "About This Mac" panel
+#   safari    a (lovingly fake) web browser with canned pages
+#
+# Like shoexp, every frame is one comma-delimited DCS drawing program
+# (ESC P > g ... ESC \) printed over itself at the home position.  Mouse reports
+# arrive as SGR-pixel coordinates that line up 1:1 with the canvas, so a click
+# maps straight onto the drawn pixels - windows, dock tiles, lights and all.
+#
+# Mouse:  click a Dock tile to launch / focus an app;  click Trash for the bin
+#         drag a window by its title bar;  click the traffic lights (close /
+#         minimise / zoom);  double-click the Macintosh HD icon to open Finder
+#         wheel scrolls a scrollable app (Finder)
+# Keys:   Esc closes the focused window;  Ctrl-C / q quits (unless a typing app
+#         has focus and eats the key)
+#
+# Env:  SHOEMAC_FORCE=1     draw even if $TERM isn't foot-like
+#       SHOEMAC_PLAIN=1     never draw (print a notice and exit)
+#       SHOEMAC_SELFTEST=1  render one frame headless and exit (smoke check)
+#
+# Stdlib only; no dependencies.
+
+import math
+import os
+import re
+import select
+import signal
+import socket
+import sys
+import termios
+import time
+import tty
+
+# The Aqua palette, colour helpers, the Canvas drawing buffer and the small
+# formatting helpers live in shoemac_ui so the separate app modules
+# (shoemac_finder, shoemac_calc, ...) can share them without importing this
+# script.
+from shoemac_ui import ESC, C, mix, lighten, darken, Canvas, human  # noqa: F401
+
+
+# --------------------------------------------------------------------------- #
+#  graphics-capable terminal detection
+# --------------------------------------------------------------------------- #
+def graphics_ok():
+    if os.environ.get("SHOEMAC_PLAIN"):
+        return False
+    if os.environ.get("SHOEMAC_FORCE"):
+        return True
+    if not sys.stdout.isatty():
+        return False
+    term = os.environ.get("TERM", "")
+    return "foot" in term or "ghostty" in term
+
+
+# --------------------------------------------------------------------------- #
+#  app registry
+# --------------------------------------------------------------------------- #
+#  Built-in chrome (menu bar, Dock, windows) is theme code below; the only
+#  built-in "app" is the decorative Trash window.  Every real app lives in its
+#  own shoemac_<name>.py module and registers here via make_app() -> spec dict.
+#  An app spec is a dict; see "the contract" near _load_apps() for the keys.
+# --------------------------------------------------------------------------- #
+WIN_SIZE = {
+    "trash": (380, 240),     # built-in decorative Trash window
+}
+WIN_TITLE = {
+    "trash": "Trash",
+}
+
+APP_DRAW = {}     # kind -> draw(cv, d, win)
+APP_CLICK = {}    # kind -> click(win, px, py, d, btn) -> bool
+APP_MOUSE = {}    # kind -> mouse(win, phase, px, py, d, btn)  (drag-aware apps)
+APP_KEY = {}      # kind -> key(win, key, d) -> bool
+APP_WHEEL = {}    # kind -> wheel(win, px, py, up, d) -> bool
+APP_ICON16 = {}   # kind -> icon16(cv, x, y)            (optional, unused by chrome)
+APP_ICON48 = {}   # kind -> icon48(cv, cx, top)         (Dock / desktop icon)
+APP_INIT = {}     # kind -> init(win)                   (set win.state / win.pane)
+
+
+def register_app(spec):
+    k = spec["kind"]
+    WIN_SIZE[k] = tuple(spec["size"])
+    WIN_TITLE[k] = spec["title"]
+    APP_DRAW[k] = spec["draw"]
+    if spec.get("click"):
+        APP_CLICK[k] = spec["click"]
+    if spec.get("mouse"):
+        APP_MOUSE[k] = spec["mouse"]
+    if spec.get("key"):
+        APP_KEY[k] = spec["key"]
+    if spec.get("wheel"):
+        APP_WHEEL[k] = spec["wheel"]
+    if spec.get("init"):
+        APP_INIT[k] = spec["init"]
+    if spec.get("icon16"):
+        APP_ICON16[k] = spec["icon16"]
+    if spec.get("icon48"):
+        APP_ICON48[k] = spec["icon48"]
+    # placement: a truthy "dock" (or legacy "start") flag puts the app on the
+    # Dock, between Finder and the separator+Trash; a truthy "desktop" flag
+    # adds a desktop icon (top-right column).
+    if spec.get("dock") or spec.get("start"):
+        if k not in DOCK_ITEMS:
+            DOCK_ITEMS.append(k)
+    if spec.get("desktop"):
+        DESK_ICONS.append((k, spec.get("desktop_label", spec["title"])))
+
+
+def _load_apps():
+    import importlib
+    for name in ("shoemac_finder", "shoemac_calc",
+                 "shoemac_about", "shoemac_safari"):
+        try:
+            register_app(importlib.import_module(name).make_app())
+        except Exception as e:                       # noqa: BLE001
+            sys.stderr.write("shoemac: skipping %s: %s\n" % (name, e))
+
+
+# --------------------------------------------------------------------------- #
+#  windows
+# --------------------------------------------------------------------------- #
+class Win:
+    _seq = 0
+
+    def __init__(self, kind, x, y, path=None):
+        Win._seq += 1
+        self.id = Win._seq
+        self.kind = kind
+        self.x, self.y = x, y
+        self.w, self.h = WIN_SIZE[kind]
+        self.title = WIN_TITLE[kind]
+        self.minimized = False
+        self.open_path = path        # apps that browse a path read this in init
+        self.state = {}
+        if kind in APP_INIT:
+            APP_INIT[kind](self)
+
+    # window-local geometry helpers ----------------------------------------
+    @property
+    def title_h(self):
+        return 22
+
+    def body_rect(self):
+        return (self.x + 3, self.y + self.title_h,
+                self.w - 6, self.h - self.title_h - 4)
+
+    def contains(self, px, py):
+        return self.x <= px < self.x + self.w and self.y <= py < self.y + self.h
+
+    def in_title(self, px, py):
+        return (self.x <= px < self.x + self.w and
+                self.y <= py < self.y + self.title_h)
+
+
+# --------------------------------------------------------------------------- #
+#  desktop icons (top-right column) and Dock contents
+# --------------------------------------------------------------------------- #
+DESK_ICONS = [
+    ("machd", "Macintosh HD"),
+]
+ICON_W, ICON_H = 86, 72
+
+# the Dock holds Finder first, then any app with a truthy "dock" flag, then a
+# separator and the Trash (always last).  register_app() appends to this list.
+DOCK_ITEMS = ["finder"]
+
+
+# --------------------------------------------------------------------------- #
+#  the desktop / window manager
+# --------------------------------------------------------------------------- #
+class Desktop:
+    def __init__(self, W, H, cw, ch):
+        self.W, self.H, self.cw, self.ch = W, H, cw, ch
+        self.charw = max(5, cw)
+        self.menubar_h = 24
+        self.wins = []                 # z-order: last is topmost
+        self.icon_sel = -1
+        self.cascade = 0
+        self.dock_hover_x = None       # last pointer x over the Dock (or None)
+        self.user = os.environ.get("USER") or os.environ.get("USERNAME") or "user"
+        try:
+            self.host = socket.gethostname()
+        except OSError:
+            self.host = "localhost"
+
+    # ----- desktop icon hit boxes (top-right column) ----------------------
+    def icon_rect(self, i):
+        x = self.W - ICON_W - 16
+        y = self.menubar_h + 12 + i * (ICON_H + 8)
+        return (x, y, ICON_W, ICON_H)
+
+    def icon_at(self, px, py):
+        for i in range(len(DESK_ICONS)):
+            x, y, w, h = self.icon_rect(i)
+            if x <= px < x + w and y <= py < y + h:
+                return i
+        return None
+
+    # ----- Dock geometry --------------------------------------------------
+    def dock_entries(self):
+        # ("app", kind) tiles, a ("sep", None) divider, then the Trash tile
+        return ([("app", k) for k in DOCK_ITEMS] +
+                [("sep", None), ("app", "trash")])
+
+    def dock_shelf_rect(self):
+        items = self.dock_entries()
+        B, G, SEPW = 40, 10, 12
+        base_w = [SEPW if t == "sep" else B for (t, _) in items]
+        total = sum(base_w) + G * (len(items) - 1)
+        x0 = (self.W - total) // 2
+        shelf_w = total + 24
+        shelf_h = B + 18
+        shelf_y = self.H - shelf_h - 6
+        return (x0 - 12, shelf_y, shelf_w, shelf_h)
+
+    def dock_layout(self, hover_x=None):
+        # Returns [(type, kind, x, y, w, h), ...].  Tiles are square; the tile
+        # nearest hover_x (and, lightly, its neighbours) magnifies.  Scales are
+        # computed from the resting centres, then the magnified tiles are laid
+        # out centred and bottom-aligned on the shelf.
+        items = self.dock_entries()
+        B, DMAX, G, SEPW, INF = 40, 60, 10, 12, 80
+        base_w = [SEPW if t == "sep" else B for (t, _) in items]
+        total_base = sum(base_w) + G * (len(items) - 1)
+        x0 = (self.W - total_base) // 2
+        centers = []
+        cx = x0
+        for w in base_w:
+            centers.append(cx + w / 2)
+            cx += w + G
+        sw = []
+        for (t, _), c, bw in zip(items, centers, base_w):
+            if t == "sep" or hover_x is None:
+                sw.append(bw)
+                continue
+            dist = abs(hover_x - c)
+            boost = max(0.0, 1.0 - dist / INF)
+            sw.append(int(B + (DMAX - B) * boost))
+        total = sum(sw) + G * (len(items) - 1)
+        sx = (self.W - total) // 2
+        _shx, shy, _shw, shh = self.dock_shelf_rect()
+        base_y = shy + shh - 9          # tiles sit on the shelf, grow upward
+        rects = []
+        x = sx
+        for (t, payload), w in zip(items, sw):
+            h = w
+            rects.append((t, payload, x, base_y - h, w, h))
+            x += w + G
+        return rects
+
+    def dock_hit(self, px, py):
+        # Compute the layout magnified at the click x, so the tile under the
+        # cursor is the big one and the point lands inside it.
+        for (t, kind, x, y, w, h) in self.dock_layout(px):
+            if t == "sep":
+                continue
+            if x <= px < x + w and y <= py < y + h:
+                return kind
+        return None
+
+    def in_dock_zone(self, py):
+        _x, y, _w, h = self.dock_shelf_rect()
+        return py >= y - 24          # include the magnified overhang above
+
+    # ----- window management ----------------------------------------------
+    def focus(self, win):
+        if win in self.wins and self.wins[-1] is not win:
+            self.wins.remove(win)
+            self.wins.append(win)
+        win.minimized = False
+
+    def top_win(self):
+        for w in reversed(self.wins):
+            if not w.minimized:
+                return w
+        return None
+
+    def win_at(self, px, py):
+        for w in reversed(self.wins):
+            if not w.minimized and w.contains(px, py):
+                return w
+        return None
+
+    def open_app(self, kind, path=None):
+        if kind not in WIN_SIZE:
+            return None               # app module not loaded; ignore quietly
+        # focus an existing window of this kind unless it's the Finder (which
+        # can have several, e.g. one window per folder)
+        if kind != "finder":
+            for w in self.wins:
+                if w.kind == kind:
+                    self.focus(w)
+                    return w
+        x = 90 + (self.cascade % 6) * 28
+        y = self.menubar_h + 24 + (self.cascade % 6) * 24
+        self.cascade += 1
+        win = Win(kind, x, y, path)
+        self.wins.append(win)
+        return win
+
+    def close(self, win):
+        if win in self.wins:
+            self.wins.remove(win)
+
+
+# =========================================================================== #
+#  rendering
+# =========================================================================== #
+def draw_wallpaper(cv, d):
+    W, H = d.W, d.H
+    # vertical indigo -> violet -> cold-bottom gradient
+    cv.vgrad(0, 0, W, H * 2 // 3, C["wp0"], C["wp1"], 24)
+    cv.vgrad(0, H * 2 // 3, W, H - H * 2 // 3, C["wp1"], C["wp2"], 16)
+    # a sprinkle of faint stars near the top
+    cv.pen(C["star"])
+    rng = 1234567
+    for _ in range(40):
+        rng = (rng * 1103515245 + 12345) & 0x7fffffff
+        sx = rng % W
+        rng = (rng * 1103515245 + 12345) & 0x7fffffff
+        sy = rng % (H // 3)
+        cv.rectf(sx, sy, 1, 1)
+    # 3 soft translucent aurora ribbons (waving filled bands)
+    _ribbon(cv, W, int(H * 0.30), 26, 30, C["aur1"], 0.0)
+    _ribbon(cv, W, int(H * 0.40), 34, 26, C["aur0"], 1.7)
+    _ribbon(cv, W, int(H * 0.50), 22, 22, C["aur2"], 3.1)
+
+
+def _ribbon(cv, W, ymid, amp, thick, col, phase):
+    n = 14
+    top, bot = [], []
+    for i in range(n + 1):
+        x = W * i // n
+        yy = ymid + int(amp * math.sin(i / n * math.pi * 2.0 + phase))
+        top.append((x, yy))
+        bot.append((x, yy + thick))
+    pts = []
+    for (x, y) in top:
+        pts += [x, y]
+    for (x, y) in reversed(bot):
+        pts += [x, y]
+    cv.pen(col)
+    cv.polyf(pts)
+
+
+def draw_desktop_icons(cv, d):
+    for i, (kind, label) in enumerate(DESK_ICONS):
+        x, y, w, h = d.icon_rect(i)
+        if i == d.icon_sel:
+            cv.pen(C["iconsel"])
+            cv.rrectf(x, y, w, h, 6)
+        cx = x + w // 2
+        draw_big_icon(cv, kind, cx, y + 6)
+        draw_label_centered(cv, d, cx, y + h - 12, label)
+
+
+def draw_label_centered(cv, d, cx, ty, label):
+    tw = len(label) * d.charw
+    tx = cx - tw // 2
+    tx = max(2, min(tx, d.W - tw - 2))
+    cv.pen("#00000080")
+    cv.text(tx + 1, ty + 1, label)
+    cv.pen(C["iconlbl"])
+    cv.text(tx, ty, label)
+
+
+def draw_big_icon(cv, kind, cx, top):
+    # ~48px icon centred on cx, starting at y=top
+    if kind in APP_ICON48:
+        APP_ICON48[kind](cv, cx, top)
+        return
+    if kind == "machd":
+        draw_machd_icon(cv, cx, top)
+    elif kind == "trash":
+        draw_trash_icon(cv, cx, top)
+    else:
+        # generic rounded tile with the kind's initial
+        cv.vgrad(cx - 20, top, 40, 40, "#dfe6ef", "#9fb0c4", 8)
+        cv.pen("#7f8c9c"); cv.rrect(cx - 20, top, 40, 40, 8)
+        ch = kind[:1].upper() if kind else "?"
+        cv.pen("#3a4658"); cv.text(cx - 4, top + 27, ch)
+
+
+def draw_machd_icon(cv, cx, top):
+    # a brushed metal hard drive
+    cv.pen(C["shadow"]); cv.rrectf(cx - 18, top + 6, 38, 30, 5)
+    cv.vgrad(cx - 20, top + 4, 40, 30, "#f2f4f7", "#aab2bd", 8)
+    cv.pen("#8a93a0"); cv.rrect(cx - 20, top + 4, 40, 30, 8)
+    # face plate sheen
+    cv.pen("#ffffff66"); cv.rectf(cx - 16, top + 7, 32, 2)
+    # activity slot + dot
+    cv.pen("#5a6472"); cv.rrectf(cx - 12, top + 24, 24, 4, 2)
+    cv.pen("#2f9bdc"); cv.circf(cx + 13, top + 10, 2)
+
+
+def draw_trash_icon(cv, cx, top):
+    # a wire mesh trash can
+    cv.pen(C["shadow"]); cv.rrectf(cx - 13, top + 12, 28, 26, 4)
+    cv.vgrad(cx - 14, top + 10, 28, 26, "#d8dde4", "#aab2bd", 6)
+    cv.pen("#8a93a0"); cv.rrect(cx - 14, top + 10, 28, 26, 4)
+    # ribs
+    cv.pen("#9aa3b0")
+    for dx in (-7, 0, 7):
+        cv.line(cx + dx, top + 13, cx + dx, top + 34)
+    # lid + handle
+    cv.pen("#9aa3b0"); cv.rrectf(cx - 17, top + 5, 34, 5, 2)
+    cv.pen("#8a93a0"); cv.rrectf(cx - 5, top + 1, 10, 4, 2)
+
+
+# ----- windows ------------------------------------------------------------- #
+def light_centers(win):
+    cy = win.y + win.title_h // 2
+    return ((win.x + 16, cy), (win.x + 34, cy), (win.x + 52, cy))
+
+
+def close_btn_rect(win):
+    (cx, cy), _, _ = light_centers(win)
+    return (cx - 8, cy - 8, 16, 16)
+
+
+def min_btn_rect(win):
+    _, (cx, cy), _ = light_centers(win)
+    return (cx - 8, cy - 8, 16, 16)
+
+
+def zoom_btn_rect(win):
+    _, _, (cx, cy) = light_centers(win)
+    return (cx - 8, cy - 8, 16, 16)
+
+
+def _traffic_light(cv, cx, cy, fill, ring, focused, glyph):
+    if not focused:
+        fill, ring = C["tloff"], C["tloffr"]
+    r = 6
+    cv.pen(ring); cv.circf(cx, cy, r)
+    cv.pen(fill); cv.circf(cx, cy, r - 1)
+    cv.pen(C["tlgloss"]); cv.circf(cx - 1, cy - 2, 2)
+    if focused:
+        cv.pen(C["tlglyph"]); cv.thickness(1)
+        if glyph == "x":
+            cv.line(cx - 2, cy - 2, cx + 2, cy + 2)
+            cv.line(cx + 2, cy - 2, cx - 2, cy + 2)
+        elif glyph == "-":
+            cv.line(cx - 3, cy, cx + 3, cy)
+        elif glyph == "+":
+            cv.line(cx - 3, cy, cx + 3, cy)
+            cv.line(cx, cy - 3, cx, cy + 3)
+
+
+def draw_window(cv, d, win, focused):
+    x, y, w, h = win.x, win.y, win.w, win.h
+    th = win.title_h
+    # soft drop shadow
+    cv.pen(C["shadow"]); cv.rrectf(x + 5, y + 8, w, h, 10)
+    # frame (rounded) + body
+    cv.pen(C["winframe"] if focused else C["winframei"])
+    cv.rrectf(x, y, w, h, 9)
+    cv.pen(C["win"]); cv.rectf(x + 2, y + th, w - 4, h - th - 2)
+    # brushed-aluminium title bar (inset 2px so the rounded frame shows through)
+    if focused:
+        cv.vgrad(x + 2, y + 2, w - 4, th - 1, C["ttl0"], C["ttl1"], 8)
+    else:
+        cv.vgrad(x + 2, y + 2, w - 4, th - 1, C["ttl0i"], C["ttl1i"], 8)
+    cv.pen(C["ttlsep"]); cv.rectf(x + 2, y + th, w - 4, 1)
+    # centred title text
+    txt = win.title
+    maxc = max(3, (w - 130) // d.charw)
+    if len(txt) > maxc:
+        txt = txt[:maxc - 1] + "~"
+    tx = x + w // 2 - len(txt) * d.charw // 2
+    cv.pen(C["ttltxt"] if focused else C["ttltxti"])
+    cv.text(tx, y + th - 7, txt)
+    # traffic lights (top-left)
+    (clx, cy), (mlx, _), (zlx, _) = light_centers(win)
+    _traffic_light(cv, clx, cy, C["tlclose"], C["tlcloser"], focused, "x")
+    _traffic_light(cv, mlx, cy, C["tlmin"], C["tlminr"], focused, "-")
+    _traffic_light(cv, zlx, cy, C["tlzoom"], C["tlzoomr"], focused, "+")
+    cv.thickness(1)
+    # body content
+    bx, by, bw, bh = win.body_rect()
+    cv.clip(bx, by, bw, bh)
+    if win.kind == "trash":
+        draw_trash_window(cv, d, win)
+    elif win.kind in APP_DRAW:
+        APP_DRAW[win.kind](cv, d, win)
+    cv.noclip()
+
+
+# ----- built-in Trash window ----------------------------------------------- #
+def draw_trash_window(cv, d, win):
+    bx, by, bw, bh = win.body_rect()
+    cv.pen(C["white"]); cv.rectf(bx, by, bw, bh)
+    cx = bx + bw // 2
+    draw_trash_icon(cv, cx, by + bh // 2 - 30)
+    msg = "Trash is empty."
+    cv.pen(C["dim"])
+    cv.text(cx - len(msg) * d.charw // 2, by + bh // 2 + 28, msg)
+
+
+# ----- menu bar ------------------------------------------------------------ #
+def draw_menubar(cv, d):
+    W, mh = d.W, d.menubar_h
+    cv.pen(C["menubg"]); cv.rectf(0, 0, W, mh)
+    cv.pen(C["menuline"]); cv.rectf(0, mh - 1, W, 1)
+    # Apple logo (drawn from primitives, ASCII-free)
+    _apple_logo(cv, 12, mh // 2)
+    # active app name (bold) + faux menus
+    top = d.top_win()
+    name = top.title if top is not None else "Finder"
+    if len(name) > 18:
+        name = name[:17] + "~"
+    cw = d.charw
+    nx = 28
+    cv.pen(C["menuink"])
+    cv.text(nx, mh - 7, name)
+    cv.text(nx + 1, mh - 7, name)        # fake-bold (double strike)
+    nx += (len(name) + 2) * cw
+    for m in ("File", "Edit", "View", "Window", "Help"):
+        cv.pen(C["menuink"]); cv.text(nx, mh - 7, m)
+        nx += (len(m) + 2) * cw
+    # right side: Spotlight magnifier (far right) + live clock
+    spx = W - 16
+    cv.pen(C["menuink"]); cv.thickness(2)
+    cv.circ(spx, mh // 2 - 1, 4)
+    cv.line(spx + 3, mh // 2 + 2, spx + 6, mh // 2 + 5)
+    cv.thickness(1)
+    clk = time.strftime("%a %H:%M")
+    tx = spx - 14 - len(clk) * cw
+    cv.pen(C["menuink"]); cv.text(tx, mh - 7, clk)
+
+
+def _apple_logo(cv, cx, cy):
+    cv.pen(C["menuink"])
+    # body: two overlapping lobes + filler
+    cv.circf(cx - 3, cy + 1, 4)
+    cv.circf(cx + 3, cy + 1, 4)
+    cv.rectf(cx - 4, cy - 2, 8, 5)
+    # top dimple (notch between the lobes)
+    cv.circf(cx, cy - 3, 2)
+    # bite out of the right edge (punch with the bar background)
+    cv.pen(C["menubg"]); cv.circf(cx + 6, cy + 1, 3)
+    # leaf
+    cv.pen(C["menuink"]); cv.trif(cx + 1, cy - 6, cx + 4, cy - 8, cx + 4, cy - 4)
+
+
+# ----- dock ----------------------------------------------------------------- #
+def draw_dock(cv, d, hover_x):
+    rects = d.dock_layout(hover_x)
+    if not rects:
+        return
+    shx, shy, shw, shh = d.dock_shelf_rect()
+    # glossy translucent shelf
+    cv.pen(C["dock"]); cv.rrectf(shx, shy, shw, shh, 14)
+    cv.pen(C["dockline"]); cv.rectf(shx + 2, shy + 1, shw - 4, 1)
+    running = set(w.kind for w in d.wins)
+    for (t, kind, x, y, w, h) in rects:
+        if t == "sep":
+            cv.pen(C["docksep"]); cv.rectf(x + w // 2, y + 6, 1, h - 12)
+            continue
+        draw_dock_tile(cv, kind, x, y, w, h)
+        if kind in running:
+            cv.pen(C["dockdot"]); cv.circf(x + w // 2, shy + shh - 4, 2)
+
+
+def draw_dock_tile(cv, kind, x, y, w, h):
+    cx = x + w // 2
+    if kind == "trash":
+        draw_trash_icon(cv, cx, y + (h - 40) // 2)
+        return
+    if kind in APP_ICON48:
+        APP_ICON48[kind](cv, cx, y + (h - 40) // 2)
+        return
+    # generic glossy rounded tile with the kind's initial
+    cv.vgrad(x, y, w, h, "#5b6472", "#2f3744", 8)
+    cv.pen("#1c222b"); cv.rrect(x, y, w, h, 8)
+    cv.pen("#ffffff33"); cv.rectf(x + 3, y + 3, w - 6, h // 2 - 3)
+    ch = kind[:1].upper() if kind else "?"
+    cv.pen("#ffffff"); cv.text(cx - 4, y + h // 2 + 6, ch)
+
+
+# load the external app modules now that the registry + the Dock/desktop lists
+# they extend are all defined.
+_load_apps()
+
+
+# =========================================================================== #
+#  input parsing (ported from shoexp / slippers)
+# =========================================================================== #
+MOUSE_RE = re.compile(rb"\[<(\d+);(\d+);(\d+)([Mm])")
+CSI_FINAL = {b"A": "up", b"B": "down", b"C": "right", b"D": "left",
+             b"H": "home", b"F": "end"}
+TILDE = {3: "del", 5: "pgup", 6: "pgdn", 1: "home", 4: "end"}
+KEY_NAMES = ("enter", "back", "del", "tab", "up", "down", "left", "right",
+             "home", "end", "pgup", "pgdn")
+
+
+def parse_one(buf, i):
+    b = buf[i]
+    if b != 0x1b:
+        if b in (0x0d, 0x0a):
+            return ("enter", i + 1)
+        if b in (0x7f, 0x08):
+            return ("back", i + 1)
+        if b == 0x09:
+            return ("tab", i + 1)
+        if b == 0x03:
+            return ("quit", i + 1)
+        return (("char", chr(b)), i + 1)
+    if i + 1 >= len(buf):
+        return (None, -1)
+    n = buf[i + 1]
+    if n == 0x5b:
+        if i + 2 < len(buf) and buf[i + 2] == 0x3c:
+            m = MOUSE_RE.match(buf, i + 1)
+            if not m:
+                return (None, -1)
+            btn = int(m.group(1)); x = int(m.group(2)); y = int(m.group(3))
+            return (("mouse", btn, x, y, m.group(4) == b"M"), m.end())
+        j = i + 2
+        while j < len(buf) and (0x30 <= buf[j] <= 0x3f):
+            j += 1
+        if j >= len(buf):
+            return (None, -1)
+        final = buf[j:j + 1]
+        params = buf[i + 2:j]
+        if final == b"~":
+            try:
+                num = int(params.split(b";")[0])
+            except ValueError:
+                return ("ignore", j + 1)
+            return (TILDE.get(num, "ignore"), j + 1)
+        if final == b"":
+            return ("ignore", j + 1)
+        return (CSI_FINAL.get(final, "ignore"), j + 1)
+    if n == 0x4f:
+        if i + 2 >= len(buf):
+            return (None, -1)
+        return ("ignore", i + 3)
+    return ("esc", i + 1)
+
+
+def parse_events(buf):
+    events = []
+    i = 0
+    while i < len(buf):
+        ev, j = parse_one(buf, i)
+        if j < 0:
+            break
+        if ev not in (None, "ignore"):
+            events.append(ev)
+        i = j
+    return events, buf[i:]
+
+
+# =========================================================================== #
+#  terminal session
+# =========================================================================== #
+class Term:
+    def __init__(self):
+        self.fd = sys.stdin.fileno()
+        self.old = None
+
+    def __enter__(self):
+        self.old = termios.tcgetattr(self.fd)
+        tty.setraw(self.fd)
+        self.cw, self.ch = self.query_cell()
+        self.w(ESC + "[?1049h" + ESC + "[2J" + ESC + "[?25l")
+        # ?1003h = any-motion tracking so the Dock magnifies on hover, plus
+        # SGR-pixel coordinates (?1006/?1016) that map 1:1 onto the canvas.
+        self.w(ESC + "[?1003h" + ESC + "[?1006h" + ESC + "[?1016h")
+        return self
+
+    def __exit__(self, *a):
+        self.w(ESC + "[?1003l" + ESC + "[?1006l" + ESC + "[?1016l")
+        self.w(ESC + "[?25h" + ESC + "[?1049l")
+        if self.old:
+            termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
+
+    def w(self, s):
+        os.write(self.fd, s.encode() if isinstance(s, str) else s)
+
+    def query_cell(self):
+        try:
+            os.write(self.fd, (ESC + "[16t").encode())
+            buf = b""
+            deadline = time.monotonic() + 0.3
+            while time.monotonic() < deadline:
+                r, _, _ = select.select([self.fd], [], [], deadline - time.monotonic())
+                if not r:
+                    break
+                buf += os.read(self.fd, 64)
+                m = re.search(rb"\[6;(\d+);(\d+)t", buf)
+                if m:
+                    return int(m.group(2)), int(m.group(1))
+        except OSError:
+            pass
+        return 8, 16
+
+
+def term_cells():
+    try:
+        sz = os.get_terminal_size(sys.stdout.fileno())
+        return sz.columns, sz.lines
+    except OSError:
+        return 80, 24
+
+
+# =========================================================================== #
+#  self-test (headless single frame)
+# =========================================================================== #
+def selftest():
+    cw, ch = 8, 16
+    cols, rows = 160, 48
+    d = Desktop(cols * cw, rows * ch, cw, ch)
+    for kind in ("finder", "calc", "about", "safari"):
+        if kind in WIN_SIZE:
+            d.open_app(kind)
+    cv = Canvas()
+    draw_wallpaper(cv, d)
+    draw_desktop_icons(cv, d)
+    for win in d.wins:
+        draw_window(cv, d, win, win is d.top_win())
+    draw_menubar(cv, d)
+    draw_dock(cv, d, None)
+    out = cv.dcs(cols, rows, C["wp1"])
+    sys.stdout.write("shoemac selftest ok: %d windows, %d bytes, %d draw lines\n"
+                     % (len(d.wins), len(out), len(cv.lines)))
+    return 0
+
+
+# =========================================================================== #
+#  main
+# =========================================================================== #
+def main():
+    if os.environ.get("SHOEMAC_SELFTEST"):
+        return selftest()
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print("shoemac - a fake Mac OS X Snow Leopard desktop in foot vector "
+              "graphics.\nMouse-driven: click Dock tiles, drag windows, use the "
+              "traffic lights.\nApps: Finder, Calculator, About This Mac, "
+              "Safari.\nq / Ctrl-C to quit. Env: SHOEMAC_FORCE / SHOEMAC_PLAIN.")
+        return 0
+    if not graphics_ok():
+        sys.stderr.write("shoemac needs a graphics-capable terminal (foot). "
+                         "Run it inside foot, or set SHOEMAC_FORCE=1.\n")
+        return 1
+
+    resized = {"flag": True}
+
+    def on_winch(_s, _f):
+        resized["flag"] = True
+    try:
+        signal.signal(signal.SIGWINCH, on_winch)
+    except (ValueError, OSError):
+        pass
+
+    with Term() as t:
+        cw, ch = t.cw, t.ch
+        cols, rows = term_cells()
+        d = Desktop(cols * cw, rows * ch, cw, ch)
+        buf = b""
+        dirty = True
+        running = [True]
+        drag = {"win": None, "dx": 0, "dy": 0}
+        body_drag = {"win": None}      # drag-aware app capturing the pointer
+        last_click = {"t": 0.0, "tag": None}
+        last_clock = ""
+
+        def relayout():
+            nonlocal cols, rows
+            cols, rows = term_cells()
+            d.W, d.H = cols * cw, rows * ch
+
+        def render():
+            cv = Canvas()
+            draw_wallpaper(cv, d)
+            draw_desktop_icons(cv, d)
+            for win in d.wins:
+                if not win.minimized:
+                    draw_window(cv, d, win, win is d.top_win())
+            draw_menubar(cv, d)
+            draw_dock(cv, d, d.dock_hover_x)
+            t.w(cv.dcs(cols, rows, C["wp1"]))
+
+        def in_rect(px, py, r):
+            x, y, w, h = r[0], r[1], r[2], r[3]
+            return x <= px < x + w and y <= py < y + h
+
+        def is_double(tag):
+            now = time.monotonic()
+            hit = (now - last_click["t"] < 0.42 and last_click["tag"] == tag)
+            last_click["t"] = 0.0 if hit else now
+            last_click["tag"] = None if hit else tag
+            return hit
+
+        def launch(kind, path=None):
+            if kind == "quit":
+                running[0] = False
+                return
+            d.open_app(kind, path)
+
+        def click_window_body(win, px, py, btn=0):
+            if win.kind in APP_CLICK:
+                return APP_CLICK[win.kind](win, px, py, d, btn)
+            return True
+
+        def on_left_press(px, py):
+            # global menu bar (decorative in v1) swallows clicks
+            if py < d.menubar_h:
+                return
+            # Dock
+            if d.in_dock_zone(py):
+                kind = d.dock_hit(px, py)
+                if kind is not None:
+                    launch(kind)
+                    return
+            # windows, topmost first
+            win = d.win_at(px, py)
+            if win is not None:
+                d.focus(win)
+                if in_rect(px, py, close_btn_rect(win)):
+                    d.close(win)
+                    return
+                if in_rect(px, py, min_btn_rect(win)):
+                    win.minimized = True
+                    return
+                if in_rect(px, py, zoom_btn_rect(win)):
+                    return                       # zoom is decorative in v1
+                if win.in_title(px, py):
+                    drag["win"] = win
+                    drag["dx"] = px - win.x
+                    drag["dy"] = py - win.y
+                    return
+                if win.kind in APP_MOUSE:
+                    body_drag["win"] = win
+                    APP_MOUSE[win.kind](win, "press", px, py, d, 0)
+                    return
+                click_window_body(win, px, py)
+                return
+            # desktop icons (top-right)
+            ic = d.icon_at(px, py)
+            if ic is not None:
+                d.icon_sel = ic
+                if is_double(("icon", ic)):
+                    kind = DESK_ICONS[ic][0]
+                    if kind == "machd":
+                        launch("finder", os.path.expanduser("~"))
+                    else:
+                        launch(kind)
+                return
+            d.icon_sel = -1
+
+        def on_right_press(px, py):
+            win = d.win_at(px, py)
+            if win is not None and not win.in_title(px, py) and \
+                    win.kind in APP_CLICK:
+                d.focus(win)
+                bx, by, bw, bh = win.body_rect()
+                if bx <= px < bx + bw and by <= py < by + bh:
+                    click_window_body(win, px, py, 2)
+
+        def on_motion(px, py):
+            nonlocal dirty
+            # track Dock hover for magnification
+            new_hover = px if d.in_dock_zone(py) else None
+            if new_hover != d.dock_hover_x:
+                d.dock_hover_x = new_hover
+                dirty = True
+            if body_drag["win"] is not None:
+                w = body_drag["win"]
+                APP_MOUSE[w.kind](w, "drag", px, py, d, 0)
+                dirty = True
+                return
+            if drag["win"] is not None:
+                w = drag["win"]
+                w.x = max(-w.w + 60, min(d.W - 40, px - drag["dx"]))
+                w.y = max(d.menubar_h, min(d.H - 40, py - drag["dy"]))
+                dirty = True
+
+        def on_wheel(px, py, up):
+            win = d.win_at(px, py)
+            if win is None:
+                return
+            if win.kind in APP_WHEEL:
+                APP_WHEEL[win.kind](win, px, py, up, d)
+
+        def handle_mouse(btn, px, py, press):
+            nonlocal dirty
+            base = btn & ~0b11100
+            if base in (64, 65):
+                on_wheel(px, py, base == 64)
+                dirty = True
+                return
+            if press and (btn & 32):
+                on_motion(px, py)
+                return
+            if press:
+                if (btn & 0b11) == 0:
+                    on_left_press(px, py)
+                elif (btn & 0b11) == 2:
+                    on_right_press(px, py)
+                dirty = True
+                return
+            # release
+            if body_drag["win"] is not None:
+                w = body_drag["win"]
+                APP_MOUSE[w.kind](w, "release", px, py, d, 0)
+                body_drag["win"] = None
+            drag["win"] = None
+            dirty = True
+
+        while running[0]:
+            if resized["flag"]:
+                resized["flag"] = False
+                relayout()
+                dirty = True
+            now_clk = time.strftime("%a %H:%M")
+            if now_clk != last_clock:
+                last_clock = now_clk
+                dirty = True
+            if dirty:
+                render()
+                dirty = False
+
+            r, _, _ = select.select([t.fd], [], [], 1.0)
+            if not r:
+                continue
+            try:
+                data = os.read(t.fd, 4096)
+            except OSError:
+                break
+            if not data:
+                continue
+            buf += data
+            events, buf = parse_events(buf)
+            for ev in events:
+                if ev == "quit":
+                    running[0] = False
+                    break
+                if isinstance(ev, tuple) and ev[0] == "mouse":
+                    _, btn, x, y, press = ev
+                    handle_mouse(btn, x, y, press)
+                    continue
+                if ev == "esc":
+                    w = d.top_win()
+                    if w is not None:
+                        d.close(w)
+                    dirty = True
+                    continue
+                # keyboard: hand to the focused app if it captures keys,
+                # else fall back to the global q/Q quit.
+                key = None
+                if isinstance(ev, tuple) and ev[0] == "char":
+                    key = ev[1]
+                elif ev in KEY_NAMES:
+                    key = ev
+                if key is not None:
+                    w = d.top_win()
+                    if (w is not None and w.kind in APP_KEY and
+                            APP_KEY[w.kind](w, key, d)):
+                        dirty = True
+                        continue
+                    if key in ("q", "Q"):
+                        running[0] = False
+                        break
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

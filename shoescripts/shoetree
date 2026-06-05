@@ -1,0 +1,978 @@
+#!/usr/bin/env python3
+# shoetree - render piped tabular data as a themed table in foot, with an
+# automatic process-tree mode (PID/PPID forest or ps-axf indentation).
+#
+#   ps aux | shoetree
+#   ps axf | shoetree "Process Tree"
+#   cat data.json | shoetree "Records"
+#
+# Uses foot's vector-graphics DCS protocol, drawn inline at the cursor.
+# Falls back to a unicode-box plain table when graphics aren't available.
+#
+# Env: SHOETREE_THEME=0..8  SHOETREE_TREE=0|1  SHOETREE_PLAIN=1
+#      SHOETREE_FORCE=1  SHOETREE_SELFTEST=1   (also reads SHOELACE_THEME)
+
+import sys
+import os
+import re
+import json
+import io
+import csv
+import select
+import time
+import random
+import collections
+
+try:
+    import termios
+    import tty
+except ImportError:  # non-POSIX; tty query simply won't work
+    termios = None
+    tty = None
+
+ESC = "\033"
+
+# --------------------------------------------------------------------------- #
+#  geometry constants (pixels) — identical to shoetable
+# --------------------------------------------------------------------------- #
+CHARW = 9
+CELLPADL = 10
+CELLPADR = 6
+MAXCW = 22
+ROWH = 22
+TH = 54
+TPAD = 18
+OX = 8
+OY = 8
+PADBOTTOM = 18
+TREEW = 14   # px of indent per tree depth level
+
+NUM_RE = re.compile(r'^-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?%?$')
+
+# gradient(12 ints) | accent | title | subtitle | name
+THEMES = [
+    "22 9 54 64 18 104 132 36 150 206 46 130|38e0ff|ffffff|ecd8ff|Aurora",
+    "6 16 54 12 52 96 16 110 140 40 190 180 |ffd166|ffffff|cdeffd|Ocean",
+    "40 12 60 120 28 80 200 70 60 245 170 60|ff5d8f|fff7ec|ffe0c0|Sunset",
+    "8 30 24 18 70 46 40 120 60 130 200 80  |ffe066|ffffff|dafad0|Forest",
+    "24 10 14 80 16 24 170 40 30 240 140 40 |ffd23f|fff2ec|ffd9c8|Ember",
+    "18 8 40 60 20 90 110 40 150 200 80 200 |66f0d0|ffffff|ecd8ff|Grape",
+    "18 20 28 38 44 60 70 84 110 130 150 180|8fd0ff|ffffff|cfe0f0|Slate",
+    "10 5 30 40 10 70 100 10 80 10 60 80    |ff2d78|ffffff|c0f4ff|VICE",
+    "60 8 40 120 20 80 150 40 130 100 30 160|ff9de0|ffffff|ffd6f5|Flowers",
+]
+
+LABEL_HEADERS = {"command", "cmd", "comm", "name", "args"}
+
+
+# --------------------------------------------------------------------------- #
+#  colour / text helpers
+# --------------------------------------------------------------------------- #
+def _rgb(c):
+    c = c.lstrip("#")
+    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+
+
+def mix(a, b, t):
+    ra, ga, ba = _rgb(a)
+    rb, gb, bb = _rgb(b)
+    return "#%02x%02x%02x" % (int(ra + (rb - ra) * t),
+                              int(ga + (gb - ga) * t),
+                              int(ba + (bb - ba) * t))
+
+
+def lighten(c, t):
+    return mix(c, "#ffffff", t)
+
+
+def darken(c, t):
+    return mix(c, "#000000", t)
+
+
+def sanitize(s):
+    return "".join(ch for ch in s if ch >= " " and ch != "," and ch != "\x7f")
+
+
+def clip_cell(s, n):
+    if len(s) <= n:
+        return s
+    if n <= 2:
+        return s[:n]
+    return s[:n - 2] + ".."
+
+
+# --------------------------------------------------------------------------- #
+#  Canvas (vendored from shoexp_ui.py; dcs() draws inline at the cursor)
+# --------------------------------------------------------------------------- #
+class Canvas:
+    def __init__(self):
+        self.lines = []
+        self.geo = []
+
+    def _flush(self):
+        if self.geo:
+            self.lines.append(",".join(self.geo))
+            self.geo = []
+
+    def cmd(self, s):
+        self.geo.append(s)
+
+    def pen(self, color):
+        self.geo.append("pen " + color)
+
+    def thickness(self, n):
+        self.geo.append("thickness %d" % n)
+
+    def clip(self, x, y, w, h):
+        self.geo.append("clip %d %d %d %d" % (x, y, w, h))
+
+    def noclip(self):
+        self.geo.append("noclip")
+
+    def rectf(self, x, y, w, h):
+        self.geo.append("rectf %d %d %d %d" % (x, y, w, h))
+
+    def rect(self, x, y, w, h):
+        self.geo.append("rect %d %d %d %d" % (x, y, w, h))
+
+    def rrectf(self, x, y, w, h, r):
+        self.geo.append("rrectf %d %d %d %d %d" % (x, y, w, h, r))
+
+    def rrect(self, x, y, w, h, r):
+        self.geo.append("rrect %d %d %d %d %d" % (x, y, w, h, r))
+
+    def line(self, x0, y0, x1, y1):
+        self.geo.append("line %d %d %d %d" % (x0, y0, x1, y1))
+
+    def trif(self, x0, y0, x1, y1, x2, y2):
+        self.geo.append("trif %d %d %d %d %d %d" % (x0, y0, x1, y1, x2, y2))
+
+    def circf(self, cx, cy, r):
+        self.geo.append("circf %d %d %d" % (cx, cy, r))
+
+    def circ(self, cx, cy, r):
+        self.geo.append("circ %d %d %d" % (cx, cy, r))
+
+    def arc(self, cx, cy, r, a0, a1):
+        self.geo.append("arc %d %d %d %d %d" % (cx, cy, r, a0, a1))
+
+    def polyf(self, pts):
+        self.geo.append("polyf " + " ".join("%d" % v for v in pts))
+
+    def bezier(self, x0, y0, x1, y1, x2, y2, x3, y3):
+        self.geo.append("bezier %d %d %d %d %d %d %d %d" %
+                        (x0, y0, x1, y1, x2, y2, x3, y3))
+
+    def vgrad(self, x, y, w, h, c0, c1, steps=18):
+        if w <= 0 or h <= 0:
+            return
+        steps = max(1, min(steps, h))
+        for i in range(steps):
+            y0 = y + h * i // steps
+            y1 = y + h * (i + 1) // steps
+            if y1 <= y0:
+                continue
+            self.pen(mix(c0, c1, i / max(1, steps - 1)))
+            self.rectf(x, y0, w, y1 - y0)
+
+    def text(self, x, y, s):
+        self._flush()
+        self.lines.append("text %d %d %s" % (x, y, sanitize(s)))
+
+    def dcs(self, cols, rows, bg="none"):
+        # inline at the cursor — NO ESC[H home (shoetree is one-shot/inline)
+        self._flush()
+        body = "\n".join(self.lines)
+        return "%sP>g\nsize %d %d\nbg %s\n%s\n%s\\" % (
+            ESC, cols, rows, bg, body, ESC)
+
+
+# --------------------------------------------------------------------------- #
+#  graphics availability
+# --------------------------------------------------------------------------- #
+def graphics_ok():
+    if os.environ.get("SHOETREE_PLAIN"):
+        return False   # PLAIN beats FORCE
+    if os.environ.get("SHOETREE_FORCE"):
+        return True
+    if not sys.stdout.isatty():
+        return False
+    t = os.environ.get("TERM", "")
+    return "foot" in t or "ghostty" in t
+
+
+# --------------------------------------------------------------------------- #
+#  cell-size query via /dev/tty (font independence)
+# --------------------------------------------------------------------------- #
+def query_cell_via_tty():
+    if termios is None or tty is None:
+        return 8, 16
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return 8, 16
+    old = None
+    try:
+        old = termios.tcgetattr(fd)
+        tty.setraw(fd)
+        os.write(fd, (ESC + "[16t").encode())
+        buf = b""
+        deadline = time.monotonic() + 0.3
+        while time.monotonic() < deadline:
+            r, _, _ = select.select([fd], [], [],
+                                    max(0, deadline - time.monotonic()))
+            if not r:
+                break
+            buf += os.read(fd, 64)
+            m = re.search(rb"\[6;(\d+);(\d+)t", buf)
+            if m:
+                return int(m.group(2)), int(m.group(1))  # (width, height)
+    except (OSError, termios.error):
+        pass
+    finally:
+        if old is not None:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            except termios.error:
+                pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    return 8, 16
+
+
+# --------------------------------------------------------------------------- #
+#  input read + format detection / parsing
+# --------------------------------------------------------------------------- #
+def read_input():
+    try:
+        return sys.stdin.buffer.read().decode("utf-8", "replace")
+    except Exception:
+        try:
+            return sys.stdin.read()
+        except Exception:
+            return ""
+
+
+def detect_format(raw):
+    s = raw.strip()
+    if not s:
+        return "empty", None
+    if s[0] in "{[":
+        try:
+            return "json", json.loads(raw)
+        except (ValueError, json.JSONDecodeError):
+            pass
+    lines = raw.splitlines()
+    firstline = ""
+    for ln in lines:
+        st = ln.strip()
+        if st and not st.startswith("#"):
+            firstline = ln
+            break
+    if "\t" in firstline:
+        return "tsv", lines
+    if "," in firstline:
+        return "csv", lines
+    return "wsv", lines
+
+
+def parse_json(obj):
+    if isinstance(obj, dict):
+        headers = ["Key", "Value"]
+        rows = [[str(k), str(v)] for k, v in obj.items()]
+        return headers, rows
+    if isinstance(obj, list):
+        if not obj:
+            return [], []
+        if all(isinstance(o, dict) for o in obj):
+            headers = []
+            seen = set()
+            for o in obj:
+                for k in o.keys():
+                    if k not in seen:
+                        seen.add(k)
+                        headers.append(k)
+            rows = [[str(o.get(h, "")) for h in headers] for o in obj]
+            return headers, rows
+        if all(isinstance(o, (list, tuple)) for o in obj):
+            width = max((len(o) for o in obj), default=0)
+            if width == 2:
+                headers = ["Index", "Value"]
+            else:
+                headers = ["c%d" % i for i in range(width)]
+            rows = []
+            for o in obj:
+                row = [str(v) for v in o]
+                row += [""] * (len(headers) - len(row))
+                rows.append(row[:len(headers)])
+            return headers, rows
+        # list of scalars
+        headers = ["Index", "Value"]
+        rows = [[str(i + 1), str(v)] for i, v in enumerate(obj)]
+        return headers, rows
+    # scalar
+    return ["Value"], [[str(obj)]]
+
+
+def parse_delimited(lines, delim):
+    kept = [ln for ln in lines
+            if ln.strip() and not ln.strip().startswith("#")]
+    if not kept:
+        return [], []
+    reader = csv.reader(io.StringIO("\n".join(kept)), delimiter=delim)
+    allrows = list(reader)
+    if not allrows:
+        return [], []
+    headers = [h.strip() for h in allrows[0]]
+    ncols = len(headers)
+    rows = []
+    for r in allrows[1:]:
+        r = [c for c in r]
+        r += [""] * (ncols - len(r))
+        rows.append(r[:ncols])
+    return headers, rows
+
+
+def parse_wsv(lines):
+    kept = [ln.strip() for ln in lines
+            if ln.strip() and not ln.strip().startswith("#")]
+    if not kept:
+        return [], []
+    headers = kept[0].split()
+    ncols = len(headers)
+    rows = []
+    for ln in kept[1:]:
+        fields = ln.split(None, ncols - 1)
+        fields += [""] * (ncols - len(fields))
+        rows.append(fields[:ncols])
+    return headers, rows
+
+
+# --------------------------------------------------------------------------- #
+#  numeric column detection
+# --------------------------------------------------------------------------- #
+def detect_numeric_cols(headers, rows):
+    cand = set(range(len(headers)))
+    for row in rows:
+        for c in list(cand):
+            v = row[c].strip() if c < len(row) else ""
+            if v and not NUM_RE.match(v):
+                cand.discard(c)
+    return cand
+
+
+# --------------------------------------------------------------------------- #
+#  tree detection
+# --------------------------------------------------------------------------- #
+def label_col_for(headers):
+    for i, h in enumerate(headers):
+        if h.strip().lower() in LABEL_HEADERS:
+            return i
+    return len(headers) - 1 if headers else 0
+
+
+def detect_pid_ppid(headers):
+    pid_col = ppid_col = None
+    for i, h in enumerate(headers):
+        hl = h.strip().lower()
+        if hl == "pid" and pid_col is None:
+            pid_col = i
+        elif hl == "ppid" and ppid_col is None:
+            ppid_col = i
+    if pid_col is not None and ppid_col is not None:
+        return pid_col, ppid_col
+    return None
+
+
+def build_forest(rows, pid_col, ppid_col):
+    children = collections.defaultdict(list)
+    pid_to_row = {}
+    all_pids = set()
+    order = []
+    for row in rows:
+        try:
+            pid = int(row[pid_col])
+            ppid = int(row[ppid_col])
+        except (ValueError, IndexError):
+            continue
+        children[ppid].append(pid)
+        all_pids.add(pid)
+        pid_to_row[pid] = row
+        order.append(pid)
+
+    roots = []
+    seen_root = set()
+    for pid in order:
+        row = pid_to_row[pid]
+        try:
+            ppid = int(row[ppid_col])
+        except (ValueError, IndexError):
+            ppid = -1
+        if ppid not in all_pids and pid not in seen_root:
+            roots.append(pid)
+            seen_root.add(pid)
+
+    ordered_rows = []
+    depths = []
+    visited = set()
+
+    def dfs(pid, depth):
+        if pid in visited:
+            return
+        visited.add(pid)
+        ordered_rows.append(pid_to_row[pid])
+        depths.append(depth)
+        for ch in children.get(pid, []):
+            if ch in pid_to_row:
+                dfs(ch, depth + 1)
+
+    for r in roots:
+        dfs(r, 0)
+    # orphans / cycles never visited
+    for pid in order:
+        if pid not in visited:
+            visited.add(pid)
+            ordered_rows.append(pid_to_row[pid])
+            depths.append(0)
+    if not ordered_rows:
+        return None
+    return ordered_rows, depths
+
+
+def strip_tree_prefix(field):
+    if "\\_" in field:
+        idx = field.rfind("\\_")
+        rest = field[idx + 2:]
+        return rest.lstrip(" ")
+    return field.lstrip(" |`")
+
+
+def detect_indented(rows, label_col):
+    # \_  marker form (ps axf / ps f)
+    any_marker = any("\\_" in (r[label_col] if label_col < len(r) else "")
+                     for r in rows)
+    depths = []
+    if any_marker:
+        for r in rows:
+            field = r[label_col] if label_col < len(r) else ""
+            p = field.find("\\_")
+            depths.append(0 if p < 0 else p // 4 + 1)
+    else:
+        # leading-space indent form
+        for r in rows:
+            field = r[label_col] if label_col < len(r) else ""
+            lead = len(field) - len(field.lstrip(" "))
+            depths.append(lead // 2)
+    if not depths or max(depths) <= 0:
+        return None
+    # strip prefix for display; preserve original order
+    ordered_rows = []
+    for r in rows:
+        row = list(r)
+        if label_col < len(row):
+            row[label_col] = strip_tree_prefix(row[label_col])
+        ordered_rows.append(row)
+    return ordered_rows, depths
+
+
+def tree_mode(headers, rows):
+    forced = os.environ.get("SHOETREE_TREE")
+    if forced == "0":
+        return None
+    if not rows or not headers:
+        return None
+    label_col = label_col_for(headers)
+
+    pp = detect_pid_ppid(headers)
+    if pp is not None:
+        res = build_forest(rows, pp[0], pp[1])
+        if res is not None:
+            ordered_rows, depths = res
+            if max(depths) > 0 or forced == "1":
+                return ordered_rows, depths, label_col
+
+    ind = detect_indented(rows, label_col)
+    if ind is not None:
+        ordered_rows, depths = ind
+        return ordered_rows, depths, label_col
+
+    if forced == "1" and pp is not None:
+        res = build_forest(rows, pp[0], pp[1])
+        if res is not None:
+            ordered_rows, depths = res
+            return ordered_rows, depths, label_col
+    return None
+
+
+def last_child_flags(depths):
+    n = len(depths)
+    out = [True] * n
+    for r in range(n):
+        for r2 in range(r + 1, n):
+            if depths[r2] <= depths[r]:
+                out[r] = depths[r2] < depths[r]
+                break
+    return out
+
+
+# --------------------------------------------------------------------------- #
+#  column model
+# --------------------------------------------------------------------------- #
+def fit_columns(headers, rows, depths, label_col, term_cols, numeric):
+    ncols = len(headers)
+    cw = [len(h) for h in headers]
+    for row in rows:
+        for c in range(ncols):
+            v = row[c] if c < len(row) else ""
+            if len(v) > cw[c]:
+                cw[c] = len(v)
+
+    MAXW = (term_cols - 2) * CHARW if term_cols > 10 else 960
+    avail = MAXW - 2 * OX - 2 * TPAD - (ncols - 1 if ncols > 1 else 0)
+    if ncols > 0:
+        fit_cw = int((avail // ncols - CELLPADL - CELLPADR) / CHARW)
+    else:
+        fit_cw = MAXCW
+    local_max = fit_cw if fit_cw < MAXCW else MAXCW
+    if local_max < 4:
+        local_max = 4
+
+    for c in range(ncols):
+        if cw[c] > local_max:
+            cw[c] = local_max
+
+    max_depth = max(depths) if depths else 0
+
+    cpx = [0] * ncols
+    cx0 = [0] * ncols
+    tabw = 0
+    for c in range(ncols):
+        cpx[c] = cw[c] * CHARW + CELLPADL + CELLPADR
+        if depths is not None and c == label_col:
+            cpx[c] += max_depth * TREEW
+        cx0[c] = tabw
+        tabw += cpx[c] + (1 if c < ncols - 1 else 0)
+
+    return {
+        "cw": cw, "cpx": cpx, "cx0": cx0, "tabw": tabw,
+        "numeric": numeric, "max_depth": max_depth,
+    }
+
+
+# --------------------------------------------------------------------------- #
+#  theme selection
+# --------------------------------------------------------------------------- #
+def pick_theme(ncols, nrows):
+    idx_env = os.environ.get("SHOETREE_THEME")
+    if idx_env is None:
+        idx_env = os.environ.get("SHOELACE_THEME")
+    if idx_env not in (None, ""):
+        try:
+            idx = int(idx_env)
+        except ValueError:
+            idx = 0
+        idx = ((idx % 9) + 9) % 9
+    else:
+        idx = random.Random(os.getpid() ^ int(time.time())).randrange(9)
+    parts = THEMES[idx].split("|")
+    g = [int(x) for x in parts[0].split()]
+    accent, tcol, scol, tname = parts[1], parts[2], parts[3], parts[4]
+    sys.stderr.write("shoetree theme: %s (%d cols, %d rows)\n"
+                     % (tname, ncols, nrows))
+    return g, accent, tcol, scol, tname
+
+
+# --------------------------------------------------------------------------- #
+#  graphics rendering
+# --------------------------------------------------------------------------- #
+def render_graphics(headers, rows, depths, label_col, title, theme,
+                    model, cw_px, ch_px):
+    g, accent, tcol, scol, tname = theme
+    cw = model["cw"]
+    cpx = model["cpx"]
+    cx0 = model["cx0"]
+    tabw = model["tabw"]
+    numeric = model["numeric"]
+    ncols = len(headers)
+    nrows = len(rows)
+    is_tree = depths is not None
+
+    if title == "":
+        title = "table"
+
+    c = Canvas()
+
+    if ncols == 0:
+        c.pen("#" + tcol)
+        c.text(12, 30, "(no data)")
+        out = c.dcs(30, 4, "none")
+        sys.stdout.write(out)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        return
+
+    CW = max(tabw + 2 * TPAD, 380)
+    CH = TH + ROWH + nrows * ROWH + PADBOTTOM
+    W = OX + CW + OX
+    H = OY + CH + OY
+    TOFF = OX + TPAD
+    TY = OY + TH
+    TBOT = TY + ROWH + nrows * ROWH
+
+    # gradient card
+    stops = [0.0, 0.42, 0.74, 1.0]
+    for x in range(0, CW, 2):
+        t = x / CW
+        for i in range(3):
+            a = stops[i]
+            b = stops[i + 1]
+            if t <= b:
+                u = (t - a) / (b - a) if b > a else 0.0
+                cr = int(g[i * 3 + 0] + u * (g[(i + 1) * 3 + 0] - g[i * 3 + 0]))
+                cg = int(g[i * 3 + 1] + u * (g[(i + 1) * 3 + 1] - g[i * 3 + 1]))
+                cb = int(g[i * 3 + 2] + u * (g[(i + 1) * 3 + 2] - g[i * 3 + 2]))
+                c.pen("#%02x%02x%02x" % (cr, cg, cb))
+                c.rectf(OX + x, OY, 2, CH)
+                break
+
+    # top sheen
+    c.pen("#ffffff12")
+    c.rectf(OX, OY, CW, 24)
+    c.pen("#ffffffa0")
+    c.rectf(OX, OY, CW, 2)
+
+    # title + accent underline
+    c.pen("#" + tcol)
+    c.text(OX + 18, OY + 27, clip_cell(title, (CW - 40) // CHARW))
+    c.thickness(2)
+    c.pen("#" + accent)
+    c.line(OX + 18, OY + 34, OX + 138, OY + 34)
+    c.thickness(1)
+
+    # header band
+    c.pen("#00000035")
+    c.rectf(TOFF, TY, tabw, ROWH)
+    c.pen("#" + accent + "28")
+    c.rectf(TOFF, TY, tabw, ROWH)
+
+    # zebra
+    for ri in range(1, nrows + 1):
+        ry = TY + ROWH + (ri - 1) * ROWH
+        if ri % 2 == 0:
+            c.pen("#ffffff0d")
+            c.rectf(TOFF, ry, tabw, ROWH)
+
+    # outer border
+    c.pen("#ffffff28")
+    c.rect(TOFF, TY, tabw, ROWH + nrows * ROWH)
+
+    # header separator
+    c.pen("#" + accent + "70")
+    c.line(TOFF, TY + ROWH, TOFF + tabw, TY + ROWH)
+
+    # column separators
+    c.pen("#ffffff1a")
+    for c_i in range(ncols - 1):
+        sx = TOFF + cx0[c_i] + cpx[c_i]
+        c.line(sx, TY, sx, TBOT)
+
+    # header text (always left-aligned)
+    for col in range(ncols):
+        tx = TOFF + cx0[col] + CELLPADL
+        ty = TY + ROWH - 6
+        c.pen("#" + accent)
+        c.text(tx, ty, clip_cell(headers[col], cw[col]))
+
+    last_child = last_child_flags(depths) if is_tree else None
+    path = []
+
+    # data rows
+    for ri in range(nrows):
+        row = rows[ri]
+        ry = TY + ROWH + ri * ROWH
+        ty = ry + ROWH - 6
+        mid = ry + ROWH // 2
+
+        if is_tree:
+            d = depths[ri]
+            if len(path) <= d:
+                path.extend([True] * (d + 1 - len(path)))
+            else:
+                path = path[:d + 1]
+            path[d] = last_child[ri]
+
+        for col in range(ncols):
+            cell = row[col] if col < len(row) else ""
+
+            if is_tree and col == label_col:
+                labelx0 = TOFF + cx0[label_col] + CELLPADL
+                tx = labelx0 + depths[ri] * TREEW
+                avail_px = ((cx0[label_col] + cpx[label_col])
+                            - (tx - TOFF) - CELLPADR)
+                eff = max(1, avail_px // CHARW)
+                text = clip_cell(cell, eff)
+                c.pen("#" + scol)
+                c.text(tx, ty, text)
+                continue
+
+            text = clip_cell(cell, cw[col])
+            if col in numeric and col != label_col:
+                tx = (TOFF + cx0[col] + cpx[col] - CELLPADR
+                      - len(text) * CHARW)
+                lo = TOFF + cx0[col] + CELLPADL
+                if tx < lo:
+                    tx = lo
+            else:
+                tx = TOFF + cx0[col] + CELLPADL
+            c.pen("#" + scol)
+            c.text(tx, ty, text)
+
+        # tree connectors (label column only)
+        if is_tree:
+            labelx0 = TOFF + cx0[label_col] + CELLPADL
+
+            def gx(i):
+                return labelx0 + i * TREEW + 4
+
+            c.thickness(1)
+            c.pen("#" + accent + "55")
+            for i in range(depths[ri] - 1):
+                if (i + 1) < len(path) and not path[i + 1]:
+                    c.line(gx(i), ry, gx(i), ry + ROWH)
+            if depths[ri] > 0:
+                e = gx(depths[ri] - 1)
+                c.line(e, ry, e, mid)
+                c.line(e, mid, e + TREEW - 4, mid)
+                if not last_child[ri]:
+                    c.line(e, mid, e, ry + ROWH)
+
+    cols_c = (W + cw_px - 1) // cw_px + 1
+    rows_c = (H + ch_px - 1) // ch_px + 1
+    sys.stdout.write(c.dcs(cols_c, rows_c, "none"))
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+# --------------------------------------------------------------------------- #
+#  plain unicode-box fallback
+# --------------------------------------------------------------------------- #
+def render_plain(headers, rows, depths, label_col, title, numeric):
+    ncols = len(headers)
+    nrows = len(rows)
+    if ncols == 0:
+        if title:
+            print(title)
+            print("=" * len(title))
+        print("(no data)")
+        return
+
+    is_tree = depths is not None
+    last_child = last_child_flags(depths) if is_tree else None
+    MAXCW_PLAIN = 28
+
+    # Precompute each row's connector prefix, tracking ancestor open-branch
+    # state via a path[] array (same model as render_graphics). A vertical
+    # "|" pass-through is emitted for an ancestor that still has siblings.
+    prefixes = []
+    if is_tree:
+        path = []
+        for ri in range(nrows):
+            d = depths[ri]
+            if len(path) <= d:
+                path.extend([True] * (d + 1 - len(path)))
+            else:
+                path = path[:d + 1]
+            path[d] = last_child[ri]
+            if d == 0:
+                prefixes.append("")
+                continue
+            parts = []
+            for i in range(d - 1):
+                parts.append("    " if path[i + 1] else "|   ")
+            parts.append("`-- " if last_child[ri] else "|-- ")
+            prefixes.append("".join(parts))
+
+    def tree_prefix(ri):
+        return prefixes[ri] if is_tree else ""
+
+    cw = [len(h) for h in headers]
+    for ri, row in enumerate(rows):
+        for c in range(ncols):
+            v = row[c] if c < len(row) else ""
+            if is_tree and c == label_col:
+                v = tree_prefix(ri) + v
+            if len(v) > cw[c]:
+                cw[c] = len(v)
+    cw = [min(MAXCW_PLAIN, w) for w in cw]
+
+    def pad(s, w):
+        return s + " " * (w - len(s))
+
+    def rpad(s, w):
+        return " " * (w - len(s)) + s
+
+    if title:
+        print(title)
+        print("=" * len(title))
+
+    top = "┌"
+    mid = "├"
+    bot = "└"
+    for c in range(ncols):
+        seg = "─" * (cw[c] + 2)
+        top += seg + ("┬" if c < ncols - 1 else "┐")
+        mid += seg + ("┼" if c < ncols - 1 else "┤")
+        bot += seg + ("┴" if c < ncols - 1 else "┘")
+
+    print(top)
+    hrow = "│"
+    for c in range(ncols):
+        hrow += " " + pad(clip_cell(headers[c], cw[c]), cw[c]) + " │"
+    print(hrow)
+    print(mid)
+    for ri in range(nrows):
+        row = rows[ri]
+        line = "│"
+        for c in range(ncols):
+            cell = row[c] if c < len(row) else ""
+            if is_tree and c == label_col:
+                prefix = tree_prefix(ri)
+                cell = prefix + clip_cell(cell, max(1, cw[c] - len(prefix)))
+                cell = clip_cell(cell, cw[c])
+                line += " " + pad(cell, cw[c]) + " │"
+            else:
+                cell = clip_cell(cell, cw[c])
+                if c in numeric and c != label_col:
+                    line += " " + rpad(cell, cw[c]) + " │"
+                else:
+                    line += " " + pad(cell, cw[c]) + " │"
+        print(line)
+    print(bot)
+
+
+# --------------------------------------------------------------------------- #
+#  help
+# --------------------------------------------------------------------------- #
+HELP = """shoetree - render piped tabular data as a themed table in foot.
+Usage:  ps aux | shoetree ["Title"]
+        ps axf | shoetree "Process Tree"      # auto tree from ps forest
+        cat data.json | shoetree "Records"
+Input:  JSON (array of objects / object / array) | CSV | TSV | whitespace.
+Env: SHOETREE_THEME=0..8  SHOETREE_TREE=0|1  SHOETREE_PLAIN=1
+     SHOETREE_FORCE=1  SHOETREE_SELFTEST=1
+"""
+
+
+def main():
+    argv = sys.argv[1:]
+    for a in argv:
+        if a in ("-h", "--help"):
+            sys.stdout.write(HELP)
+            return 0
+    title = ""
+    for a in argv:
+        if not a.startswith("-"):
+            title = a
+            break
+
+    selftest = bool(os.environ.get("SHOETREE_SELFTEST"))
+    # Selftest forces the graphics renderer (headless smoke check), but
+    # SHOETREE_PLAIN still wins (PLAIN beats FORCE), matching graphics_ok().
+    want_gfx = graphics_ok() or (selftest and not os.environ.get("SHOETREE_PLAIN"))
+
+    # Selftest must work headlessly with no pipe: read_input() would block on a
+    # tty waiting for EOF, so synthesize data when stdin isn't piped.
+    if selftest and sys.stdin.isatty():
+        raw = ("PID PPID COMMAND\n1 0 init\n100 1 bash\n"
+               "200 100 python3\n")
+    else:
+        raw = read_input()
+    fmt, payload = detect_format(raw)
+
+    if fmt == "empty":
+        if want_gfx:
+            c = Canvas()
+            c.pen("#ffffff")
+            c.text(12, 30, "(no data)")
+            sys.stdout.write(c.dcs(30, 4, "none"))
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        else:
+            print("(no data)")
+        return 0
+
+    if fmt == "json":
+        headers, rows = parse_json(payload)
+    elif fmt == "tsv":
+        headers, rows = parse_delimited(payload, "\t")
+    elif fmt == "csv":
+        headers, rows = parse_delimited(payload, ",")
+    else:
+        headers, rows = parse_wsv(payload)
+
+    ncols = len(headers)
+    nrows = len(rows)
+
+    # decide tree
+    tm = tree_mode(headers, rows)
+    if tm is not None:
+        rows, depths, label_col = tm
+    else:
+        depths = None
+        label_col = label_col_for(headers)
+
+    theme = pick_theme(ncols, len(rows))
+
+    if ncols == 0:
+        if want_gfx:
+            render_graphics(headers, rows, depths, label_col, title, theme,
+                            {"cw": [], "cpx": [], "cx0": [], "tabw": 0,
+                             "numeric": set(), "max_depth": 0}, 8, 16)
+        else:
+            render_plain(headers, rows, depths, label_col, title, set())
+        return 0
+
+    numeric = detect_numeric_cols(headers, rows)
+    numeric.discard(label_col)
+
+    if selftest:
+        if want_gfx:
+            cw_px, ch_px = 8, 16
+            term_cols = 120
+            model = fit_columns(headers, rows, depths, label_col,
+                                term_cols, numeric)
+            render_graphics(headers, rows, depths, label_col, title, theme,
+                            model, cw_px, ch_px)
+        else:
+            render_plain(headers, rows, depths, label_col, title, numeric)
+        return 0
+
+    if graphics_ok():
+        try:
+            term_cols = os.get_terminal_size(sys.stdout.fileno()).columns
+        except (OSError, ValueError):
+            try:
+                term_cols = int(os.environ.get("COLUMNS", "120"))
+            except ValueError:
+                term_cols = 120
+        cw_px, ch_px = query_cell_via_tty()
+        model = fit_columns(headers, rows, depths, label_col,
+                            term_cols, numeric)
+        render_graphics(headers, rows, depths, label_col, title, theme,
+                        model, cw_px, ch_px)
+    else:
+        render_plain(headers, rows, depths, label_col, title, numeric)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        except Exception:
+            pass
+        sys.exit(0)
