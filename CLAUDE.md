@@ -95,6 +95,13 @@ scaling, damage, and erase for free. **No changes to `render.c`.**
 - **Control chars in text:** `text` expands `\t` to the next 4-space stop and
   drops other control chars (otherwise fcft draws their "control picture"
   glyph, e.g. the `CR`/`HT` boxes).
+- **Non-ASCII in `text` aborts the DCS** (`vt.c` `state_dcs_passthrough_switch`):
+  UTF-8 is only decoded from `STATE_GROUND`, never inside a DCS, so a
+  continuation byte in `0x80`–`0x9F` is read as a C1 control → `action_unhook`
+  ends the sequence and the remaining commands spill onto the screen as literal
+  text. Affects both text modes. **Sanitize every interpolated string to
+  printable ASCII before drawing** (filenames, container names, `…`→`~`); this
+  is why `shoestat`'s `Canvas.text` filters to `0x20`–`0x7E`.
 - **Alpha is premultiplied** internally; blending is correct but only *looks*
   obviously translucent over a light/contrasting background (the demo uses an
   RGB Venn over white). Overlapping *fills* of one translucent color can seam.
@@ -146,6 +153,17 @@ ones print the commands / input they send so usage is self-documenting.
   `memtop.sh [interval]` for live mode, `memtop.sh once` for a single frame at
   the cursor (banner-friendly). Queries cell size via `ESC[16t` so the card is
   font-size independent.
+- **`shoestat`** — a full-window **system-status dashboard** (Python, stdlib
+  only): a header band (host/OS/clock/uptime), a CPU-load **half-ring gauge**
+  (`arc`, colored green/amber/red by load÷cores) with 1m/5m/15m mini-bars,
+  RAM/swap/disk **progress bars**, and a **Docker** panel (two-column container
+  list with status dots, muted `image:tag`, right-aligned uptime — from `docker
+  info`/`docker ps`, omitted when docker is absent). `shoestat` for one frame at
+  the cursor, `shoestat live [N]` to redraw in place. Sizes the canvas to the
+  window via `TIOCGWINSZ` (`os.get_terminal_size`, more reliable here than
+  `ESC[18t`) + cell size via `ESC[16t`. `graphics_ok()` fallback to a plain
+  ASCII table; `SHOESTAT_PLAIN`/`_FORCE`. **All `text` is ASCII-sanitized** in
+  `Canvas.text` (truncation marker `~`) — see the non-ASCII DCS-abort gotcha.
 - **`slippers`** — dual-pane Midnight-Commander-style file explorer. The
   first **interactive** shoescript and the first in **Python** (stdlib only):
   redraws a full-screen frame in place, keyboard + **mouse** (SGR-pixel) nav,
