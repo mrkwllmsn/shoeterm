@@ -421,9 +421,27 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
       "url": "https://mrkwllmsn.github.io/shoeterm/",
       "logo": "https://mrkwllmsn.github.io/shoeterm/assets/foot.png",
       "sameAs": [
-        "https://github.com/mrkwllmsn/shoeterm",
-        "https://codeberg.org/dnkl/foot"
+        "https://github.com/mrkwllmsn/shoeterm"
       ]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://codeberg.org/dnkl/foot#software",
+      "name": "foot",
+      "alternateName": "foot terminal emulator",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "Terminal emulator",
+      "operatingSystem": "Linux (Wayland)",
+      "url": "https://codeberg.org/dnkl/foot",
+      "codeRepository": "https://codeberg.org/dnkl/foot",
+      "programmingLanguage": "C",
+      "description": "foot is a fast, lightweight and minimalistic Wayland-native terminal emulator that renders CPU-side via pixman. Shoe is built on top of foot — its vector-graphics layer extends foot's escape-sequence and sixel image pipeline.",
+      "author": {
+        "@type": "Person",
+        "name": "Daniel Eklöf",
+        "url": "https://codeberg.org/dnkl"
+      },
+      "isAccessibleForFree": true
     },
     {
       "@type": "SoftwareApplication",
@@ -438,7 +456,7 @@ footer{border-top:1px solid var(--line);margin-top:96px;padding:48px 0 60px}
       "codeRepository": "https://github.com/mrkwllmsn/shoeterm",
       "programmingLanguage": ["C", "Shell", "Python"],
       "license": "https://github.com/mrkwllmsn/shoeterm/blob/master/LICENSE",
-      "isBasedOn": "https://codeberg.org/dnkl/foot",
+      "isBasedOn": { "@id": "https://codeberg.org/dnkl/foot#software" },
       "image": "https://mrkwllmsn.github.io/shoeterm/assets/vector-graphics-chart.png",
       "screenshot": [
         {
