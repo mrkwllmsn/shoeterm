@@ -5,8 +5,8 @@ set -e
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)   # this script's dir (shoescripts/)
 root=$(CDPATH= cd -- "$dir/.." && pwd)             # repo root
 
-cp "$root/bld/debug/foot" /usr/local/bin/shoe
-for tool in shoelace shoestring shoetable shoetree shoebling shoom shuggy shoexp shoemac shoeshine shoestat; do
+cp "$root/${SHOE_BUILD:-bld/debug}/foot" /usr/local/bin/shoe   # SHOE_BUILD=bld/release for build-pi.sh builds
+for tool in shoelace shoestring shoetable shoetree shoebling shoom shuggy shoexp shoemac shoeshine shoestat shoeclock; do
   cp "$dir/$tool" "/usr/local/bin/$tool"
 done
 # shoexp imports these helper modules; they must sit next to it on PATH.

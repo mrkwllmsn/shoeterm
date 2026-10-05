@@ -164,6 +164,19 @@ ones print the commands / input they send so usage is self-documenting.
   `ESC[18t`) + cell size via `ESC[16t`. `graphics_ok()` fallback to a plain
   ASCII table; `SHOESTAT_PLAIN`/`_FORCE`. **All `text` is ASCII-sanitized** in
   `Canvas.text` (truncation marker `~`) — see the non-ASCII DCS-abort gotcha.
+- **`shoeclock`** — a luxury **analogue wristwatch** (Python, stdlib only):
+  brushed-metal bezel (arc segments shaded by a top-left light source),
+  radial-gradient dial with guilloche texture, 60-tick chapter ring, roman /
+  arabic / baton numerals, tapered `polyf` hands with drop shadows, date
+  aperture at 3 o'clock and an 8-beat sweeping seconds hand. `shoeclock` draws
+  one frame at the cursor (transparent backdrop so it blends with the terminal;
+  `SHOECLOCK_CARD=1` paints the gradient), `shoeclock live [N]` fills the window
+  and sweeps (`q` quits); `-h` prints usage. Theme via `-t/--theme <n|name>`
+  (prefix-matched, e.g. `-t 3`, `-t neon`) or `SHOECLOCK_THEME=0..5`
+  (0 Midnight .. 5 Neon),
+  `SHOECLOCK_PLAIN`/`_FORCE` (plain = an ASCII dial), `SHOECLOCK_SELFTEST=1`
+  for a headless frame. Cell size is queried **once** and cached — re-issuing
+  `ESC[16t` every frame fights the raw-mode key reader.
 - **`slippers`** — dual-pane Midnight-Commander-style file explorer. The
   first **interactive** shoescript and the first in **Python** (stdlib only):
   redraws a full-screen frame in place, keyboard + **mouse** (SGR-pixel) nav,

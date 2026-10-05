@@ -1,0 +1,557 @@
+#!/usr/bin/env python3
+"""shoeclock — a luxury analogue wristwatch drawn with foot's vector graphics.
+
+A brushed-metal bezel, a guilloche-textured dial with a radial gradient, a
+chapter ring of 60 ticks, roman or arabic numerals, tapered hands with soft
+drop shadows, a date aperture at 3 o'clock and a high-beat sweeping seconds
+hand.
+
+  shoeclock              one frame at the cursor (banner-friendly)
+  shoeclock live [N]     redraw in place, sweeping (default ~8 fps; q quits)
+
+Font-size independent: queries the cell size via ESC[16t and sizes the canvas
+to the window. stdlib only.
+
+  SHOECLOCK_THEME=0..5   0 Midnight, 1 Rose Gold, 2 Emerald, 3 Graphite,
+                         4 Ivory (classic), 5 Neon
+  SHOECLOCK_CARD=1       paint the gradient backdrop inline too (live always does)
+  SHOECLOCK_PLAIN=1      force the plain-text (ASCII dial) fallback
+  SHOECLOCK_FORCE=1      force graphics (e.g. when piping)
+  SHOECLOCK_SELFTEST=1   render one headless frame and report, for smoke tests
+"""
+import os, sys, time, math, select, termios, tty
+
+# ---------- capability detection ----------
+def graphics_ok():
+    if os.environ.get("SHOECLOCK_PLAIN"): return False
+    if os.environ.get("SHOECLOCK_FORCE"): return True
+    if not sys.stdout.isatty(): return False
+    return "foot" in os.environ.get("TERM", "")
+
+# ---------- terminal queries ----------
+def _query(seq, term_char):
+    try:
+        tfd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return None
+    old = termios.tcgetattr(tfd)
+    try:
+        tty.setraw(tfd)
+        os.write(tfd, seq.encode())
+        buf = b""
+        while True:
+            r, _, _ = select.select([tfd], [], [], 0.3)
+            if not r: break
+            c = os.read(tfd, 1)
+            if not c: break
+            buf += c
+            if c == term_char.encode(): break
+    finally:
+        termios.tcsetattr(tfd, termios.TCSADRAIN, old)
+        os.close(tfd)
+    return buf.decode(errors="ignore")
+
+def cell_size():
+    s = _query("\033[16t", "t") or ""            # -> ESC[6;<h>;<w>t
+    try:
+        p = s.strip("\033[t").split(";")
+        return int(p[2]), int(p[1])
+    except Exception:
+        return 8, 16
+
+def term_cells():
+    for f in (sys.stdout, sys.stdin):
+        try:
+            ts = os.get_terminal_size(f.fileno())
+            if ts.columns > 0 and ts.lines > 0:
+                return ts.columns, ts.lines
+        except Exception:
+            pass
+    return 80, 24
+
+# ---------- colour helpers ----------
+def _rgb(c): return tuple(int(c[i:i+2], 16) for i in (1, 3, 5))
+def _hex(r, g, b): return "#%02x%02x%02x" % (max(0,min(255,int(r))),
+                                             max(0,min(255,int(g))),
+                                             max(0,min(255,int(b))))
+def mix(c0, c1, t):
+    (r0,g0,b0), (r1,g1,b1) = _rgb(c0), _rgb(c1)
+    return _hex(r0+(r1-r0)*t, g0+(g1-g0)*t, b0+(b1-b0)*t)
+def lighten(c, t): return mix(c, "#ffffff", t)
+def darken(c, t):  return mix(c, "#000000", t)
+def alpha(c, a):   return c + "%02x" % max(0, min(255, int(a)))
+
+# ---------- themes ----------
+THEMES = [
+    dict(name="Midnight",
+         bg0="#080b16", bg1="#141a30",
+         metal="#8d97ad", metal_hi="#e6ecf7", metal_lo="#3a4258",
+         face_ctr="#1b2b4d", face_edge="#070b18",
+         ink="#e9eefb", muted="#8ea0c4", accent="#f2c46b",
+         hand="#eef3ff", hand_lo="#9fb0d0", second="#ff6b6b",
+         numerals="roman", guilloche="#ffffff10"),
+    dict(name="Rose Gold",
+         bg0="#1a1113", bg1="#2b1c1e",
+         metal="#c98d6d", metal_hi="#ffd9c2", metal_lo="#6e4331",
+         face_ctr="#fbf3e8", face_edge="#e2cdb6",
+         ink="#3a2a22", muted="#8a6f5c", accent="#b5703f",
+         hand="#4a3428", hand_lo="#8a6a55", second="#c0562f",
+         numerals="roman", guilloche="#00000012"),
+    dict(name="Emerald",
+         bg0="#04120d", bg1="#0c2a20",
+         metal="#a9b6b0", metal_hi="#f2f7f4", metal_lo="#43514b",
+         face_ctr="#125b46", face_edge="#04140f",
+         ink="#eafaf2", muted="#84b7a2", accent="#ffd479",
+         hand="#f4fffa", hand_lo="#8fc0ad", second="#ffd479",
+         numerals="baton", guilloche="#ffffff12"),
+    dict(name="Graphite",
+         bg0="#0a0a0c", bg1="#1a1b20",
+         metal="#6f737c", metal_hi="#c8ccd6", metal_lo="#2c2f36",
+         face_ctr="#26282f", face_edge="#0e0f13",
+         ink="#f0f2f6", muted="#9aa0ad", accent="#ff8a3d",
+         hand="#f6f8fc", hand_lo="#9aa0ad", second="#ff8a3d",
+         numerals="arabic", guilloche="#ffffff0e"),
+    dict(name="Ivory",
+         bg0="#151517", bg1="#2a2a2e",
+         metal="#b9bec9", metal_hi="#ffffff", metal_lo="#5c626e",
+         face_ctr="#fdfcf7", face_edge="#e6e1d4",
+         ink="#1b1b1f", muted="#7d7a72", accent="#1b1b1f",
+         hand="#1b1b1f", hand_lo="#6a6a70", second="#d1332e",
+         numerals="roman", guilloche="#00000010"),
+    dict(name="Neon",
+         bg0="#06030f", bg1="#150a2b",
+         metal="#7a5cff", metal_hi="#d9ccff", metal_lo="#2a1a55",
+         face_ctr="#150c2e", face_edge="#05020c",
+         ink="#f2ecff", muted="#a58fe0", accent="#2ef2c0",
+         hand="#f2ecff", hand_lo="#8f7ad0", second="#2ef2c0",
+         numerals="arabic", guilloche="#8a6bff20"),
+]
+
+def theme(spec=None):
+    """Pick a theme by index or (case-insensitive, prefix-matched) name.
+    `spec` is -t/--theme; it wins over SHOECLOCK_THEME, which wins over 0."""
+    if spec is None:
+        spec = os.environ.get("SHOECLOCK_THEME", "0")
+    spec = str(spec).strip()
+    try:
+        return THEMES[int(spec) % len(THEMES)]
+    except ValueError:
+        pass
+    low = spec.lower()
+    for t in THEMES:
+        if t["name"].lower().startswith(low):
+            return t
+    return None                                  # caller reports the bad value
+
+ROMAN = ["XII", "I", "II", "III", "IV", "V", "VI",
+         "VII", "VIII", "IX", "X", "XI"]
+
+# ---------- canvas ----------
+class Canvas:
+    def __init__(self, cols, rows, cw, ch):
+        self.cols, self.rows = cols, rows
+        self.cw, self.ch = cw, ch
+        self.w, self.h = cols * cw, rows * ch
+        self.buf = ["size %d %d" % (cols, rows)]
+    def tw(self, s): return len(s) * self.cw
+    def bg(self, c): self.buf.append("bg %s" % c)
+    def pen(self, c): self.buf.append("pen %s" % c)
+    def thick(self, n): self.buf.append("thickness %d" % n)
+    def rectf(self, x, y, w, h): self.buf.append("rectf %.0f %.0f %.0f %.0f" % (x, y, w, h))
+    def rrectf(self, x, y, w, h, r): self.buf.append("rrectf %.0f %.0f %.0f %.0f %.0f" % (x, y, w, h, r))
+    def rrect(self, x, y, w, h, r): self.buf.append("rrect %.0f %.0f %.0f %.0f %.0f" % (x, y, w, h, r))
+    def line(self, x0, y0, x1, y1): self.buf.append("line %.0f %.0f %.0f %.0f" % (x0, y0, x1, y1))
+    def arc(self, cx, cy, r, a0, a1): self.buf.append("arc %.0f %.0f %.0f %.0f %.0f" % (cx, cy, r, a0, a1))
+    def circ(self, cx, cy, r): self.buf.append("circ %.0f %.0f %.0f" % (cx, cy, r))
+    def circf(self, cx, cy, r): self.buf.append("circf %.0f %.0f %.0f" % (cx, cy, r))
+    def polyf(self, pts):
+        self.buf.append("polyf " + " ".join("%.0f %.0f" % p for p in pts))
+    def poly(self, pts):
+        self.buf.append("poly " + " ".join("%.0f %.0f" % p for p in pts))
+    def text(self, x, y, s):
+        # foot ends the DCS on any 0x80-0x9f byte (UTF-8 continuation bytes
+        # land there), so graphics text must be plain ASCII.
+        s = "".join(c if 0x20 <= ord(c) <= 0x7e else "?" for c in s)
+        self.buf.append("text %.0f %.0f %s" % (x, y, s))
+    def ctext(self, cx, y, s):
+        """Centred text; y is the baseline."""
+        self.text(cx - self.tw(s) / 2.0, y, s)
+    def emit(self):
+        out, line = [], []
+        for c in self.buf:
+            if c.startswith("text "):
+                if line: out.append(", ".join(line)); line = []
+                out.append(c)
+            else:
+                line.append(c)
+        if line: out.append(", ".join(line))
+        return "\033P>g " + "\n".join(out) + "\n\033\\"
+
+# ---------- geometry ----------
+def pol(cx, cy, r, deg):
+    a = math.radians(deg)
+    return (cx + r * math.cos(a), cy + r * math.sin(a))
+
+def hand(cx, cy, deg, length, tail, w_base, w_tip):
+    """Leaf-shaped hand polygon pointing at `deg` (0 = east, y down)."""
+    a = math.radians(deg)
+    dx, dy = math.cos(a), math.sin(a)
+    px, py = -dy, dx
+    def P(along, side):
+        return (cx + dx * along + px * side, cy + dy * along + py * side)
+    return [P(length, 0),
+            P(length * 0.72, w_tip / 2), P(0, w_base / 2), P(-tail, w_base / 3),
+            P(-tail, -w_base / 3), P(0, -w_base / 2), P(length * 0.72, -w_tip / 2)]
+
+# ---------- dial parts ----------
+def backdrop(cv, T):
+    """Vertical gradient plus a soft radial vignette behind the watch."""
+    bands = 26
+    bh = cv.h / bands
+    for i in range(bands):
+        t = i / float(bands - 1)
+        cv.pen(mix(T["bg0"], T["bg1"], t))
+        cv.rectf(0, i * bh, cv.w, bh + 1)
+
+def bezel(cv, cx, cy, R, T):
+    """Brushed-metal ring: arc segments shaded by a top-left light source."""
+    # drop shadow under the case
+    cv.pen("#00000066"); cv.circf(cx + 4, cy + 10, R)
+    cv.pen("#00000033"); cv.circf(cx + 7, cy + 16, R * 0.98)
+
+    rings = [(R * 0.985, max(4, R * 0.055), 0.0),      # outer polished edge
+             (R * 0.930, max(6, R * 0.070), 0.25),     # brushed body
+             (R * 0.878, max(3, R * 0.030), -0.20)]    # inner chamfer
+    for rr, tw, shade in rings:
+        cv.thick(int(max(2, tw)))
+        for a in range(0, 360, 3):
+            t = (1 + math.cos(math.radians(a - 225))) / 2.0
+            c = mix(T["metal_lo"], T["metal_hi"], t ** 1.6)
+            c = lighten(c, shade) if shade > 0 else darken(c, -shade)
+            cv.pen(c)
+            cv.arc(cx, cy, rr, a, a + 4)
+    cv.thick(1)
+
+def face(cv, cx, cy, R, T):
+    """Radial-gradient dial with guilloche texture."""
+    steps = 34
+    for i in range(steps):
+        t = i / float(steps - 1)
+        r = R * (1 - t) + 2
+        cv.pen(mix(T["face_edge"], T["face_ctr"], t))
+        cv.circf(cx, cy, r)
+    # radiating guilloche spokes
+    cv.pen(T["guilloche"]); cv.thick(1)
+    for i in range(120):
+        a = i * 3.0
+        x0, y0 = pol(cx, cy, R * 0.14, a)
+        x1, y1 = pol(cx, cy, R * 0.90, a)
+        cv.line(x0, y0, x1, y1)
+    # concentric rings
+    for i in range(1, 9):
+        cv.circ(cx, cy, R * (0.16 + i * 0.093))
+    # inner soft shadow at the dial edge (depth under the bezel)
+    cv.pen("#00000030")
+    for i in range(3):
+        cv.circ(cx, cy, R - i)
+
+def chapter_ring(cv, cx, cy, R, T):
+    r_out = R * 0.92
+    for m in range(60):
+        a = -90 + m * 6
+        major = (m % 5 == 0)
+        ln = R * (0.085 if major else 0.042)
+        cv.thick(int(max(1, R * (0.022 if major else 0.008))))
+        cv.pen(T["ink"] if major else T["muted"])
+        x0, y0 = pol(cx, cy, r_out - ln, a)
+        x1, y1 = pol(cx, cy, r_out, a)
+        cv.line(x0, y0, x1, y1)
+    cv.thick(1)
+
+def numerals(cv, cx, cy, R, T, skip=()):
+    style = T["numerals"]
+    if style == "baton":
+        cv.pen(T["ink"])
+        for h in range(12):
+            if h in skip: continue
+            a = -90 + h * 30
+            w = R * (0.055 if h % 3 == 0 else 0.035)
+            x, y = pol(cx, cy, R * 0.735, a)
+            cv.thick(int(max(3, w)))
+            x0, y0 = pol(cx, cy, R * 0.66, a)
+            x1, y1 = pol(cx, cy, R * 0.80, a)
+            cv.line(x0, y0, x1, y1)
+        cv.thick(1)
+        return
+    cv.pen(T["ink"])
+    for h in range(12):
+        if h in skip: continue
+        s = ROMAN[h] if style == "roman" else ("12" if h == 0 else str(h))
+        x, y = pol(cx, cy, R * 0.735, -90 + h * 30)
+        cv.ctext(x, y + cv.ch * 0.30, s)
+
+def date_window(cv, cx, cy, R, T, day):
+    s = "%02d" % day
+    w = cv.tw(s) + 12
+    h = cv.ch + 6
+    x = cx + R * 0.60 - w / 2.0
+    y = cy - h / 2.0
+    cv.pen(darken(T["face_edge"], 0.15)); cv.rrectf(x, y, w, h, 4)
+    cv.pen(alpha(T["ink"], 0x55)); cv.thick(1); cv.rrect(x, y, w, h, 4)
+    cv.pen(T["ink"]); cv.ctext(x + w / 2.0, y + h / 2.0 + cv.ch * 0.30, s)
+
+def hands(cv, cx, cy, R, T, hf, mf, sf):
+    """hf/mf/sf are fractions of a full turn (0..1)."""
+    ha = -90 + 360 * hf
+    ma = -90 + 360 * mf
+    sa = -90 + 360 * sf
+
+    hour = hand(cx, cy, ha, R * 0.50, R * 0.14, R * 0.075, R * 0.036)
+    minute = hand(cx, cy, ma, R * 0.755, R * 0.17, R * 0.058, R * 0.026)
+
+    # soft shadows, offset along the light direction
+    cv.pen("#0000004d")
+    cv.polyf([(x + R * 0.022, y + R * 0.030) for x, y in hour])
+    cv.polyf([(x + R * 0.022, y + R * 0.030) for x, y in minute])
+
+    for pts, fill in ((hour, T["hand"]), (minute, T["hand"])):
+        cv.pen(fill); cv.polyf(pts)
+        cv.pen(T["hand_lo"]); cv.thick(1); cv.poly(pts)
+
+    # seconds: thin needle + counterweight
+    tipx, tipy = pol(cx, cy, R * 0.845, sa)
+    tailx, taily = pol(cx, cy, R * 0.215, sa + 180)
+    cv.pen("#00000040"); cv.thick(int(max(2, R * 0.014)))
+    cv.line(cx + R * 0.02, cy + R * 0.028, tipx + R * 0.02, tipy + R * 0.028)
+    cv.pen(T["second"]); cv.thick(int(max(2, R * 0.014)))
+    cv.line(tailx, taily, tipx, tipy)
+    cwx, cwy = pol(cx, cy, R * 0.135, sa + 180)
+    cv.circf(cwx, cwy, R * 0.045)
+    cv.pen(T["face_ctr"]); cv.circf(cwx, cwy, R * 0.018)
+
+    # centre cap
+    cv.pen(T["hand"]); cv.circf(cx, cy, R * 0.045)
+    cv.pen(T["second"]); cv.circf(cx, cy, R * 0.026)
+    cv.pen(darken(T["second"], 0.4)); cv.circf(cx, cy, R * 0.010)
+
+def render(cv, T, now, frac=0.0, card=True):
+    # Filling the window: paint the gradient backdrop. Inline at the cursor:
+    # leave it transparent so the watch sits on the terminal background.
+    if card:
+        backdrop(cv, T)
+    pad = cv.ch * 0.5
+    digital_h = cv.ch * 2.4 if cv.h - cv.w > cv.ch * 2 else 0
+    avail_h = cv.h - digital_h - 2 * pad
+    R = min(cv.w - 2 * pad, avail_h) / 2.0
+    cx = cv.w / 2.0
+    cy = pad + R
+
+    bezel(cv, cx, cy, R, T)
+    fr = R * 0.862                       # dial radius (inside the bezel)
+    face(cv, cx, cy, fr, T)
+    chapter_ring(cv, cx, cy, fr, T)
+    # 3 o'clock numeral makes way for the date aperture
+    numerals(cv, cx, cy, fr, T, skip=(3,))
+    date_window(cv, cx, cy, fr, T, now.tm_mday)
+
+    cv.pen(T["ink"]); cv.ctext(cx, cy - fr * 0.36, "SHOECLOCK")
+    cv.pen(T["muted"]); cv.ctext(cx, cy - fr * 0.22, "AUTOMATIC")
+    cv.pen(T["muted"])
+    cv.ctext(cx, cy + fr * 0.46, time.strftime("%a %b", now).upper())
+    cv.pen(T["accent"]); cv.thick(1)
+    cv.line(cx - fr * 0.16, cy + fr * 0.52, cx + fr * 0.16, cy + fr * 0.52)
+
+    subsec = now.tm_sec + frac
+    hands(cv, cx, cy, R, T,
+          ((now.tm_hour % 12) + now.tm_min / 60.0 + subsec / 3600.0) / 12.0,
+          (now.tm_min + subsec / 60.0) / 60.0,
+          subsec / 60.0)
+
+    if digital_h:
+        y = cy + R + cv.ch * 1.4
+        cv.pen(T["ink"])
+        cv.ctext(cx, y, time.strftime("%H:%M:%S", now))
+        cv.pen(T["muted"])
+        cv.ctext(cx, y + cv.ch, time.strftime("%A %d %B %Y", now))
+
+# ---------- plain fallback ----------
+def plain(now):
+    W, H = 39, 19                      # character cells (roughly 2:1 aspect)
+    cx, cy = W // 2, H // 2
+    g = [[" "] * W for _ in range(H)]
+    rx, ry = cx - 2, cy - 1
+
+    def put(x, y, ch):
+        xi, yi = int(round(x)), int(round(y))
+        if 0 <= xi < W and 0 <= yi < H: g[yi][xi] = ch
+
+    for i in range(360):
+        a = math.radians(i)
+        put(cx + rx * math.cos(a), cy + ry * math.sin(a), ".")
+    for h in range(12):
+        a = math.radians(-90 + h * 30)
+        lbl = "12" if h == 0 else str(h)
+        x = int(round(cx + (rx - 2) * math.cos(a) - (len(lbl) - 1) / 2.0))
+        y = cy + (ry - 1) * math.sin(a)
+        for k, c in enumerate(lbl):
+            put(x + k, y, c)
+
+    def ray(frac, length, ch):
+        a = math.radians(-90 + 360 * frac)
+        for t in range(2, 21):
+            r = length * t / 20.0
+            put(cx + r * (rx - 3) * math.cos(a),
+                cy + r * (ry - 2) * math.sin(a), ch)
+
+    hf = ((now.tm_hour % 12) + now.tm_min / 60.0) / 12.0
+    ray(hf, 0.6, "#")
+    ray((now.tm_min + now.tm_sec / 60.0) / 60.0, 0.9, "*")
+    ray(now.tm_sec / 60.0, 1.0, ".")
+    put(cx, cy, "o")
+
+    body = "\n".join("".join(r).rstrip() for r in g)
+    return "%s\n%s\n%s" % (body,
+                           time.strftime("      %H:%M:%S", now),
+                           time.strftime("      %a %d %b %Y", now))
+
+# ---------- sizing ----------
+_CELL = None
+def geometry(fill):
+    global _CELL
+    if _CELL is None:                      # query once; ESC[16t is not free
+        _CELL = cell_size()
+    cw, ch = _CELL
+    cols, rows = term_cells()              # ioctl, cheap — tracks resizes
+    if fill:
+        cols = max(24, cols - 2)
+        rows = max(12, rows - 1)
+    else:
+        rows = max(12, min(rows - 2, 22))
+        cols = max(20, min(cols - 2, int(math.ceil(rows * ch / float(cw)))))
+    return Canvas(cols, rows, cw, ch)
+
+def now_frac():
+    """(struct_time, sub-second fraction). 8 beats per second — a high-beat
+    mechanical sweep rather than a smooth glide."""
+    t = time.time()
+    return time.localtime(t), math.floor((t - math.floor(t)) * 8) / 8.0
+
+# ---------- usage ----------
+USAGE = """\
+shoeclock - a luxury analogue wristwatch drawn with foot's vector graphics.
+
+usage:
+  shoeclock                one frame at the cursor (banner-friendly)
+  shoeclock live [N]       fill the window and redraw every N seconds
+                           (default 0.125 = an 8-beat sweeping seconds hand);
+                           press q, Esc or Ctrl-C to quit
+  shoeclock -h, --help     this help
+
+options:
+  -t, --theme <n|name>     dial theme, by number 0..%d or by name (prefix
+                           matched, case-insensitive). Overrides
+                           SHOECLOCK_THEME. Themes:
+                           %s
+
+environment:
+  SHOECLOCK_THEME=<n|name> default dial theme (default 0)
+  SHOECLOCK_CARD=1         paint the gradient backdrop inline too
+                           (live mode always does; inline is transparent so
+                           the watch blends with the terminal background)
+  SHOECLOCK_PLAIN=1        force the plain-text fallback (ASCII dial)
+  SHOECLOCK_FORCE=1        force graphics (e.g. when piping to a file)
+  SHOECLOCK_SELFTEST=1     render one headless frame and report, for smoke tests
+
+examples:
+  shoeclock -t 4                         # classic ivory dial, at the cursor
+  shoeclock live                         # full-window sweeping clock
+  shoeclock -t neon live 1               # neon, ticking once a second\
+"""
+
+def usage():
+    names = "\n                           ".join(
+        "%d %s" % (i, t["name"]) for i, t in enumerate(THEMES))
+    return USAGE % (len(THEMES) - 1, names)
+
+# ---------- main ----------
+def die(msg):
+    sys.stderr.write("shoeclock: %s\n\n%s\n" % (msg, usage()))
+    sys.exit(2)
+
+def main():
+    argv = sys.argv[1:]
+
+    spec = None                      # -t/--theme value
+    live = False
+    interval = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-h", "--help", "help"):
+            print(usage()); return
+        elif a in ("-t", "--theme"):
+            i += 1
+            if i >= len(argv): die("%s needs a theme number or name" % a)
+            spec = argv[i]
+        elif a.startswith("--theme="):
+            spec = a.split("=", 1)[1]
+        elif a.startswith("-t") and len(a) > 2:      # -t3
+            spec = a[2:]
+        elif a in ("live", "-l"):
+            live = True
+        elif live and interval is None:
+            try: interval = float(a)
+            except ValueError: die("bad interval %r" % a)
+        else:
+            die("unknown argument %r" % a)
+        i += 1
+
+    T = theme(spec)
+    if T is None:
+        die("unknown theme %r" % (spec if spec is not None
+                                  else os.environ.get("SHOECLOCK_THEME")))
+
+    if os.environ.get("SHOECLOCK_SELFTEST"):
+        cv = Canvas(40, 20, 8, 16)
+        render(cv, T, *now_frac())
+        out = cv.emit()
+        print("shoeclock selftest: theme=%s commands=%d bytes=%d"
+              % (T["name"], len(cv.buf), len(out)))
+        return
+
+    if not graphics_ok():
+        print(plain(time.localtime())); return
+
+    if not live:
+        cv = geometry(fill=False)
+        render(cv, T, *now_frac(), card=bool(os.environ.get("SHOECLOCK_CARD")))
+        sys.stdout.write(cv.emit() + "\n"); sys.stdout.flush()
+        return
+
+    if interval is None: interval = 0.125
+    fd = sys.stdin.fileno() if sys.stdin.isatty() else None
+    old = termios.tcgetattr(fd) if fd is not None else None
+    sys.stdout.write("\033[2J\033[?25l")
+    try:
+        if fd is not None:
+            tty.setraw(fd)
+        while True:
+            cv = geometry(fill=True)
+            render(cv, T, *now_frac())
+            sys.stdout.write("\033[H" + cv.emit()); sys.stdout.flush()
+            if fd is not None:
+                r, _, _ = select.select([fd], [], [], interval)
+                if r:
+                    k = os.read(fd, 8)
+                    if k[:1] in (b"q", b"Q", b"\x03", b"\x1b"): break
+            else:
+                time.sleep(interval)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if old is not None:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        sys.stdout.write("\033[?25h\n"); sys.stdout.flush()
+
+if __name__ == "__main__":
+    main()
